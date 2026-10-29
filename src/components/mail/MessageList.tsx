@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { type MouseEvent, type ReactNode, useEffect, useEffectEvent, useRef } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useEffectEvent, useMemo, useRef } from "react";
 
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
@@ -10,7 +10,7 @@ import { isSignInError } from "@/lib/errors";
 import { mailboxTitle } from "@/lib/folders";
 import { t } from "@/lib/i18n";
 import { focusListItem } from "@/lib/keyboard";
-import { type MessageSummary, type SyncProgress, UNIFIED_INBOX } from "@/lib/tauri";
+import { type Conversation, type SyncProgress, UNIFIED_INBOX } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
 import { useFolders } from "@/queries/folders";
@@ -53,15 +53,17 @@ function progressLabel(progress: SyncProgress): string {
 }
 
 interface MessageRowsProps {
-  messages: MessageSummary[];
+  messages: Conversation[];
   now: number;
   accountColor: (accountId: string) => string | undefined;
+  /** The accounts' addresses, so the user's own replies read "me". */
+  ownAddresses: Set<string>;
   /** Below the last message, e.g. the button for older mail. */
   footer: ReactNode;
 }
 
 /** Only the rows in view are rendered, so a folder with thousands of mails scrolls smoothly. */
-function MessageRows({ messages, now, accountColor, footer }: MessageRowsProps) {
+function MessageRows({ messages, now, accountColor, ownAddresses, footer }: MessageRowsProps) {
   const selectedIds = useUiStore((s) => s.selectedIds);
   // The end that moves with Shift+j/k; otherwise the open message.
   const focusedId = useUiStore((s) => s.selectionEnd ?? s.selectedMessageId);
@@ -139,6 +141,7 @@ function MessageRows({ messages, now, accountColor, footer }: MessageRowsProps) 
                 selected={selectedIds.includes(message.id)}
                 now={now}
                 accountColor={accountColor(message.accountId)}
+                ownAddresses={ownAddresses}
                 onSelect={(event) => select(message.id, event)}
               />
             </li>
@@ -154,7 +157,8 @@ export function MessageList({ className }: MessageListProps) {
   const mailboxId = useUiStore((s) => s.selectedMailboxId);
   const { data: accounts = [] } = useAccounts();
   const { data: folders = [] } = useFolders();
-  const { data: messages = [], isPending, isError, searching } = useVisibleMessages();
+  const { data, isPending, isError, searching } = useVisibleMessages();
+  const messages = useMemo(() => data ?? [], [data]);
   const searchQuery = useUiStore((s) => s.searchQuery.trim());
   const now = useNow();
   const { syncAccount, syncFolder, loadOlder } = useSyncActions();
@@ -171,12 +175,21 @@ export function MessageList({ className }: MessageListProps) {
     .map((id) => [id, errorsById[id]] as const)
     .find(([, error]) => error !== undefined);
 
+  // A reply that arrived or mail brought back by undo: the selection stays on its conversation.
+  const followRows = useUiStore((s) => s.followRows);
+  const selectedIds = useUiStore((s) => s.selectedIds);
+  useEffect(() => {
+    if (data) followRows(data);
+  }, [data, selectedIds, followRows]);
+
   const title = searching ? t("search.title") : mailboxTitle(mailboxId, folders, accounts);
   const unreadCount = messages.filter((m) => !m.isRead).length;
   const accountColors = new Map(accounts.map((a) => [a.id, a.color]));
   // Search results span all accounts, like the unified inbox.
   const showAccountColor = (searching || mailboxId === UNIFIED_INBOX) && accounts.length > 1;
-  const hasOlder = !searching && folder !== undefined && folder.totalCount > messages.length;
+  const listedCount = messages.reduce((sum, row) => sum + row.messageIds.length, 0);
+  const hasOlder = !searching && folder !== undefined && folder.totalCount > listedCount;
+  const ownAddresses = new Set(accounts.map((a) => a.emailAddress.toLowerCase()));
 
   const refresh = () => {
     if (folder && folder.role !== "inbox") {
@@ -220,6 +233,7 @@ export function MessageList({ className }: MessageListProps) {
         messages={messages}
         now={now}
         accountColor={(accountId) => (showAccountColor ? accountColors.get(accountId) : undefined)}
+        ownAddresses={ownAddresses}
         footer={
           hasOlder && (
             <div className="px-2 pb-2">

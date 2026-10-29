@@ -87,7 +87,10 @@ function ThemePreview({ theme, appearance }: { theme: Theme; appearance: Appeara
   );
 }
 
-/** Mode, style, contrast, accent colour, font, density and language; all apply at once. */
+/**
+ * Mode, style, contrast, accent colour, font, density, conversations in the list and language;
+ * all apply at once.
+ */
 export function AppearanceSettings() {
   const mode = useUiStore((s) => s.mode);
   const style = useUiStore((s) => s.style);
@@ -100,6 +103,8 @@ export function AppearanceSettings() {
   const setTheme = useUiStore((s) => s.setTheme);
   const setFont = useUiStore((s) => s.setFont);
   const density = useUiStore((s) => s.density);
+  const threads = useUiStore((s) => s.threads);
+  const setThreads = useUiStore((s) => s.setThreads);
   const setDensity = useUiStore((s) => s.setDensity);
   const languageSetting = useUiStore((s) => s.language);
   const setLanguage = useUiStore((s) => s.setLanguage);
@@ -201,6 +206,15 @@ export function AppearanceSettings() {
         value={density}
         options={densities.map((d) => ({ value: d, label: t(`appearance.density.${d}`) }))}
         onChange={setDensity}
+      />
+      <Segmented
+        label={t("appearance.list")}
+        value={threads ? "threads" : "messages"}
+        options={(["threads", "messages"] as const).map((value) => ({
+          value,
+          label: t(`appearance.list.${value}`),
+        }))}
+        onChange={(value) => setThreads(value === "threads")}
       />
       <Segmented<LanguageSetting>
         label={t("appearance.language")}

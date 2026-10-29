@@ -43,6 +43,7 @@ pub fn run() {
             commands::mailbox::list_folders,
             commands::mailbox::list_messages,
             commands::mailbox::get_message,
+            commands::mailbox::get_conversation,
             commands::mailbox::search_messages,
             commands::actions::set_read,
             commands::actions::set_flagged,

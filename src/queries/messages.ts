@@ -5,9 +5,22 @@ import { api, type Message } from "@/lib/tauri";
 import { useUiStore } from "@/stores/ui";
 
 export function useMessages(mailboxId: string) {
+  const threads = useUiStore((s) => s.threads);
   return useQuery({
-    queryKey: ["messages", mailboxId],
-    queryFn: () => api.listMessages(mailboxId),
+    queryKey: ["messages", mailboxId, threads],
+    queryFn: () => api.listMessages(mailboxId, threads),
+  });
+}
+
+/** The messages the reader shows for the open row, newest first. */
+export function useConversation(messageId: string | null) {
+  const threads = useUiStore((s) => s.threads);
+  return useQuery({
+    queryKey: ["conversation", messageId, threads],
+    queryFn: () => (messageId ? api.getConversation(messageId, threads) : []),
+    // A reply that arrives moves the row to its newest message; the reader stays meanwhile.
+    placeholderData: keepPreviousData,
+    enabled: messageId !== null,
   });
 }
 
@@ -39,6 +52,7 @@ export function useFullBody(message: Message | null | undefined) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["message", messageId] }),
         queryClient.invalidateQueries({ queryKey: ["messages"] }),
+        queryClient.invalidateQueries({ queryKey: ["conversation"] }),
       ]);
       return null;
     },
@@ -48,9 +62,10 @@ export function useFullBody(message: Message | null | undefined) {
 }
 
 export function useSearch(query: string) {
+  const threads = useUiStore((s) => s.threads);
   return useQuery({
-    queryKey: ["search", query],
-    queryFn: () => api.searchMessages(query),
+    queryKey: ["search", query, threads],
+    queryFn: () => api.searchMessages(query, threads),
     enabled: query.trim() !== "",
     // The previous results stay while the next word is typed.
     placeholderData: keepPreviousData,

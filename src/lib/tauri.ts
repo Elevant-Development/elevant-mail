@@ -11,6 +11,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { Account } from "./bindings/Account";
 import type { AccountChanges } from "./bindings/AccountChanges";
 import type { AccountSettings } from "./bindings/AccountSettings";
+import type { Conversation } from "./bindings/Conversation";
 import type { Folder } from "./bindings/Folder";
 import type { ImapSettings } from "./bindings/ImapSettings";
 import type { Message } from "./bindings/Message";
@@ -26,6 +27,7 @@ export type { Account } from "./bindings/Account";
 export type { AccountChanges } from "./bindings/AccountChanges";
 export type { AccountSettings } from "./bindings/AccountSettings";
 export type { Attachment } from "./bindings/Attachment";
+export type { Conversation } from "./bindings/Conversation";
 export type { Address } from "./bindings/Address";
 export type { ErrorKind } from "./bindings/ErrorKind";
 export type { Folder } from "./bindings/Folder";
@@ -79,10 +81,18 @@ export interface Backend {
   /** Microsoft accounts: the browser sign-in again, for the account's own address. */
   signInAgain(accountId: string): Promise<void>;
   listFolders(): Promise<Folder[]>;
-  /** `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first. */
-  listMessages(mailboxId: string): Promise<MessageSummary[]>;
+  /**
+   * `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first; with `threads` one row per
+   * conversation, otherwise per message.
+   */
+  listMessages(mailboxId: string, threads: boolean): Promise<Conversation[]>;
   /** `remoteImages`: the user allowed the external images of this mail. */
   getMessage(messageId: string, remoteImages: boolean): Promise<Message | null>;
+  /**
+   * What the reader shows for a message, newest first: with `threads` its conversation in its
+   * folder plus the user's own replies from "Sent", otherwise the message alone.
+   */
+  getConversation(messageId: string, threads: boolean): Promise<MessageSummary[]>;
   /** Fetches the full body of a large message that was cached with headers only. */
   loadMessageBody(messageId: string): Promise<void>;
   /** New, changed and deleted mail in the account's inbox. */
@@ -90,8 +100,8 @@ export interface Backend {
   syncFolder(folderId: string): Promise<SyncReport>;
   /** The next 100 messages older than the oldest cached one. */
   loadOlder(folderId: string): Promise<SyncReport>;
-  /** Full-text search over all cached mail, newest first. */
-  searchMessages(query: string): Promise<MessageSummary[]>;
+  /** Full-text search over all cached mail, newest first; rows as in {@link Backend.listMessages}. */
+  searchMessages(query: string, threads: boolean): Promise<Conversation[]>;
   /**
    * Set (not toggle) read or flagged state. The cache changes at once; returns the accounts
    * whose changes still have to go to the server ({@link Backend.pushActions}).
@@ -140,13 +150,14 @@ const tauriBackend: Backend = {
   changeLogin: (accountId, imap, password) => invoke("change_login", { accountId, imap, password }),
   signInAgain: (accountId) => invoke("sign_in_again", { accountId }),
   listFolders: () => invoke("list_folders"),
-  listMessages: (mailboxId) => invoke("list_messages", { mailboxId }),
+  listMessages: (mailboxId, threads) => invoke("list_messages", { mailboxId, threads }),
   getMessage: (messageId, remoteImages) => invoke("get_message", { messageId, remoteImages }),
+  getConversation: (messageId, threads) => invoke("get_conversation", { messageId, threads }),
   loadMessageBody: (messageId) => invoke("load_message_body", { messageId }),
   syncAccount: (accountId) => invoke("sync_account", { accountId }),
   syncFolder: (folderId) => invoke("sync_folder", { folderId }),
   loadOlder: (folderId) => invoke("load_older", { folderId }),
-  searchMessages: (query) => invoke("search_messages", { query }),
+  searchMessages: (query, threads) => invoke("search_messages", { query, threads }),
   setRead: (messageIds, read) => invoke("set_read", { messageIds, read }),
   setFlagged: (messageIds, flagged) => invoke("set_flagged", { messageIds, flagged }),
   pushActions: (accountId) => invoke("push_actions", { accountId }),

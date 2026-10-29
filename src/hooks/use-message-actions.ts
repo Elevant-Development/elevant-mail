@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 
+import { messagesOf, rowFor } from "@/lib/conversations";
 import { describeError } from "@/lib/errors";
 import { folderLabel } from "@/lib/folders";
 import { t, tCount } from "@/lib/i18n";
@@ -16,15 +17,19 @@ import { useUndoStore } from "@/stores/undo";
  * the lists are reread, and the change goes to the server in the background: read and flagged
  * state right away, moves once they can no longer be undone. A failure shows on the account
  * like a sync error; the change stays queued, or is undone if the server refused it.
+ *
+ * Every action takes rows of the list and acts on all messages behind them: with conversations
+ * the conversation's messages in its folder. Only the star goes on the newest message alone.
  */
 export function useMessageActions() {
   const queryClient = useQueryClient();
-  const { data: messages = [] } = useVisibleMessages();
+  const { data: rows = [] } = useVisibleMessages();
   const { data: folders = [] } = useFolders();
+  const behind = (ids: string[]) => messagesOf(rows, ids);
 
   const refresh = () =>
     Promise.all(
-      ["messages", "message", "folders", "search"].map((key) =>
+      ["messages", "message", "conversation", "folders", "search"].map((key) =>
         queryClient.invalidateQueries({ queryKey: [key] }),
       ),
     );
@@ -56,14 +61,17 @@ export function useMessageActions() {
   };
 
   const finish = async (outcome: MoveOutcome, text: (count: number) => string) => {
-    const removed = [...outcome.moved, ...outcome.deleted];
+    const removed = new Set([...outcome.moved, ...outcome.deleted]);
+    const gone = rows
+      .filter((row) => row.messageIds.every((id) => removed.has(id)))
+      .map((row) => row.id);
     const { selectedIds, selectMessage } = useUiStore.getState();
-    // The list moves on to the next message, like after reading one.
-    if (removed.some((id) => selectedIds.includes(id))) {
+    // The list moves on to the next row, like after reading one.
+    if (gone.some((id) => selectedIds.includes(id))) {
       selectMessage(
         nextAfter(
-          messages.map((m) => m.id),
-          removed,
+          rows.map((row) => row.id),
+          gone,
         ),
       );
     }
@@ -79,41 +87,50 @@ export function useMessageActions() {
     if (outcome.deleted.length > 0) push(outcome.accounts);
   };
 
-  const deleteNow = async (messageIds: string[]) => {
+  const deleteNow = async (ids: string[]) => {
     try {
-      await finish(await api.deleteMessages(messageIds), (n) => tCount("undo.trashed", n));
+      await finish(await api.deleteMessages(behind(ids)), (n) => tCount("undo.trashed", n));
     } catch (error) {
       report(error);
     }
   };
 
   return {
-    setRead: (messageIds: string[], read: boolean) => run(() => api.setRead(messageIds, read)),
-    setFlagged: (messageIds: string[], flagged: boolean) =>
-      run(() => api.setFlagged(messageIds, flagged)),
+    setRead: (ids: string[], read: boolean) => run(() => api.setRead(behind(ids), read)),
+    /** Like Gmail: the star goes on a conversation's newest message, and off all of them. */
+    setFlagged: (ids: string[], flagged: boolean) =>
+      run(() =>
+        api.setFlagged(
+          flagged ? ids.map((id) => rowFor(rows, id)?.id ?? id) : behind(ids),
+          flagged,
+        ),
+      ),
 
-    archive: async (messageIds: string[]) => {
+    archive: async (ids: string[]) => {
       try {
         // The name of the folder made for an account without archive, in the interface language.
-        const outcome = await api.archiveMessages(messageIds, t("folder.archive"));
+        const outcome = await api.archiveMessages(behind(ids), t("folder.archive"));
         await finish(outcome, (n) => tCount("undo.archived", n));
       } catch (error) {
         report(error);
       }
     },
 
-    /** Into the trash; deleting for good asks first (DeleteForeverDialog). */
-    trash: async (messageIds: string[]) => {
-      const forGood = messages.some((m) => messageIds.includes(m.id) && deletesForGood(m, folders));
-      if (forGood) useUiStore.getState().askDeleteForever(messageIds);
-      else await deleteNow(messageIds);
+    /** Into the trash; deleting for good asks first (DeleteForeverDialog), for each message. */
+    trash: async (ids: string[]) => {
+      const forGood = ids.some((id) => {
+        const row = rowFor(rows, id);
+        return row !== undefined && deletesForGood(row, folders);
+      });
+      if (forGood) useUiStore.getState().askDeleteForever(behind(ids));
+      else await deleteNow(ids);
     },
     /** After the user agreed to deleting for good. */
     deleteNow,
 
-    moveTo: async (messageIds: string[], folder: Folder) => {
+    moveTo: async (ids: string[], folder: Folder) => {
       try {
-        const outcome = await api.moveMessages(messageIds, folder.id);
+        const outcome = await api.moveMessages(behind(ids), folder.id);
         await finish(outcome, (n) => tCount("undo.moved", n, { folder: folderLabel(folder) }));
       } catch (error) {
         report(error);

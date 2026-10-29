@@ -45,7 +45,7 @@ export function useSyncActions() {
       return null;
     } finally {
       await Promise.all(
-        ["folders", "messages", "message"].map((key) =>
+        ["folders", "messages", "message", "conversation"].map((key) =>
           queryClient.invalidateQueries({ queryKey: [key] }),
         ),
       );

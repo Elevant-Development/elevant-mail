@@ -2,6 +2,7 @@ import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
 import { Button } from "@/components/ui/button";
 import { useMessageActions } from "@/hooks/use-message-actions";
+import { messagesOf } from "@/lib/conversations";
 import { t } from "@/lib/i18n";
 import { canArchive, deletesForGood } from "@/lib/moves";
 import { cn } from "@/lib/utils";
@@ -41,7 +42,7 @@ export function SelectionPanel({ className, onBack }: SelectionPanelProps) {
         <Icon name="unified" className="size-8 text-muted-foreground" />
         <div className="grid gap-1">
           <h2 className="text-base font-medium">
-            {t("selection.count", { count: selected.length })}
+            {t("selection.count", { count: messagesOf(selected, ids).length })}
           </h2>
           <p className="max-w-xs text-sm text-muted-foreground">{t("selection.hint")}</p>
         </div>

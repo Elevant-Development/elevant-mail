@@ -1,10 +1,13 @@
 //! Reading folders and messages from the cache. The sync engine fills it; this only reads.
 
+use std::cmp::Reverse;
+use std::collections::{HashMap, HashSet};
+
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::Result;
 use crate::mail::sanitize::{HtmlView, sanitize};
-use crate::model::{Address, Folder, FolderRole, Message, MessageSummary};
+use crate::model::{Address, Conversation, Folder, FolderRole, Message, MessageSummary};
 
 /// Mailbox id that shows the inboxes of all accounts together (same value as in the frontend).
 pub const UNIFIED_INBOX: &str = "unified-inbox";
@@ -94,23 +97,84 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<MessageSummary> {
     })
 }
 
-/// Messages of a folder, or of all inboxes for [`UNIFIED_INBOX`], newest first.
-pub fn list_messages(conn: &Connection, mailbox_id: &str) -> Result<Vec<MessageSummary>> {
+/// A message with what grouping it into conversations needs.
+struct Member {
+    summary: MessageSummary,
+    /// The conversation, or the message's own id while it is in none yet.
+    thread: String,
+    /// The Message-ID header: copies of one mail in several folders share it.
+    header_id: Option<String>,
+}
+
+/// After [`SUMMARY_COLUMNS`], for [`member_from_row`].
+const MEMBER_COLUMNS: &str = "coalesce(m.thread_id, m.id), m.message_id";
+
+const DATE: &str = "coalesce(m.date_sent, m.date_received, m.fetched_at)";
+
+fn member_from_row(row: &Row<'_>) -> rusqlite::Result<Member> {
+    Ok(Member {
+        summary: summary_from_row(row)?,
+        thread: row.get(11)?,
+        header_id: row.get(12)?,
+    })
+}
+
+fn members(conn: &Connection, sql: &str, params: impl rusqlite::Params) -> Result<Vec<Member>> {
+    Ok(conn
+        .prepare_cached(sql)?
+        .query_map(params, member_from_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// The user's own replies in the conversation, from the account's "Sent".
+fn replies_in(conn: &Connection, account_id: &str, thread: &str) -> Result<Vec<Member>> {
+    members(
+        conn,
+        &format!(
+            "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
+             JOIN folders f ON f.id = m.folder_id
+             WHERE m.account_id = ?1 AND m.thread_id = ?2 AND f.role = 'sent' AND m.leaving = 0"
+        ),
+        [account_id, thread],
+    )
+}
+
+/// Conversations of a folder, or of all inboxes for [`UNIFIED_INBOX`], newest first. Without
+/// `threads` every message is a row of its own.
+pub fn list_messages(
+    conn: &Connection,
+    mailbox_id: &str,
+    threads: bool,
+) -> Result<Vec<Conversation>> {
     let filter = if mailbox_id == UNIFIED_INBOX {
         "m.folder_id IN (SELECT id FROM folders WHERE role = 'inbox' AND ?1 = ?1)"
     } else {
         "m.folder_id = ?1"
     };
     // Mail on its way to another folder (moves::move_messages) no longer shows here.
-    let sql = format!(
-        "SELECT {SUMMARY_COLUMNS} FROM messages m WHERE {filter} AND m.leaving = 0
-         ORDER BY coalesce(m.date_sent, m.date_received, m.fetched_at) DESC, m.uid DESC LIMIT {LIST_LIMIT}"
-    );
-    let messages = conn
-        .prepare(&sql)?
-        .query_map([mailbox_id], summary_from_row)?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(messages)
+    let listed = members(
+        conn,
+        &format!(
+            "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
+             WHERE {filter} AND m.leaving = 0
+             ORDER BY {DATE} DESC, m.uid DESC LIMIT {LIST_LIMIT}"
+        ),
+        [mailbox_id],
+    )?;
+    if !threads {
+        return Ok(group(listed, Vec::new(), false));
+    }
+    let replies = members(
+        conn,
+        &format!(
+            "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
+             JOIN folders f ON f.id = m.folder_id
+             WHERE f.role = 'sent' AND m.leaving = 0
+               AND m.thread_id IN (SELECT m.thread_id FROM messages m WHERE {filter})"
+        ),
+        [mailbox_id],
+    )?;
+    Ok(group(listed, replies, true))
 }
 
 /// Search results shown at most; the newest come first.
@@ -120,31 +184,217 @@ const SEARCH_LIMIT: u32 = 300;
 /// must match, as a word or the start of one ("rech" finds "Rechnung").
 ///
 /// A message that sits in several folders of an account (Gmail shows labels and "All Mail" as
-/// folders, other servers keep copies) is listed once, preferably from the inbox.
-pub fn search_messages(conn: &Connection, query: &str) -> Result<Vec<MessageSummary>> {
+/// folders, other servers keep copies) is listed once, preferably from the inbox. With
+/// `threads`, a result is the whole conversation in that folder, like in the list.
+pub fn search_messages(conn: &Connection, query: &str, threads: bool) -> Result<Vec<Conversation>> {
     let Some(fts_query) = fts_query(query) else {
         return Ok(Vec::new());
     };
-    let sql = format!(
-        "SELECT {SUMMARY_COLUMNS} FROM (
-           SELECT m.*, row_number() OVER (
-             PARTITION BY m.account_id, coalesce(m.message_id, m.id)
-             ORDER BY f.role = 'inbox' DESC, f.role IS NOT NULL AND f.role <> 'all' DESC
-           ) AS copy
-           FROM messages_fts
-           JOIN messages m ON m.seq = messages_fts.rowid
-           JOIN folders f ON f.id = m.folder_id
-           WHERE messages_fts MATCH ?1 AND m.leaving = 0
-         ) m
-         WHERE m.copy = 1
-         ORDER BY coalesce(m.date_sent, m.date_received, m.fetched_at) DESC, m.uid DESC
-         LIMIT {SEARCH_LIMIT}"
+    let hits = members(
+        conn,
+        &format!(
+            "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM (
+               SELECT m.*, row_number() OVER (
+                 PARTITION BY m.account_id, coalesce(m.message_id, m.id)
+                 ORDER BY f.role = 'inbox' DESC, f.role IS NOT NULL AND f.role <> 'all' DESC
+               ) AS copy
+               FROM messages_fts
+               JOIN messages m ON m.seq = messages_fts.rowid
+               JOIN folders f ON f.id = m.folder_id
+               WHERE messages_fts MATCH ?1 AND m.leaving = 0
+             ) m
+             WHERE m.copy = 1
+             ORDER BY {DATE} DESC, m.uid DESC
+             LIMIT {SEARCH_LIMIT}"
+        ),
+        [fts_query],
+    )?;
+    if !threads {
+        return Ok(group(hits, Vec::new(), false));
+    }
+
+    let mut listed = Vec::new();
+    let mut replies = Vec::new();
+    let mut seen = HashSet::new();
+    for hit in &hits {
+        let folder_id = answered_in(conn, hit)?.unwrap_or_else(|| hit.summary.folder_id.clone());
+        if !seen.insert((folder_id.clone(), hit.thread.clone())) {
+            continue;
+        }
+        listed.extend(members(
+            conn,
+            &format!(
+                "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
+                 WHERE m.folder_id = ?1 AND (m.thread_id = ?2 OR m.id = ?2) AND m.leaving = 0"
+            ),
+            [&folder_id, &hit.thread],
+        )?);
+        replies.extend(replies_in(conn, &hit.summary.account_id, &hit.thread)?);
+    }
+    listed.sort_by_key(|member| Reverse(member.summary.date_sent));
+    Ok(group(listed, replies, true))
+}
+
+/// For a hit in "Sent": the folder that holds the rest of its conversation, the inbox first. The
+/// reply shows there along with the mail it answers, as in the list.
+fn answered_in(conn: &Connection, hit: &Member) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            &format!(
+                "SELECT m.folder_id FROM messages m JOIN folders f ON f.id = m.folder_id
+                 WHERE m.account_id = ?1 AND m.thread_id = ?2 AND m.leaving = 0
+                   AND coalesce(f.role, '') NOT IN ('sent', 'drafts', 'trash', 'junk')
+                   AND EXISTS (SELECT 1 FROM folders s WHERE s.id = ?3 AND s.role = 'sent')
+                 ORDER BY coalesce(f.role, '') = 'inbox' DESC, coalesce(f.role, '') = 'all',
+                   {DATE} DESC
+                 LIMIT 1"
+            ),
+            [&hit.summary.account_id, &hit.thread, &hit.summary.folder_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// What the reader shows for a message: its conversation in the message's folder plus the
+/// user's own replies from "Sent", newest first. Without `threads` the message alone.
+pub fn get_conversation(
+    conn: &Connection,
+    message_id: &str,
+    threads: bool,
+) -> Result<Vec<MessageSummary>> {
+    let opened: Option<(String, String, Option<String>)> = conn
+        .query_row(
+            "SELECT account_id, folder_id, thread_id FROM messages WHERE id = ?1",
+            [message_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((account_id, folder_id, thread)) = opened else {
+        return Ok(Vec::new());
+    };
+    let Some(thread) = thread.filter(|_| threads) else {
+        let alone = members(
+            conn,
+            &format!("SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m WHERE m.id = ?1"),
+            [message_id],
+        )?;
+        return Ok(alone.into_iter().map(|member| member.summary).collect());
+    };
+
+    let mut shown = members(
+        conn,
+        &format!(
+            "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
+             WHERE m.folder_id = ?1 AND m.thread_id = ?2 AND m.leaving = 0"
+        ),
+        [&folder_id, &thread],
+    )?;
+    let known: HashSet<String> = shown.iter().filter_map(|m| m.header_id.clone()).collect();
+    shown.extend(
+        replies_in(conn, &account_id, &thread)?
+            .into_iter()
+            .filter(|reply| reply.summary.folder_id != folder_id)
+            .filter(|reply| {
+                reply
+                    .header_id
+                    .as_ref()
+                    .is_none_or(|id| !known.contains(id))
+            }),
     );
-    let messages = conn
-        .prepare(&sql)?
-        .query_map([fts_query], summary_from_row)?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(messages)
+    shown.sort_by_key(|member| Reverse(member.summary.date_sent));
+    Ok(shown.into_iter().map(|member| member.summary).collect())
+}
+
+/// Rows from messages that come newest first: one per folder and conversation (per message
+/// without `threads`), with the replies from "Sent" counted in.
+fn group(listed: Vec<Member>, replies: Vec<Member>, threads: bool) -> Vec<Conversation> {
+    struct Row {
+        conversation: Conversation,
+        thread: String,
+        header_ids: HashSet<String>,
+        writers: Vec<(i64, Address)>,
+    }
+
+    let mut rows: Vec<Row> = Vec::new();
+    let mut index: HashMap<(String, String), usize> = HashMap::new();
+    for member in listed {
+        let Member {
+            summary,
+            thread,
+            header_id,
+        } = member;
+        let thread = if threads { thread } else { summary.id.clone() };
+        let key = (summary.folder_id.clone(), thread.clone());
+        let writer = (summary.date_sent, summary.from.clone());
+        let row = match index.get(&key) {
+            Some(&at) => {
+                let row = &mut rows[at];
+                let c = &mut row.conversation;
+                c.message_ids.push(summary.id.clone());
+                c.count += 1;
+                c.latest.is_read &= summary.is_read;
+                c.latest.is_flagged |= summary.is_flagged;
+                c.latest.has_attachments |= summary.has_attachments;
+                row
+            }
+            None => {
+                index.insert(key, rows.len());
+                rows.push(Row {
+                    conversation: Conversation {
+                        message_ids: vec![summary.id.clone()],
+                        count: 1,
+                        senders: Vec::new(),
+                        latest: summary,
+                    },
+                    thread,
+                    header_ids: HashSet::new(),
+                    writers: Vec::new(),
+                });
+                rows.last_mut().expect("just pushed")
+            }
+        };
+        row.writers.push(writer);
+        row.header_ids.extend(header_id);
+    }
+
+    let mut replies_by_thread: HashMap<&str, Vec<&Member>> = HashMap::new();
+    for reply in &replies {
+        replies_by_thread
+            .entry(reply.thread.as_str())
+            .or_default()
+            .push(reply);
+    }
+    rows.into_iter()
+        .map(|mut row| {
+            let mut counted: HashSet<&str> = HashSet::new();
+            for reply in replies_by_thread
+                .get(row.thread.as_str())
+                .into_iter()
+                .flatten()
+            {
+                // In "Sent" itself they are rows of the list already; copies count once.
+                let copy = reply
+                    .header_id
+                    .as_deref()
+                    .is_some_and(|id| row.header_ids.contains(id) || !counted.insert(id));
+                if reply.summary.folder_id == row.conversation.latest.folder_id || copy {
+                    continue;
+                }
+                row.conversation.count += 1;
+                row.writers
+                    .push((reply.summary.date_sent, reply.summary.from.clone()));
+            }
+            row.writers.sort_by_key(|(date, _)| *date);
+            let mut seen = HashSet::new();
+            row.conversation.senders = row
+                .writers
+                .into_iter()
+                .filter(|(_, from)| seen.insert(from.address.to_lowercase()))
+                .map(|(_, from)| from)
+                .collect();
+            row.conversation
+        })
+        .collect()
 }
 
 /// User input as an FTS5 query: each word quoted (so `-`, `:` or `AND` are just text) and
@@ -295,18 +545,18 @@ mod tests {
         let conn = db.conn();
         let (newest, inbox) = seed(&conn);
 
-        let in_folder = list_messages(&conn, &inbox).unwrap();
+        let in_folder = list_messages(&conn, &inbox, true).unwrap();
         assert_eq!(
             in_folder
                 .iter()
-                .map(|m| m.subject.as_deref().unwrap())
+                .map(|row| row.latest.subject.as_deref().unwrap())
                 .collect::<Vec<_>>(),
             ["Newer", "Older"]
         );
-        assert_eq!(in_folder[0].id, newest);
+        assert_eq!(in_folder[0].latest.id, newest);
 
         // The unified inbox leaves out sent mail.
-        assert_eq!(list_messages(&conn, UNIFIED_INBOX).unwrap().len(), 2);
+        assert_eq!(list_messages(&conn, UNIFIED_INBOX, true).unwrap().len(), 2);
     }
 
     #[test]
@@ -393,10 +643,10 @@ mod tests {
         .unwrap();
 
         let ids = |query: &str| -> Vec<String> {
-            search_messages(&conn, query)
+            search_messages(&conn, query, true)
                 .unwrap()
                 .into_iter()
-                .map(|m| m.id)
+                .map(|row| row.latest.id)
                 .collect()
         };
         assert_eq!(ids("rech"), [target.as_str()]);
@@ -425,13 +675,130 @@ mod tests {
                       ('other', 'acc', 'all', 8, '<y@example.org>', 'Quartalszahlen alt', 0);",
         )
         .unwrap();
-        let mut ids: Vec<String> = search_messages(&conn, "quartal")
+        let mut ids: Vec<String> = search_messages(&conn, "quartal", false)
             .unwrap()
             .into_iter()
-            .map(|m| m.id)
+            .map(|row| row.latest.id)
             .collect();
         ids.sort();
         assert_eq!(ids, ["in-inbox", "other"]);
+    }
+
+    /// A conversation in the inbox with a reply from "Sent", a mail to oneself (one copy in each
+    /// folder) and a mail on its own.
+    fn seed_conversation(conn: &Connection) {
+        seed(conn);
+        conn.execute_batch(
+            "INSERT INTO messages (id, account_id, folder_id, uid, message_id, thread_id, subject,
+               from_name, from_address, date_sent, is_read, is_flagged, body_text, fetched_at)
+             VALUES
+               ('plan', 'acc', 'inbox', 10, 'plan@x', 't1', 'Wanderung', 'Lena', 'lena@example.org',
+                 10000, 1, 0, 'Treffpunkt am Bahnhof', 0),
+               ('reply', 'acc', 'sent', 10, 'reply@x', 't1', 'Re: Wanderung', 'Alex',
+                 'alex@example.org', 20000, 1, 0, 'Bin dabei', 0),
+               ('answer', 'acc', 'inbox', 11, 'answer@x', 't1', 'Re: Wanderung', 'Ben',
+                 'ben@example.org', 30000, 0, 1, 'Ich auch', 0),
+               ('lena-again', 'acc', 'inbox', 12, 'again@x', 't1', 'Re: Wanderung', 'Lena',
+                 'LENA@example.org', 40000, 1, 0, 'Schön', 0),
+               ('note', 'acc', 'inbox', 13, 'note@x', 't2', 'Notiz', 'Alex', 'alex@example.org',
+                 5000, 1, 0, 'Milch kaufen', 0),
+               ('note-sent', 'acc', 'sent', 11, 'note@x', 't2', 'Notiz', 'Alex',
+                 'alex@example.org', 5000, 1, 0, 'Milch kaufen', 0);",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn conversations_are_rows_with_the_replies_from_sent() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed_conversation(&conn);
+
+        let rows = list_messages(&conn, "inbox", true).unwrap();
+        let hike = &rows[0];
+        assert_eq!(hike.latest.id, "lena-again");
+        assert_eq!(hike.message_ids, ["lena-again", "answer", "plan"]);
+        // Three in the inbox and the reply from "Sent".
+        assert_eq!(hike.count, 4);
+        let senders: Vec<&str> = hike.senders.iter().map(|s| s.address.as_str()).collect();
+        assert_eq!(
+            senders,
+            ["lena@example.org", "alex@example.org", "ben@example.org"]
+        );
+        assert!(!hike.latest.is_read, "one message is unread");
+        assert!(hike.latest.is_flagged, "one message is flagged");
+        // The mail to oneself counts once; the two older seeded mails stand alone.
+        let note = rows.iter().find(|row| row.latest.id == "note").unwrap();
+        assert_eq!(note.count, 1);
+        assert_eq!(rows.len(), 4);
+
+        // In "Sent" the replies are rows of their own, without the inbox's mail.
+        let sent = list_messages(&conn, "sent", true).unwrap();
+        let reply = sent.iter().find(|row| row.latest.id == "reply").unwrap();
+        assert_eq!((reply.message_ids.len(), reply.count), (1, 1));
+
+        // Without conversations every message is a row.
+        let single = list_messages(&conn, "inbox", false).unwrap();
+        assert_eq!(single.len(), 6);
+        assert!(single.iter().all(|row| row.count == 1));
+    }
+
+    #[test]
+    fn a_conversation_shows_its_folder_and_the_replies_newest_first() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed_conversation(&conn);
+
+        let ids = |message_id: &str, threads: bool| -> Vec<String> {
+            get_conversation(&conn, message_id, threads)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.id)
+                .collect()
+        };
+        assert_eq!(ids("plan", true), ["lena-again", "answer", "reply", "plan"]);
+        assert_eq!(ids("plan", false), ["plan"]);
+        // The copy in "Sent" is the same mail.
+        assert_eq!(ids("note", true), ["note"]);
+        // Mail on its way out leaves the conversation.
+        conn.execute("UPDATE messages SET leaving = 1 WHERE id = 'answer'", [])
+            .unwrap();
+        assert_eq!(ids("plan", true), ["lena-again", "reply", "plan"]);
+        assert!(ids("missing", true).is_empty());
+    }
+
+    #[test]
+    fn search_results_are_whole_conversations() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed_conversation(&conn);
+
+        // Only the first mail mentions the meeting point; the row is the conversation.
+        let rows = search_messages(&conn, "treffpunkt", true).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].latest.id, "lena-again");
+        assert_eq!(rows[0].message_ids, ["lena-again", "answer", "plan"]);
+        assert_eq!(rows[0].count, 4);
+
+        let single = search_messages(&conn, "treffpunkt", false).unwrap();
+        assert_eq!(single[0].latest.id, "plan");
+        assert_eq!(single[0].message_ids, ["plan"]);
+
+        // Found in the user's own reply: the conversation in the inbox, which shows it.
+        let rows = search_messages(&conn, "dabei", true).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].latest.id, "lena-again");
+        assert_eq!(rows[0].count, 4);
+        // A reply in "Sent" alone stays there.
+        conn.execute(
+            "INSERT INTO messages (id, account_id, folder_id, uid, thread_id, subject, body_text,
+               fetched_at)
+             VALUES ('lonely', 'acc', 'sent', 20, 't9', 'Hallo', 'Niemand antwortet', 0)",
+            [],
+        )
+        .unwrap();
+        let rows = search_messages(&conn, "niemand", true).unwrap();
+        assert_eq!(rows[0].latest.id, "lonely");
     }
 
     #[test]

@@ -98,6 +98,26 @@ pub struct MessageSummary {
     pub has_attachments: bool,
 }
 
+/// A row of the message list: a conversation within one folder, shown with its newest message.
+/// Where conversations are off, every message is one of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Conversation {
+    /// The newest message. Its read, flagged and attachment state stand for the conversation:
+    /// unread while one of its messages is, flagged while one is.
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub latest: MessageSummary,
+    /// The conversation's messages in this folder, newest first: what marking, archiving,
+    /// deleting and moving act on.
+    pub message_ids: Vec<String>,
+    /// All messages the conversation shows, the user's own replies from "Sent" included.
+    pub count: u32,
+    /// Who wrote, in the order of their first message, each once.
+    pub senders: Vec<Address>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

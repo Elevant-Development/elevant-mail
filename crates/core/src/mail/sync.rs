@@ -546,6 +546,7 @@ async fn fetch_and_store(
         store_message(&tx, folder, *uid, message, *complete, meta)?;
         stored += 1;
     }
+    crate::threads::assign_pending(&tx)?;
     tx.commit()?;
     Ok(stored)
 }
@@ -924,10 +925,11 @@ mod tests {
         // Filling the cache is no news.
         assert!(report.new_mail.is_empty());
         assert_eq!(setup.cached_uids(), (21..=120).collect::<Vec<_>>());
-        let messages = list_messages(&setup.db.conn(), UNIFIED_INBOX).unwrap();
-        assert_eq!(messages[0].subject.as_deref(), Some("Message 120"));
-        assert_eq!(messages[0].from.name.as_deref(), Some("Lena Fischer"));
-        assert_eq!(messages[0].snippet, "Body of message 120");
+        let rows = list_messages(&setup.db.conn(), UNIFIED_INBOX, false).unwrap();
+        let newest = &rows[0].latest;
+        assert_eq!(newest.subject.as_deref(), Some("Message 120"));
+        assert_eq!(newest.from.name.as_deref(), Some("Lena Fischer"));
+        assert_eq!(newest.snippet, "Body of message 120");
 
         let folders = list_folders(&setup.db.conn()).unwrap();
         let inbox = folders.iter().find(|f| f.id == setup.inbox_id).unwrap();
@@ -1230,10 +1232,10 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n"
 
         /// Cached and listed: a message on its way out is cached but not listed.
         fn listed_uids(&self) -> Vec<u32> {
-            let listed: Vec<String> = list_messages(&self.db.conn(), &self.inbox_id)
+            let listed: Vec<String> = list_messages(&self.db.conn(), &self.inbox_id, false)
                 .unwrap()
                 .into_iter()
-                .map(|m| m.id)
+                .map(|row| row.latest.id)
                 .collect();
             self.cached_uids()
                 .into_iter()

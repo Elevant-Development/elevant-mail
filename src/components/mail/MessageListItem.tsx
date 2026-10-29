@@ -1,33 +1,43 @@
-import { Avatar } from "@/components/common/Avatar";
-import { Icon } from "@/components/common/Icon";
-import { displayName, formatListDate } from "@/lib/formatting";
-import { locale, t } from "@/lib/i18n";
 import type { MouseEvent } from "react";
 
-import type { MessageSummary } from "@/lib/tauri";
+import { Avatar } from "@/components/common/Avatar";
+import { Icon } from "@/components/common/Icon";
+import { senderNames } from "@/lib/conversations";
+import { displayName, formatListDate } from "@/lib/formatting";
+import { locale, t, tCount } from "@/lib/i18n";
+import type { Conversation } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/stores/ui";
 
 interface MessageListItemProps {
-  message: MessageSummary;
+  message: Conversation;
   selected: boolean;
   now: number;
   /** Set in the unified inbox: a stripe on the card's edge tells accounts apart. */
   accountColor?: string;
+  ownAddresses: Set<string>;
   /** With the click, so Ctrl and Shift can add to the selection. */
   onSelect: (event: MouseEvent) => void;
 }
 
-/** One message as a card; unread mail gets a dot on the avatar. */
+/**
+ * One message or conversation as a card; unread mail gets a dot on the avatar. A conversation
+ * names everyone who wrote and how many messages it has.
+ */
 export function MessageListItem({
   message,
   selected,
   now,
   accountColor,
+  ownAddresses,
   onSelect,
 }: MessageListItemProps) {
   const compact = useUiStore((s) => s.density === "compact");
   const unread = !message.isRead;
+  const names =
+    message.senders.length > 1
+      ? senderNames(message.senders, ownAddresses)
+      : displayName(message.from);
 
   return (
     <button
@@ -57,8 +67,16 @@ export function MessageListItem({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className={cn("truncate", unread ? "font-semibold" : "text-foreground/85")}>
-            {displayName(message.from)}
+            {names}
           </span>
+          {message.count > 1 && (
+            <span
+              aria-hidden
+              className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] leading-4 font-medium text-muted-foreground tabular-nums"
+            >
+              {message.count}
+            </span>
+          )}
           <span
             className={cn(
               "ml-auto shrink-0 text-xs tabular-nums",
@@ -85,6 +103,7 @@ export function MessageListItem({
       </div>
       <span className="sr-only">
         {[
+          message.count > 1 && tCount("conversation.count", message.count),
           unread && t("message.unread"),
           message.isFlagged && t("message.flagged"),
           message.hasAttachments && t("message.attachment"),

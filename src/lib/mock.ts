@@ -9,6 +9,7 @@ import type {
   AccountSettings,
   Address,
   Backend,
+  Conversation,
   Folder,
   FolderRole,
   Message,
@@ -106,6 +107,8 @@ interface MockMessage {
   body: string;
   html?: MockHtml;
   files?: MockFile[];
+  /** Sample mail with the same thread forms a conversation. */
+  thread?: string;
 }
 
 interface MockFile {
@@ -164,6 +167,7 @@ const mockMessages: MockMessage[] = [
     from: { name: "Lena Fischer", address: "lena.fischer@example.org" },
     subject: L("Wanderung am Samstag?", "Hike on Saturday?"),
     ago: 14 * MINUTE,
+    thread: "hike",
     body: L(
       "Hi Alex,\n\nhast du am Samstag Lust auf die große Runde um den See? Wir würden gegen 9 Uhr am Bahnhof losfahren und unterwegs irgendwo einkehren.\n\nSag mir bis Freitag Bescheid, dann reserviere ich einen Tisch.\n\nViele Grüße\nLena",
       "Hi Alex,\n\nfancy the long loop around the lake on Saturday? We'd leave the station around 9 and stop for lunch somewhere on the way.\n\nLet me know by Friday and I'll book a table.\n\nCheers\nLena",
@@ -323,6 +327,7 @@ const mockMessages: MockMessage[] = [
     subject: L("Re: Re: Release 0.1 – Testplan", "Re: Re: Release 0.1 – test plan"),
     ago: 3 * DAY,
     read: true,
+    thread: "release",
     body: L(
       "Ich habe den Testplan um die Fälle für den Offline-Start ergänzt. Können wir den Rauchtest am Freitag machen?\n\nTim\n\n> Am Montag schrieb Alex:\n> Passt für mich, bitte noch die Windows-Fälle aufnehmen.",
       "I've added the offline start cases to the test plan. Can we do the smoke test on Friday?\n\nTim\n\n> On Monday Alex wrote:\n> Fine with me, please add the Windows cases too.",
@@ -388,6 +393,7 @@ const mockMessages: MockMessage[] = [
     subject: L("Re: Umzugshilfe", "Re: Help with the move"),
     ago: 16 * DAY,
     read: true,
+    thread: "move",
     body: L(
       "Klar helfe ich! Ich bringe noch zwei Freunde mit, dann sind wir schnell durch.\n\nSophie",
       "Of course I'll help! I'll bring two friends, then we'll be done quickly.\n\nSophie",
@@ -437,6 +443,7 @@ const mockMessages: MockMessage[] = [
     subject: L("Umzugshilfe", "Help with the move"),
     ago: 17 * DAY,
     read: true,
+    thread: "move",
     body: L(
       "Hi Sophie,\n\nam 14. ziehe ich um. Hättest du Zeit, mit anzupacken? Pizza geht auf mich.\n\nAlex",
       "Hi Sophie,\n\nI'm moving on the 14th. Would you have time to lend a hand? Pizza is on me.\n\nAlex",
@@ -452,6 +459,63 @@ const mockMessages: MockMessage[] = [
     body: L(
       "Die Zugänge sind eingerichtet. Melde dich, falls etwas fehlt.",
       "The accounts are set up. Let me know if anything is missing.",
+    ),
+  },
+  {
+    account: "acc-private",
+    role: "inbox",
+    from: { name: "Jonas Weber", address: "jonas.weber@example.org" },
+    to: [
+      { name: "Lena Fischer", address: "lena.fischer@example.org" },
+      { name: "Alex Berger", address: "alex@example.org" },
+    ],
+    subject: L("Re: Wanderung am Samstag?", "Re: Hike on Saturday?"),
+    ago: 6 * MINUTE,
+    thread: "hike",
+    body: L(
+      "Ich komme auch mit! Proviant für alle bringe ich mit, ihr kümmert euch um den Kaffee.\n\nJonas",
+      "Count me in! I'll bring food for everyone, you take care of the coffee.\n\nJonas",
+    ),
+  },
+  {
+    account: "acc-private",
+    role: "sent",
+    from: { name: "Alex Berger", address: "alex@example.org" },
+    to: [{ name: "Lena Fischer", address: "lena.fischer@example.org" }],
+    subject: L("Raus am Wochenende?", "Out this weekend?"),
+    ago: 2 * DAY,
+    read: true,
+    thread: "hike",
+    body: L(
+      "Hi Lena,\n\nwollen wir am Wochenende mal wieder raus? Das Wetter soll gut werden.\n\nAlex",
+      "Hi Lena,\n\nshall we get out of town this weekend? The weather is supposed to be good.\n\nAlex",
+    ),
+  },
+  {
+    account: "acc-work",
+    role: "sent",
+    from: { name: "Alex Berger", address: "alex.berger@example.com" },
+    to: [{ name: "Tim Hoffmann", address: "tim.hoffmann@example.com" }],
+    subject: L("Re: Release 0.1 – Testplan", "Re: Release 0.1 – test plan"),
+    ago: 4 * DAY,
+    read: true,
+    thread: "release",
+    body: L(
+      "Passt für mich, bitte noch die Windows-Fälle aufnehmen.\n\nAlex",
+      "Fine with me, please add the Windows cases too.\n\nAlex",
+    ),
+  },
+  {
+    account: "acc-work",
+    role: "inbox",
+    from: { name: "Tim Hoffmann", address: "tim.hoffmann@example.com" },
+    subject: L("Release 0.1 – Testplan", "Release 0.1 – test plan"),
+    ago: 5 * DAY,
+    read: true,
+    thread: "release",
+    body: L(
+      "Hallo Alex,\n\nanbei der erste Entwurf des Testplans für Release 0.1: Installation, erster Start, Konto anlegen, Sync. Schau bitte drüber, ob etwas fehlt.\n\nTim",
+      "Hi Alex,\n\nhere is the first draft of the test plan for release 0.1: installation, first start, adding an account, sync. Please check whether anything is missing.\n\nTim",
     ),
   },
 ];
@@ -561,6 +625,48 @@ function toSummary({
   ...summary
 }: Message): MessageSummary {
   return summary;
+}
+
+/** The sample conversation of a message; mail outside one is a conversation of its own. */
+function threadOf(message: Message): string {
+  const index = messages.indexOf(message);
+  return allMockMessages[index]?.thread ?? message.id;
+}
+
+/** The user's own replies in the conversation, from the account's "Sent". */
+function sentReplies(latest: Message): Message[] {
+  const sent = folderId(latest.accountId, "sent");
+  if (latest.folderId === sent) return [];
+  return messages.filter(
+    (m) => m.folderId === sent && isListed(m) && threadOf(m) === threadOf(latest),
+  );
+}
+
+/** Rows as the backend groups them: one per folder and conversation, newest first. */
+function toConversations(listed: Message[], threads: boolean): Conversation[] {
+  const rows = new Map<string, { latest: Message; members: Message[] }>();
+  for (const message of [...listed].sort((a, b) => b.dateSent - a.dateSent)) {
+    const key = `${message.folderId}/${threads ? threadOf(message) : message.id}`;
+    const row = rows.get(key);
+    if (row) row.members.push(message);
+    else rows.set(key, { latest: message, members: [message] });
+  }
+  return [...rows.values()].map(({ latest, members }) => {
+    const replies = threads ? sentReplies(latest) : [];
+    const writers = [...members, ...replies].sort((a, b) => a.dateSent - b.dateSent);
+    const senders = writers
+      .map((m) => m.from)
+      .filter((from, index, all) => all.findIndex((f) => f.address === from.address) === index);
+    return {
+      ...toSummary(latest),
+      isRead: members.every((m) => m.isRead),
+      isFlagged: members.some((m) => m.isFlagged),
+      hasAttachments: members.some((m) => m.hasAttachments),
+      messageIds: members.map((m) => m.id),
+      count: members.length + replies.length,
+      senders,
+    };
+  });
 }
 
 function setMockFlag(messageIds: string[], flag: "isRead" | "isFlagged", value: boolean) {
@@ -731,13 +837,24 @@ export const mockBackend: Backend = {
     await mockBrowserSignIn();
   },
   listFolders: async () => folders,
-  listMessages: async (mailboxId) => {
+  listMessages: async (mailboxId, threads) => {
     const inMailbox = (
       mailboxId === UNIFIED_INBOX
         ? messages.filter((m) => m.folderId.endsWith(":inbox"))
         : messages.filter((m) => m.folderId === mailboxId)
     ).filter(isListed);
-    return inMailbox.map(toSummary).sort((a, b) => b.dateSent - a.dateSent);
+    return toConversations(inMailbox, threads);
+  },
+  getConversation: async (messageId, threads) => {
+    const opened = messages.find((m) => m.id === messageId);
+    if (!opened) return [];
+    if (!threads) return [toSummary(opened)];
+    const members = messages.filter(
+      (m) => m.folderId === opened.folderId && isListed(m) && threadOf(m) === threadOf(opened),
+    );
+    return [...members, ...sentReplies(opened)]
+      .sort((a, b) => b.dateSent - a.dateSent)
+      .map(toSummary);
   },
   getMessage: async (messageId, remoteImages) => {
     const index = messages.findIndex((m) => m.id === messageId);
@@ -749,20 +866,35 @@ export const mockBackend: Backend = {
       bodyHtml: html && message.bodyComplete ? renderMockHtml(html, remoteImages) : null,
     };
   },
-  searchMessages: async (query) => {
+  searchMessages: async (query, threads) => {
     const words = query.toLocaleLowerCase(locale).split(/\s+/).filter(Boolean);
     if (words.length === 0) return [];
-    return messages
-      .filter(isListed)
-      .filter((m) => {
-        const text = [m.subject, m.from.name, m.from.address, m.bodyText]
-          .join(" ")
-          .toLocaleLowerCase(locale);
-        return words.every((word) => text.includes(word));
-      })
-      .map(toSummary)
-      .sort((a, b) => b.dateSent - a.dateSent)
-      .slice(0, 300);
+    const hits = messages.filter(isListed).filter((m) => {
+      const text = [m.subject, m.from.name, m.from.address, m.bodyText]
+        .join(" ")
+        .toLocaleLowerCase(locale);
+      return words.every((word) => text.includes(word));
+    });
+    // With conversations a result is the whole conversation in its folder; for the user's own
+    // reply the folder where the rest of it is, the inbox first.
+    const shownIn = (hit: Message) => {
+      if (hit.folderId !== folderId(hit.accountId, "sent")) return hit.folderId;
+      const others = messages.filter(
+        (m) =>
+          isListed(m) &&
+          threadOf(m) === threadOf(hit) &&
+          !/:(sent|drafts|trash|junk)$/.test(m.folderId),
+      );
+      return (others.find((m) => m.folderId.endsWith(":inbox")) ?? others[0] ?? hit).folderId;
+    };
+    const shown = threads
+      ? messages.filter(
+          (m) =>
+            isListed(m) &&
+            hits.some((hit) => shownIn(hit) === m.folderId && threadOf(hit) === threadOf(m)),
+        )
+      : hits;
+    return toConversations(shown, threads).slice(0, 300);
   },
   setRead: async (messageIds, read) => setMockFlag(messageIds, "isRead", read),
   setFlagged: async (messageIds, flagged) => setMockFlag(messageIds, "isFlagged", flagged),

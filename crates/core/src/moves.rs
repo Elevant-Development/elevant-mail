@@ -369,10 +369,10 @@ mod tests {
     }
 
     fn listed(db: &Database, folder_id: &str) -> Vec<String> {
-        crate::mailbox::list_messages(&db.conn(), folder_id)
+        crate::mailbox::list_messages(&db.conn(), folder_id, false)
             .unwrap()
             .into_iter()
-            .map(|message| message.id)
+            .map(|row| row.latest.id)
             .collect()
     }
 

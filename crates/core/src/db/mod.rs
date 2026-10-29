@@ -50,6 +50,13 @@ impl Database {
         conn.pragma_update(None, "foreign_keys", true)?;
         conn.busy_timeout(Duration::from_secs(5))?;
         migrations::migrate(&mut conn)?;
+        // Mail cached before conversations existed, the first time after the update.
+        let tx = conn.transaction()?;
+        let placed = crate::threads::assign_pending(&tx)?;
+        tx.commit()?;
+        if placed > 0 {
+            tracing::info!(placed, "placed cached mail in conversations");
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })

@@ -137,6 +137,13 @@ Sync rules (implemented in `crates/core/src/mail/sync.rs`):
   10 minutes). A change there makes the frontend sync the account (`inbox-changed`). The
   connection starts with the app and a new account, restarts after a new login and stops when the
   account is removed. Servers without IDLE stay with the 5-minute poll.
+- Conversations (`crates/core/src/threads.rs`): each message gets a `thread_id` when it is stored,
+  oldest first. A reply finds its conversation by the Message-IDs it names (In-Reply-To,
+  References), which `thread_keys` keeps for every conversation, so it also works when the reply
+  arrives before the mail it answers; a message naming two conversations joins them. A reply
+  without these headers ("Re:", "AW:" and the like) joins the latest conversation with the same
+  subject from the 60 days before it. Conversations belong to one account and span its folders.
+  The cache from before was placed once at the first start after the update.
 - Only one operation per account runs at a time; further ones wait. Accounts do not block each
   other, and an error shows only on its own account.
 - Progress goes to the interface as the event `sync-progress` ("connecting…", "checking for new
@@ -214,7 +221,8 @@ it does not understand.
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `accounts`        | Accounts with IMAP and (from phase 4) SMTP settings, sign-in method, colour. No passwords.                                                                 |
 | `folders`         | Folders per account with SPECIAL-USE role, `uid_validity`, `uid_next`, `highest_modseq`, counts                                                           |
-| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to` and `references_header` for threads, `leaving` while a move is on its way; unique per folder and UID |
+| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to` and `references_header`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way; unique per folder and UID |
+| `thread_keys`     | Every Message-ID a conversation has seen, per account, so replies find it                                                                                  |
 | `attachments`     | Attachments per message with the MIME part to fetch them; small inline images with their bytes                                                           |
 | `pending_actions` | Local changes that still have to reach the server; `due_at` holds a move back while it can be undone                                                       |
 | `messages_fts`    | Full-text index (FTS5) over subject, sender and text                                                                                                      |
@@ -253,7 +261,7 @@ checks that they are current.
 | App         | `app_status` (version, schema version, keyring available)                                                                                 |
 | Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `change_login` (server settings, password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
 | Folders     | `list_folders`                                                                                                                            |
-| Mail        | `list_messages` (folder or unified inbox), `get_message` (with `remote_images` to allow a mail's external images), `load_message_body`, `search_messages` |
+| Mail        | `list_messages` (folder or unified inbox; with `threads` one row per conversation), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images), `load_message_body`, `search_messages` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
 | Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
 | Links       | `open_link`                                                                                                                               |
@@ -272,6 +280,14 @@ finds "Rechnung"); accents and umlauts do not matter ("koln" finds "Köln"). The
 word by word, so FTS5 syntax such as `OR` or `-` is plain text for the user. A message that sits
 in several folders of an account (Gmail labels, "All Mail", copies) is listed once, preferably
 from the inbox. Large mail is searchable by its text only after it was opened once.
+
+With conversations on, a row of `list_messages` and `search_messages` is a conversation within
+one folder, shown with its newest message: unread while one of its messages is, flagged while one
+is, with everyone who wrote and the number of messages, the user's own replies from "Sent"
+included. Its `messageIds` (the conversation's messages in that folder) are what marking,
+archiving, deleting and moving act on; replies in "Sent" stay there. A search hit in "Sent" shows
+as the conversation in the folder where the rest of it is. `get_conversation` returns those
+messages plus the replies from "Sent", newest first.
 
 Events from the backend:
 
@@ -369,8 +385,12 @@ Decisions:
   groups without mail of their own start collapsed. A role belongs to one folder only, SPECIAL-USE
   wins over a guess from the name; where another folder carries the translated name (web.de: "Sent"
   as the sent folder plus an old "Gesendet"), the special folder shows its server name too.
-- **Threads:** a conversation view like Gmail, Apple Mail, Outlook and Fastmail, configurable,
-  on by default. First per folder, then with the user's own replies from "Sent". Phase 3.
+- **Conversations:** like Gmail, Apple Mail, Outlook and Fastmail, on by default, switchable in
+  the appearance ("List: conversations / single messages"). A row names everyone who wrote by
+  first name ("Lena, me, Jonas") and the number of messages. The reader shows the newest message
+  on top; the newest and the unread ones are open, older ones folded to a line (sender, start,
+  date) and open with a click. The user's own replies from "Sent" are part of it, marked "Sent".
+  Opening marks the whole conversation read; the star goes on its newest message.
 - **HTML mail in dark mode:** hybrid. Simple mail without its own design follows dark mode (the
   app's colours and reading font); designed mail (own background or text colours) sits on a light
   page. Switchable per mail: simple mail onto the light page, designed mail into a dark view with
@@ -430,7 +450,8 @@ can consent without an admin, paging in `list_messages` beyond 5,000 cached mess
 - Filters: unread, flagged, sender, with attachment
 - Keyboard focus management
 - Settings: theme, density, default account, allow images per sender, mark-as-read delay
-- Threads (conversation view), configurable, on by default
+- Conversations, switchable, on by default — done. Grouped by Message-ID headers, replies
+  without them by subject; per folder, with the user's own replies from "Sent".
 
 ### Phase 4: sending
 
@@ -572,4 +593,7 @@ Phase 3:
 15. **New mail at once and notifications:** IMAP IDLE per account, desktop notifications with
     their settings — done
 
-Next: threads (conversation view).
+16. **Conversations:** grouped list, conversation in the reader with the replies from "Sent",
+    switchable — done
+
+Next: filters and server-side search.

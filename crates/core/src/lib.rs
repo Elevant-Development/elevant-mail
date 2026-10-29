@@ -14,6 +14,7 @@ pub mod moves;
 pub mod oauth;
 pub mod redact;
 pub mod secrets;
+mod threads;
 
 pub use db::Database;
 pub use error::{Error, ErrorKind, Hint, Result};

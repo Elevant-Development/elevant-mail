@@ -35,11 +35,16 @@ interface UiState {
   notifications: boolean;
   /** Sender and subject in it; off, it only names the account. */
   notificationPreview: boolean;
+  /** The list shows conversations; off, every message is a row. */
+  threads: boolean;
   /** Folder id or UNIFIED_INBOX. */
   selectedMailboxId: string;
-  /** The open message, and the fixed end of a Shift range. */
+  /**
+   * The open row, and the fixed end of a Shift range. A row is named by its newest message (with
+   * conversations, see `Conversation`); `followRows` keeps the selection on it when that changes.
+   */
   selectedMessageId: string | null;
-  /** All selected messages; just the open one unless Ctrl or Shift added more. */
+  /** All selected rows; just the open one unless Ctrl or Shift added more. */
   selectedIds: string[];
   /** The moving end of a Shift range (Shift+j/k, Shift+click). */
   selectionEnd: string | null;
@@ -71,6 +76,7 @@ interface UiState {
   setLanguage: (language: LanguageSetting) => void;
   setNotifications: (on: boolean) => void;
   setNotificationPreview: (on: boolean) => void;
+  setThreads: (on: boolean) => void;
   selectMailbox: (mailboxId: string) => void;
   selectMessage: (messageId: string | null) => void;
   /** Ctrl+click: adds the message or takes it out again. */
@@ -80,6 +86,11 @@ interface UiState {
   selectAll: (messageIds: string[]) => void;
   /** Several selected messages at once, e.g. after undo. */
   setSelection: (messageIds: string[]) => void;
+  /**
+   * After the list changed: a selected id that is no longer a row moves to the row whose
+   * conversation holds it, e.g. when a reply arrived or undo brought messages back.
+   */
+  followRows: (rows: { id: string; messageIds: string[] }[]) => void;
   openMoveDialog: (messageIds: string[]) => void;
   closeMoveDialog: () => void;
   askDeleteForever: (messageIds: string[] | null) => void;
@@ -104,6 +115,7 @@ export const useUiStore = create<UiState>()(
       language: "system",
       notifications: true,
       notificationPreview: true,
+      threads: true,
       selectedMailboxId: UNIFIED_INBOX,
       selectedMessageId: null,
       selectedIds: [],
@@ -125,6 +137,7 @@ export const useUiStore = create<UiState>()(
       setDensity: (density) => set({ density }),
       setNotifications: (notifications) => set({ notifications }),
       setNotificationPreview: (notificationPreview) => set({ notificationPreview }),
+      setThreads: (threads) => set({ threads }),
       setLanguage: (language) => {
         set({ language });
         // The texts are read once; a reload shows them in the new language.
@@ -192,6 +205,25 @@ export const useUiStore = create<UiState>()(
           selectedMessageId: messageIds[0] ?? null,
           selectionEnd: messageIds[messageIds.length - 1] ?? null,
         }),
+      followRows: (rows) =>
+        set((state) => {
+          const ids = new Set(rows.map((row) => row.id));
+          const rowOf = (id: string | null) =>
+            id === null || ids.has(id)
+              ? id
+              : (rows.find((row) => row.messageIds.includes(id))?.id ?? id);
+          const selectedIds = [...new Set(state.selectedIds.map(rowOf))].filter(
+            (id): id is string => id !== null,
+          );
+          const selectedMessageId = rowOf(state.selectedMessageId);
+          const selectionEnd = rowOf(state.selectionEnd);
+          const unchanged =
+            selectedMessageId === state.selectedMessageId &&
+            selectionEnd === state.selectionEnd &&
+            selectedIds.length === state.selectedIds.length &&
+            selectedIds.every((id, index) => id === state.selectedIds[index]);
+          return unchanged ? state : { selectedIds, selectedMessageId, selectionEnd };
+        }),
       openMoveDialog: (messageIds) => set({ moveDialogIds: messageIds }),
       closeMoveDialog: () => set({ moveDialogIds: null }),
       askDeleteForever: (messageIds) => set({ deleteForeverIds: messageIds }),
@@ -223,6 +255,7 @@ export const useUiStore = create<UiState>()(
         language: state.language,
         notifications: state.notifications,
         notificationPreview: state.notificationPreview,
+        threads: state.threads,
         collapsed: state.collapsed,
       }),
       // Version 1 stored the design comparison and other theme ids; version 2 font pairings and
