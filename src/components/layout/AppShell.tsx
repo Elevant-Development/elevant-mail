@@ -3,10 +3,15 @@ import { useEffect } from "react";
 import { MessageList } from "@/components/mail/MessageList";
 import { MessageReader } from "@/components/mail/MessageReader";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { cn } from "@/lib/utils";
 import { useUiStore } from "@/stores/ui";
 
+import { listWidth, sidebarWidth } from "./columns";
 import { Sidebar } from "./Sidebar";
 import { TitleBar } from "./TitleBar";
+
+/** List and reader float as rounded panels on the canvas; the sidebar sits on the canvas. */
+const panel = "overflow-hidden rounded-2xl border bg-card shadow-[0_1px_3px_var(--shadow-color)]";
 
 /**
  * Wide windows: sidebar, list and reader side by side.
@@ -31,19 +36,19 @@ export function AppShell() {
   }, [showOverlay, setSidebarOpen]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-canvas">
       <TitleBar isWide={isWide} />
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         {isWide ? (
           <>
-            <Sidebar className="w-60 shrink-0 border-r border-sidebar-border" />
-            <MessageList className="w-[clamp(320px,32vw,440px)] shrink-0 border-r" />
-            <MessageReader className="flex-1" />
+            <Sidebar className={cn("shrink-0", sidebarWidth)} />
+            <MessageList className={cn("shrink-0", listWidth, panel)} />
+            <MessageReader className={cn("flex-1", panel)} />
           </>
         ) : selectedMessageId ? (
-          <MessageReader className="flex-1" onBack={() => selectMessage(null)} />
+          <MessageReader className={cn("flex-1", panel)} onBack={() => selectMessage(null)} />
         ) : (
-          <MessageList className="flex-1" />
+          <MessageList className={cn("flex-1", panel)} />
         )}
       </div>
 

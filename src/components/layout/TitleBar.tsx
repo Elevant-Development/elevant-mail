@@ -1,10 +1,14 @@
-import { Moon, PanelLeft, Settings, Sun } from "lucide-react";
-
+import { ElevantMark } from "@/components/common/ElevantMark";
+import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
 import { SearchInput } from "@/components/common/SearchInput";
 import { t } from "@/lib/i18n";
 import { usesMockData } from "@/lib/tauri";
+import { cn } from "@/lib/utils";
 import { useUiStore } from "@/stores/ui";
+
+import { AppearanceMenu } from "./AppearanceMenu";
+import { listWidth, sidebarWidth } from "./columns";
 
 interface TitleBarProps {
   /** Wide layout shows the app name above the sidebar, narrow layout a sidebar toggle. */
@@ -12,41 +16,38 @@ interface TitleBarProps {
 }
 
 export function TitleBar({ isWide }: TitleBarProps) {
-  const theme = useUiStore((s) => s.theme);
-  const toggleTheme = useUiStore((s) => s.toggleTheme);
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-sidebar px-3">
+    // px-2 and the sidebar column mirror AppShell: the mark starts where the sidebar icons start
+    // (8px outer, 8px sidebar, 8px item padding), the search field where the list starts.
+    <header className="flex h-12 shrink-0 items-center gap-2 bg-canvas px-2">
       {isWide ? (
-        <div className="w-58 shrink-0 px-1 font-semibold tracking-tight select-none">
-          Elevant Mail
+        <div className={cn("flex shrink-0 items-center gap-2.5 px-4 select-none", sidebarWidth)}>
+          <ElevantMark className="size-6 text-primary" />
+          <span className="text-[15px] font-semibold tracking-tight">Elevant Mail</span>
         </div>
       ) : (
         <IconButton
           label={t("titlebar.toggleSidebar")}
-          icon={<PanelLeft />}
+          icon={<Icon name="sidebar" />}
           aria-expanded={sidebarOpen}
           onClick={() => setSidebarOpen(!sidebarOpen)}
         />
       )}
-      <SearchInput className="w-full max-w-sm" />
+      <SearchInput className={isWide ? cn("shrink-0", listWidth) : "min-w-0 flex-1"} />
       <div className="ml-auto flex items-center gap-1">
         {usesMockData && (
           <span
             title={t("app.mockDataHint")}
-            className="mr-1 rounded-full border px-2 py-0.5 text-xs whitespace-nowrap text-muted-foreground select-none"
+            className="mr-1 rounded-md border px-2 py-0.5 text-xs whitespace-nowrap text-muted-foreground select-none"
           >
             {t("app.mockData")}
           </span>
         )}
-        <IconButton
-          label={theme === "dark" ? t("titlebar.themeLight") : t("titlebar.themeDark")}
-          icon={theme === "dark" ? <Sun /> : <Moon />}
-          onClick={toggleTheme}
-        />
-        <IconButton label={t("titlebar.settings")} icon={<Settings />} disabled />
+        <AppearanceMenu />
+        <IconButton label={t("titlebar.settings")} icon={<Icon name="settings" />} disabled />
       </div>
     </header>
   );

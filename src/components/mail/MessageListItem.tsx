@@ -1,6 +1,5 @@
-import { Paperclip, Star } from "lucide-react";
-
 import { Avatar } from "@/components/common/Avatar";
+import { Icon } from "@/components/common/Icon";
 import { displayName, formatListDate } from "@/lib/formatting";
 import { locale, t } from "@/lib/i18n";
 import type { MessageSummary } from "@/lib/tauri";
@@ -15,6 +14,7 @@ interface MessageListItemProps {
   onSelect: () => void;
 }
 
+/** One message as a card; unread mail gets a dot on the avatar. */
 export function MessageListItem({
   message,
   selected,
@@ -30,34 +30,28 @@ export function MessageListItem({
       onClick={onSelect}
       aria-current={selected || undefined}
       className={cn(
-        "relative flex w-full gap-3 border-b border-border/60 px-4 py-2.5 text-left select-none",
-        "transition-colors hover:bg-accent/50 focus-visible:-outline-offset-2",
-        selected && "bg-selection hover:bg-selection",
+        "relative flex w-full gap-3 rounded-xl border border-transparent bg-row px-3 py-3 text-left",
+        "transition-colors select-none hover:bg-row-hover focus-visible:-outline-offset-2",
+        selected && "border-selection-border bg-selection hover:bg-selection",
       )}
     >
-      {unread && (
-        <span
-          aria-hidden
-          className="absolute top-1/2 left-1.5 size-1.5 -translate-y-1/2 rounded-full bg-unread"
-        />
-      )}
-      <Avatar address={message.from} className="mt-0.5" />
+      <Avatar address={message.from} badge={unread} className="mt-0.5 size-10" />
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-center gap-2">
           <span className={cn("truncate", unread ? "font-semibold" : "text-foreground/85")}>
             {displayName(message.from)}
           </span>
           {accountColor && (
             <span
               aria-hidden
-              className="size-1.5 shrink-0 self-center rounded-full"
+              className="size-1.5 shrink-0 rounded-full"
               style={{ backgroundColor: accountColor }}
             />
           )}
           <span
             className={cn(
               "ml-auto shrink-0 text-xs tabular-nums",
-              unread ? "font-medium text-unread" : "text-muted-foreground",
+              unread ? "font-medium text-unread-text" : "text-muted-foreground",
             )}
           >
             {formatListDate(message.dateSent, now, locale)}
@@ -68,11 +62,13 @@ export function MessageListItem({
             {message.subject ?? t("message.noSubject")}
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1 text-muted-foreground">
-            {message.hasAttachments && <Paperclip className="size-3.5" />}
-            {message.isFlagged && <Star className="size-3.5 fill-amber-400 text-amber-400" />}
+            {message.hasAttachments && <Icon name="paperclip" className="size-3.5" />}
+            {message.isFlagged && <Icon name="star" filled className="size-3.5 text-amber-400" />}
           </span>
         </div>
-        <p className="truncate text-xs text-muted-foreground">{message.snippet}</p>
+        <p className="mt-0.5 truncate text-xs leading-relaxed text-muted-foreground">
+          {message.snippet}
+        </p>
       </div>
       <span className="sr-only">
         {[

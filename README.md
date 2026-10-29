@@ -13,6 +13,12 @@ inbox, a calm dark interface.
 
 Built with [Tauri 2](https://tauri.app), React, TypeScript, Tailwind CSS and Rust.
 
+## Privacy
+
+The app talks to your mail servers and nothing else. Fonts, icons and styles are bundled, there
+are no CDNs, no analytics and no telemetry, and the content security policy only allows the
+app's own files.
+
 ## Development
 
 ### Requirements
@@ -90,3 +96,5 @@ docs/                project brief and decisions
 ## License
 
 [GPL-3.0-or-later](LICENSE)
+
+The Elevant logo mark is a trademark of Elevant and is not covered by the code license.

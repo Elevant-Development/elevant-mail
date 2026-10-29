@@ -1,6 +1,5 @@
-import { Mails, Plus } from "lucide-react";
-
 import { AccountList } from "@/components/accounts/AccountList";
+import { Icon } from "@/components/common/Icon";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
 import { UNIFIED_INBOX } from "@/lib/tauri";
@@ -30,7 +29,7 @@ export function Sidebar({ className }: SidebarProps) {
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-2">
         {accounts.length > 1 && (
           <SidebarItem
-            icon={<Mails />}
+            icon="unified"
             label={t("sidebar.unifiedInbox")}
             unreadCount={unifiedUnread}
             selected={selectedMailboxId === UNIFIED_INBOX}
@@ -46,7 +45,7 @@ export function Sidebar({ className }: SidebarProps) {
       </div>
       <div className="border-t border-sidebar-border p-2">
         <Button variant="ghost" size="sm" className="w-full justify-start" disabled>
-          <Plus />
+          <Icon name="plus" />
           {t("sidebar.addAccount")}
         </Button>
       </div>

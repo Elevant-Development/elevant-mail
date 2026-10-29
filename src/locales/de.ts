@@ -3,9 +3,30 @@ export const de = {
   "app.mockDataHint": "Noch nicht mit einem Mail-Server verbunden",
 
   "titlebar.toggleSidebar": "Seitenleiste",
-  "titlebar.themeDark": "Dunkles Design",
-  "titlebar.themeLight": "Helles Design",
   "titlebar.settings": "Einstellungen",
+
+  "appearance.open": "Darstellung",
+  "appearance.mode": "Modus",
+  "appearance.mode.dark": "Dunkel",
+  "appearance.mode.light": "Hell",
+  "appearance.mode.system": "System",
+  "appearance.theme": "Akzentfarbe",
+  "appearance.style": "Stil",
+  "appearance.style.neutral": "Neutral",
+  "appearance.style.tinted": "Getönt",
+  "appearance.font": "Schrift",
+  "appearance.fontSample": "Hallo zusammen, bis morgen!",
+  "appearance.contrast": "Kontrast",
+  "appearance.contrast.soft": "Weich",
+  "appearance.contrast.clear": "Klar",
+  "appearance.contrast.hard": "Hart",
+
+  "theme.coral": "Koralle",
+  "theme.teal": "Türkis",
+  "theme.saffron": "Safran",
+  "theme.sky": "Himmel",
+  "theme.raspberry": "Himbeere",
+  "theme.mono": "Mono",
 
   "search.placeholder": "Suchen",
 
@@ -20,6 +41,7 @@ export const de = {
   "folder.junk": "Spam",
 
   "list.empty": "Keine Mails in diesem Ordner",
+  "list.error": "Die Mails konnten nicht geladen werden",
   "list.unread": "{count} ungelesen",
 
   "message.noSubject": "(Kein Betreff)",
@@ -39,4 +61,5 @@ export const de = {
   "reader.archive": "Archivieren",
   "reader.delete": "Löschen",
   "reader.noBody": "Diese Mail hat keinen Textinhalt.",
+  "reader.error": "Diese Mail konnte nicht geladen werden",
 } as const;

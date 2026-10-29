@@ -1,25 +1,15 @@
-import {
-  Archive,
-  FilePen,
-  Folder as FolderIcon,
-  Inbox,
-  OctagonAlert,
-  Send,
-  Trash2,
-} from "lucide-react";
-import type { ReactNode } from "react";
-
+import { type IconName } from "@/components/common/Icon";
 import { SidebarItem } from "@/components/layout/SidebarItem";
 import { folderLabel, sortFolders } from "@/lib/folders";
 import type { Account, Folder, FolderRole } from "@/lib/tauri";
 
-const roleIcons: Record<FolderRole, ReactNode> = {
-  inbox: <Inbox />,
-  drafts: <FilePen />,
-  sent: <Send />,
-  archive: <Archive />,
-  junk: <OctagonAlert />,
-  trash: <Trash2 />,
+const roleIcons: Record<FolderRole, IconName> = {
+  inbox: "inbox",
+  drafts: "drafts",
+  sent: "sent",
+  archive: "archive",
+  junk: "junk",
+  trash: "trash",
 };
 
 interface AccountListProps {
@@ -43,7 +33,7 @@ export function AccountList({
           <h3
             id={`account-${account.id}`}
             title={account.emailAddress}
-            className="mb-1 flex items-center gap-2 px-2 text-xs font-medium tracking-wide text-muted-foreground uppercase select-none"
+            className="mb-1 flex items-center gap-2 px-2 text-xs font-medium text-muted-foreground select-none"
           >
             <span
               aria-hidden
@@ -56,7 +46,7 @@ export function AccountList({
             {sortFolders(folders.filter((f) => f.accountId === account.id)).map((folder) => (
               <li key={folder.id}>
                 <SidebarItem
-                  icon={folder.role ? roleIcons[folder.role] : <FolderIcon />}
+                  icon={folder.role ? roleIcons[folder.role] : "folder"}
                   label={folderLabel(folder)}
                   unreadCount={folder.unreadCount}
                   selected={folder.id === selectedMailboxId}

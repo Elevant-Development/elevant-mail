@@ -1,17 +1,27 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter/opsz.css";
+@import "@fontsource-variable/onest";
+@import "@fontsource-variable/figtree";
+@import "@fontsource-variable/mona-sans";
+@import "@fontsource-variable/wix-madefor-text";
 @import "@fontsource-variable/geist";
 
 @custom-variant dark (&:is(.dark *));
 
+/* Families come from the chosen font (src/design/fonts.ts); Wix Madefor until it is applied. */
 @theme inline {
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-heading: var(--font-sans);
+  --font-sans: var(--font-ui, "Wix Madefor Text Variable", ui-sans-serif, system-ui, sans-serif);
+  --font-heading: var(--font-heading-family, var(--font-sans));
+  --font-reading: var(--font-reading-family, var(--font-sans));
+  --color-canvas: var(--canvas);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-row: var(--row);
+  --color-row-hover: var(--row-hover);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
@@ -36,6 +46,8 @@
   --color-sidebar-ring: var(--sidebar-ring);
   --color-selection: var(--selection);
   --color-unread: var(--unread);
+  --color-unread-text: var(--unread-text);
+  --color-selection-border: var(--selection-border);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -45,71 +57,12 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Light theme (optional). Neutral greys with a faint cool tint, one blue accent. */
+/*
+ * Colours come from the active theme (src/design/themes.ts), set as custom properties on
+ * <html> before the first render. Only the shape is fixed here.
+ */
 :root {
-  --radius: 0.5rem;
-  --background: oklch(0.995 0.001 265);
-  --foreground: oklch(0.2 0.01 265);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.01 265);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2 0.01 265);
-  --primary: oklch(0.55 0.17 262);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.96 0.004 265);
-  --secondary-foreground: oklch(0.25 0.01 265);
-  --muted: oklch(0.96 0.004 265);
-  --muted-foreground: oklch(0.52 0.012 265);
-  --accent: oklch(0.95 0.006 265);
-  --accent-foreground: oklch(0.22 0.01 265);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.91 0.005 265);
-  --input: oklch(0.9 0.006 265);
-  --ring: oklch(0.55 0.17 262);
-  --sidebar: oklch(0.975 0.003 265);
-  --sidebar-foreground: oklch(0.3 0.01 265);
-  --sidebar-primary: oklch(0.55 0.17 262);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.93 0.008 265);
-  --sidebar-accent-foreground: oklch(0.2 0.01 265);
-  --sidebar-border: oklch(0.91 0.005 265);
-  --sidebar-ring: oklch(0.55 0.17 262);
-  --selection: oklch(0.55 0.17 262 / 10%);
-  --unread: oklch(0.55 0.17 262);
-  --scrollbar: oklch(0 0 0 / 18%);
-}
-
-/* Dark theme (default). */
-.dark {
-  --background: oklch(0.175 0.006 265);
-  --foreground: oklch(0.94 0.005 265);
-  --card: oklch(0.2 0.007 265);
-  --card-foreground: oklch(0.94 0.005 265);
-  --popover: oklch(0.22 0.008 265);
-  --popover-foreground: oklch(0.94 0.005 265);
-  --primary: oklch(0.72 0.13 262);
-  --primary-foreground: oklch(0.17 0.01 265);
-  --secondary: oklch(0.24 0.008 265);
-  --secondary-foreground: oklch(0.94 0.005 265);
-  --muted: oklch(0.24 0.008 265);
-  --muted-foreground: oklch(0.66 0.012 265);
-  --accent: oklch(0.25 0.009 265);
-  --accent-foreground: oklch(0.96 0.005 265);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 7%);
-  --input: oklch(1 0 0 / 11%);
-  --ring: oklch(0.72 0.13 262);
-  --sidebar: oklch(0.155 0.006 265);
-  --sidebar-foreground: oklch(0.86 0.008 265);
-  --sidebar-primary: oklch(0.72 0.13 262);
-  --sidebar-primary-foreground: oklch(0.17 0.01 265);
-  --sidebar-accent: oklch(0.23 0.009 265);
-  --sidebar-accent-foreground: oklch(0.96 0.005 265);
-  --sidebar-border: oklch(1 0 0 / 6%);
-  --sidebar-ring: oklch(0.72 0.13 262);
-  --selection: oklch(0.72 0.13 262 / 14%);
-  --unread: oklch(0.72 0.13 262);
-  --scrollbar: oklch(1 0 0 / 14%);
+  --radius: 0.875rem;
 }
 
 @layer base {
