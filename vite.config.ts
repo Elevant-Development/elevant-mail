@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { fileURLToPath, URL } from "node:url";
 
 import tailwindcss from "@tailwindcss/vite";
@@ -24,5 +25,8 @@ export default defineConfig({
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+  },
+  test: {
+    setupFiles: ["src/test/setup.ts"],
   },
 });
