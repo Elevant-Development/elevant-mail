@@ -5,6 +5,8 @@ use mail_parser::MessageParser;
 use crate::model::Address;
 
 const SNIPPET_LENGTH: usize = 200;
+/// Inline images up to this size are cached with the body; larger ones are left out.
+const INLINE_IMAGE_LIMIT: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedMessage {
@@ -20,7 +22,21 @@ pub struct ParsedMessage {
     pub snippet: String,
     /// Plain text; HTML-only mail is converted. `None` when only headers were parsed.
     pub body_text: Option<String>,
+    /// The original HTML of mail that has an HTML version, sanitized only when shown.
+    pub body_html: Option<String>,
+    /// Images the HTML refers to by `cid:`, such as logos in signatures.
+    pub inline_images: Vec<InlineImage>,
     pub has_attachments: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineImage {
+    /// MIME part, as mail-parser numbers them.
+    pub part_id: String,
+    /// Without angle brackets, as `cid:` refers to it.
+    pub content_id: String,
+    pub mime_type: String,
+    pub data: Vec<u8>,
 }
 
 /// Parses a complete message.
@@ -33,12 +49,47 @@ pub fn parse_message(raw: &[u8]) -> ParsedMessage {
         .body_preview(SNIPPET_LENGTH * 2)
         .map(|preview| collapse_whitespace(&preview))
         .unwrap_or_default();
+    let html_parts: Vec<String> = message
+        .html_body()
+        .filter(|part| part.is_content_type("text", "html"))
+        .filter_map(|part| part.text().map(|html| html.into_owned()))
+        .collect();
     ParsedMessage {
         snippet: truncate(&snippet, SNIPPET_LENGTH),
         body_text,
+        body_html: (!html_parts.is_empty()).then(|| html_parts.join("\n")),
+        inline_images: inline_images(&message),
         has_attachments: message.attachments().len() > 0,
         ..parse_headers_of(&message)
     }
+}
+
+fn inline_images(message: &mail_parser::Message<'_>) -> Vec<InlineImage> {
+    message
+        .parts()
+        .filter_map(|part| {
+            let content_type = part.content_type()?;
+            if !content_type.ctype().eq_ignore_ascii_case("image") {
+                return None;
+            }
+            let content_id = part.content_id()?.trim().to_owned();
+            if content_id.is_empty() || part.decoded_len() > INLINE_IMAGE_LIMIT {
+                return None;
+            }
+            Some(InlineImage {
+                part_id: part.id().to_string(),
+                content_id,
+                mime_type: format!(
+                    "image/{}",
+                    content_type
+                        .subtype()
+                        .unwrap_or("octet-stream")
+                        .to_ascii_lowercase()
+                ),
+                data: part.decoded().into_owned(),
+            })
+        })
+        .collect()
 }
 
 /// Parses only the header block, for messages too large to fetch up front.

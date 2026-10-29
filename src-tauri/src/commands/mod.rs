@@ -2,5 +2,6 @@
 
 pub mod accounts;
 pub mod app;
+pub mod links;
 pub mod mailbox;
 pub mod sync;

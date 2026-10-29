@@ -25,7 +25,7 @@ use crate::ids::{new_id, now_millis};
 use crate::mail::imap::{
     self, COMMAND_TIMEOUT, ImapSession, list_folders, protocol_error, with_timeout,
 };
-use crate::mail::parse::{ParsedMessage, parse_message, parse_preview};
+use crate::mail::parse::{InlineImage, ParsedMessage, parse_message, parse_preview};
 use crate::mail::settings::{ImapSettings, Security};
 use crate::secrets::{SecretKind, SecretStore};
 use crate::{Error, Result};
@@ -325,11 +325,22 @@ async fn load_body_in(
         .find_map(Fetch::body)
         .ok_or(Error::MessageNotFound)?;
     let message = parse_message(raw);
-    db.conn().execute(
-        "UPDATE messages SET body_text = ?2, snippet = ?3, has_attachments = ?4, body_state = 'full'
+    let mut conn = db.conn();
+    let tx = conn.transaction()?;
+    tx.execute(
+        "UPDATE messages SET body_text = ?2, body_html = ?3, snippet = ?4, has_attachments = ?5,
+           body_state = 'full'
          WHERE id = ?1",
-        params![message_id, message.body_text, message.snippet, message.has_attachments],
+        params![
+            message_id,
+            message.body_text,
+            message.body_html,
+            message.snippet,
+            message.has_attachments
+        ],
     )?;
+    store_inline_images(&tx, message_id, &message.inline_images)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -464,15 +475,17 @@ fn store_message(
     meta: &Meta,
 ) -> Result<()> {
     let to_json = |addresses: &[crate::model::Address]| serde_json::to_string(addresses).ok();
-    conn.execute(
+    // On a conflict the row keeps its id, which RETURNING hands back for the inline images.
+    let id: String = conn.query_row(
         "INSERT INTO messages (id, account_id, folder_id, uid, message_id, in_reply_to,
            references_header, subject, from_name, from_address, to_addresses, cc_addresses,
            date_sent, date_received, size_bytes, snippet, is_read, is_flagged, has_attachments,
-           body_state, body_text, fetched_at)
+           body_state, body_text, body_html, fetched_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-           ?19, ?20, ?21, ?22)
+           ?19, ?20, ?21, ?22, ?23)
          ON CONFLICT (folder_id, uid) DO UPDATE
-           SET is_read = excluded.is_read, is_flagged = excluded.is_flagged",
+           SET is_read = excluded.is_read, is_flagged = excluded.is_flagged
+         RETURNING id",
         params![
             new_id(),
             folder.account_id,
@@ -495,9 +508,38 @@ fn store_message(
             message.has_attachments,
             if complete { "full" } else { "none" },
             message.body_text,
+            message.body_html,
             now_millis(),
         ],
+        |row| row.get(0),
     )?;
+    if complete {
+        store_inline_images(conn, &id, &message.inline_images)?;
+    }
+    Ok(())
+}
+
+fn store_inline_images(conn: &Connection, message_id: &str, images: &[InlineImage]) -> Result<()> {
+    conn.execute(
+        "DELETE FROM attachments WHERE message_id = ?1 AND data IS NOT NULL",
+        [message_id],
+    )?;
+    let mut insert = conn.prepare_cached(
+        "INSERT INTO attachments (id, message_id, part_id, mime_type, size_bytes, content_id,
+           is_inline, data)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+    )?;
+    for image in images {
+        insert.execute(params![
+            new_id(),
+            message_id,
+            image.part_id,
+            image.mime_type,
+            i64::try_from(image.data.len()).unwrap_or(i64::MAX),
+            image.content_id,
+            image.data
+        ])?;
+    }
     Ok(())
 }
 
@@ -680,6 +722,11 @@ mod tests {
     use crate::mailbox::{UNIFIED_INBOX, list_folders, list_messages};
     use crate::model::FolderRole;
     use crate::secrets::{MemoryStore, Secret};
+
+    const TEST_VIEW: crate::mail::sanitize::HtmlView<'static> = crate::mail::sanitize::HtmlView {
+        asset_base: "mail-asset://localhost",
+        remote_images: false,
+    };
 
     struct Setup {
         db: Database,
@@ -882,9 +929,10 @@ mod tests {
             .query_row("SELECT id FROM messages", [], |row| row.get(0))
             .unwrap();
         assert!(
-            !crate::mailbox::get_message(&setup.db.conn(), &id)
+            !crate::mailbox::get_message(&setup.db.conn(), &id, TEST_VIEW)
                 .unwrap()
                 .unwrap()
+                .message
                 .body_complete
         );
 
@@ -892,9 +940,10 @@ mod tests {
             .await
             .unwrap();
 
-        let message = crate::mailbox::get_message(&setup.db.conn(), &id)
+        let message = crate::mailbox::get_message(&setup.db.conn(), &id, TEST_VIEW)
             .unwrap()
-            .unwrap();
+            .unwrap()
+            .message;
         assert!(message.body_complete);
         assert!(message.body_text.unwrap().starts_with("Body of message 1"));
         let commands = setup.server.mailbox.lock().unwrap().commands.clone();
@@ -921,5 +970,44 @@ mod tests {
         let older = newest(&uids, Some(151));
         assert_eq!((older[0], older[99]), (51, 150));
         assert_eq!(newest(&uids, Some(51)).len(), 50);
+    }
+
+    #[tokio::test]
+    async fn html_and_inline_images_are_cached() {
+        let setup = setup(0).await;
+        {
+            let mut html = TestMessage::new(1);
+            html.raw = b"From: news@example.org\r\nSubject: News\r\n\
+Content-Type: multipart/related; boundary=\"r\"\r\n\r\n\
+--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+<p>Gr\xc3\xbc\xc3\x9fe <img src=\"cid:logo@example.org\"></p>\r\n\
+--r\r\nContent-Type: image/png\r\nContent-ID: <logo@example.org>\r\n\
+Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n"
+                .to_vec();
+            setup.server.mailbox.lock().unwrap().messages.push(html);
+        }
+        setup.sync().await;
+
+        let conn = setup.db.conn();
+        let id: String = conn
+            .query_row("SELECT id FROM messages", [], |row| row.get(0))
+            .unwrap();
+        let message = crate::mailbox::get_message(&conn, &id, TEST_VIEW)
+            .unwrap()
+            .unwrap()
+            .message;
+        let html = message.body_html.unwrap();
+        assert!(html.contains("Grüße"), "{html}");
+        assert!(
+            html.contains(&format!(
+                "mail-asset://localhost/cid/{id}/logo%40example%2Eorg"
+            )),
+            "{html}"
+        );
+        let (mime, data) = crate::mailbox::inline_image(&conn, &id, "logo@example.org")
+            .unwrap()
+            .unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(&data[1..4], b"PNG");
     }
 }

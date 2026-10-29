@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, type Message } from "@/lib/tauri";
+import { useUiStore } from "@/stores/ui";
 
 export function useMessages(mailboxId: string) {
   return useQuery({
@@ -10,9 +11,14 @@ export function useMessages(mailboxId: string) {
 }
 
 export function useMessage(messageId: string | null) {
+  const remoteImages = useUiStore((s) =>
+    messageId ? (s.remoteImagesAllowed[messageId] ?? false) : false,
+  );
   return useQuery({
-    queryKey: ["message", messageId],
-    queryFn: () => (messageId ? api.getMessage(messageId) : null),
+    queryKey: ["message", messageId, remoteImages],
+    queryFn: () => (messageId ? api.getMessage(messageId, remoteImages) : null),
+    // Allowing images refetches; keep showing the mail meanwhile.
+    placeholderData: (previous) => (previous?.id === messageId ? previous : undefined),
     enabled: messageId !== null,
   });
 }

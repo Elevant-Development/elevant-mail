@@ -14,6 +14,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Elevant Mail",
         "width": 1280,
         "height": 800,
@@ -30,7 +31,7 @@
         "default-src": "'self'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data:",
+        "img-src": "'self' data: mail-asset: http://mail-asset.localhost",
         "font-src": "'self' data:",
         "connect-src": "ipc: http://ipc.localhost",
         "object-src": "'none'",
@@ -41,7 +42,7 @@
         "default-src": "'self'",
         "script-src": "'self' 'unsafe-inline'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data:",
+        "img-src": "'self' data: mail-asset: http://mail-asset.localhost",
         "font-src": "'self' data:",
         "connect-src": "'self' ipc: http://ipc.localhost ws://localhost:1420",
         "object-src": "'none'",

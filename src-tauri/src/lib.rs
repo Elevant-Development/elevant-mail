@@ -3,7 +3,9 @@
 
 mod commands;
 mod error;
+mod protocol;
 mod state;
+mod window;
 
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -15,8 +17,10 @@ pub fn run() {
         .setup(|app| {
             let state = state::AppState::init(app.handle())?;
             app.manage(state);
+            window::create_main(app.handle())?;
             Ok(())
         })
+        .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
         .invoke_handler(tauri::generate_handler![
             commands::app::app_status,
             commands::accounts::detect_settings,
@@ -30,6 +34,7 @@ pub fn run() {
             commands::sync::sync_folder,
             commands::sync::load_older,
             commands::sync::load_message_body,
+            commands::links::open_link,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Elevant Mail");

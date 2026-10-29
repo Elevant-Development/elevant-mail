@@ -3,6 +3,7 @@
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::Result;
+use crate::mail::sanitize::{HtmlView, sanitize};
 use crate::model::{Address, Folder, FolderRole, Message, MessageSummary};
 
 /// Mailbox id that shows the inboxes of all accounts together (same value as in the frontend).
@@ -94,12 +95,25 @@ pub fn list_messages(conn: &Connection, mailbox_id: &str) -> Result<Vec<MessageS
     Ok(messages)
 }
 
-pub fn get_message(conn: &Connection, message_id: &str) -> Result<Option<Message>> {
+/// A message ready to show, plus what the asset protocol needs to serve its external images.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedMessage {
+    pub message: Message,
+    /// External image URLs; `<asset_base>/remote/<message>/<n>` serves the n-th once allowed.
+    pub remote_images: Vec<String>,
+}
+
+pub fn get_message(
+    conn: &Connection,
+    message_id: &str,
+    view: HtmlView<'_>,
+) -> Result<Option<OpenedMessage>> {
     let sql = format!(
-        "SELECT {SUMMARY_COLUMNS}, m.to_addresses, m.cc_addresses, m.body_text, m.body_state
+        "SELECT {SUMMARY_COLUMNS}, m.to_addresses, m.cc_addresses, m.body_text, m.body_state,
+           m.body_html
          FROM messages m WHERE m.id = ?1"
     );
-    let message = conn
+    let row = conn
         .query_row(&sql, [message_id], |row| {
             let addresses = |index: usize| -> rusqlite::Result<Vec<Address>> {
                 let json: Option<String> = row.get(index)?;
@@ -107,16 +121,51 @@ pub fn get_message(conn: &Connection, message_id: &str) -> Result<Option<Message
                     .and_then(|json| serde_json::from_str(&json).ok())
                     .unwrap_or_default())
             };
-            Ok(Message {
+            let message = Message {
                 summary: summary_from_row(row)?,
                 to: addresses(11)?,
                 cc: addresses(12)?,
                 body_text: row.get(13)?,
                 body_complete: row.get::<_, String>(14)? == "full",
-            })
+                body_html: None,
+                html_styled: false,
+                remote_image_count: 0,
+            };
+            Ok((message, row.get::<_, Option<String>>(15)?))
         })
         .optional()?;
-    Ok(message)
+    let Some((mut message, raw_html)) = row else {
+        return Ok(None);
+    };
+
+    let mut remote_images = Vec::new();
+    if let Some(raw_html) = raw_html {
+        let safe = sanitize(&raw_html, message_id, view);
+        message.body_html = Some(safe.html);
+        message.html_styled = safe.styled;
+        message.remote_image_count = u32::try_from(safe.remote_images.len()).unwrap_or(u32::MAX);
+        remote_images = safe.remote_images;
+    }
+    Ok(Some(OpenedMessage {
+        message,
+        remote_images,
+    }))
+}
+
+/// An image the HTML of a message refers to by `cid:`: its type and bytes.
+pub fn inline_image(
+    conn: &Connection,
+    message_id: &str,
+    content_id: &str,
+) -> Result<Option<(String, Vec<u8>)>> {
+    Ok(conn
+        .query_row(
+            "SELECT mime_type, data FROM attachments
+             WHERE message_id = ?1 AND content_id = ?2 AND data IS NOT NULL",
+            [message_id, content_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
 }
 
 #[cfg(test)]
@@ -126,6 +175,11 @@ mod tests {
     use super::*;
     use crate::db::Database;
     use crate::ids::new_id;
+
+    const VIEW: HtmlView<'static> = HtmlView {
+        asset_base: "mail-asset://localhost",
+        remote_images: false,
+    };
 
     fn seed(conn: &Connection) -> (String, String) {
         conn.execute(
@@ -194,7 +248,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let conn = db.conn();
         let (newest, _) = seed(&conn);
-        let message = get_message(&conn, &newest).unwrap().unwrap();
+        let message = get_message(&conn, &newest, VIEW).unwrap().unwrap().message;
         assert_eq!(
             message.to,
             vec![Address {
@@ -203,6 +257,47 @@ mod tests {
             }]
         );
         assert_eq!(message.body_text.as_deref(), Some("Hello"));
-        assert!(get_message(&conn, "missing").unwrap().is_none());
+        assert!(get_message(&conn, "missing", VIEW).unwrap().is_none());
+        assert!(message.body_html.is_none());
+    }
+
+    #[test]
+    fn html_is_sanitized_when_read() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let (newest, _) = seed(&conn);
+        conn.execute(
+            "UPDATE messages SET body_html = ?2 WHERE id = ?1",
+            params![
+                newest,
+                r#"<p onclick="x()">Hi</p><script>x()</script><img src="https://t.example/p.gif">"#
+            ],
+        )
+        .unwrap();
+
+        let opened = get_message(&conn, &newest, VIEW).unwrap().unwrap();
+        let html = opened.message.body_html.unwrap();
+        assert_eq!(html, "<p>Hi</p><img>");
+        assert_eq!(opened.message.remote_image_count, 1);
+        assert_eq!(opened.remote_images, ["https://t.example/p.gif"]);
+    }
+
+    #[test]
+    fn serves_cached_inline_images() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let (newest, _) = seed(&conn);
+        conn.execute(
+            "INSERT INTO attachments (id, message_id, part_id, mime_type, content_id, is_inline, data)
+             VALUES ('a1', ?1, '2', 'image/png', 'logo@example.org', 1, x'89504E47')",
+            [&newest],
+        )
+        .unwrap();
+        let (mime, data) = inline_image(&conn, &newest, "logo@example.org")
+            .unwrap()
+            .unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(data, [0x89, b'P', b'N', b'G']);
+        assert!(inline_image(&conn, &newest, "other").unwrap().is_none());
     }
 }

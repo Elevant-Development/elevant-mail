@@ -159,4 +159,17 @@ export const de = {
   "reader.loadingBody": "Inhalt wird vom Server geladen …",
   "reader.bodyError": "Der Inhalt dieser Mail konnte nicht geladen werden.",
   "reader.content": "Inhalt der Mail",
+  "reader.remoteImages":
+    "Externe Bilder blockiert ({count}), damit der Absender nicht sieht, wann du die Mail öffnest.",
+  "reader.remoteImages.load": "Bilder laden",
+  "reader.view.paper": "Helle Ansicht",
+  "reader.view.dark": "Dunkle Ansicht",
+  "link.warning.title": "Dieser Link führt woanders hin",
+  "link.warning.description":
+    "Der Text zeigt eine andere Adresse als das tatsächliche Ziel. Öffne den Link nur, wenn du dem Absender vertraust.",
+  "link.warning.shown": "Angezeigt",
+  "link.warning.target": "Ziel",
+  "link.warning.open": "Trotzdem öffnen",
+  "link.warning.cancel": "Abbrechen",
+  "link.openFailed": "Der Link konnte nicht geöffnet werden.",
 } as const;

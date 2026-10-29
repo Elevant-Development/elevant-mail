@@ -39,6 +39,9 @@ export type { SyncStage } from "./bindings/SyncStage";
 /** Mailbox id that shows the inboxes of all accounts together (same value in Rust). */
 export const UNIFIED_INBOX = "unified-inbox";
 
+/** Where the backend serves mail images (`mail-asset://`; on Windows `http://mail-asset.localhost`). */
+export const ASSET_SOURCES = "mail-asset: http://mail-asset.localhost";
+
 export interface Backend {
   listAccounts(): Promise<Account[]>;
   detectSettings(email: string): Promise<SuggestedSettings>;
@@ -48,7 +51,8 @@ export interface Backend {
   listFolders(): Promise<Folder[]>;
   /** `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first. */
   listMessages(mailboxId: string): Promise<MessageSummary[]>;
-  getMessage(messageId: string): Promise<Message | null>;
+  /** `remoteImages`: the user allowed the external images of this mail. */
+  getMessage(messageId: string, remoteImages: boolean): Promise<Message | null>;
   /** Fetches the full body of a large message that was cached with headers only. */
   loadMessageBody(messageId: string): Promise<void>;
   /** New, changed and deleted mail in the account's inbox. */
@@ -56,6 +60,10 @@ export interface Backend {
   syncFolder(folderId: string): Promise<SyncReport>;
   /** The next 100 messages older than the oldest cached one. */
   loadOlder(folderId: string): Promise<SyncReport>;
+  /** Opens a web or mail link from a mail in the system browser or mail program. */
+  openLink(url: string): Promise<void>;
+  /** Links clicked in a mail frame (see SafeHtmlMail); returns a function that stops listening. */
+  onMailLink(handler: (url: string) => void): Promise<() => void>;
   /** Progress of running syncs; returns a function that stops listening. */
   onSyncProgress(handler: (progress: SyncProgress) => void): Promise<() => void>;
 }
@@ -67,11 +75,13 @@ const tauriBackend: Backend = {
   removeAccount: (accountId) => invoke("remove_account", { accountId }),
   listFolders: () => invoke("list_folders"),
   listMessages: (mailboxId) => invoke("list_messages", { mailboxId }),
-  getMessage: (messageId) => invoke("get_message", { messageId }),
+  getMessage: (messageId, remoteImages) => invoke("get_message", { messageId, remoteImages }),
   loadMessageBody: (messageId) => invoke("load_message_body", { messageId }),
   syncAccount: (accountId) => invoke("sync_account", { accountId }),
   syncFolder: (folderId) => invoke("sync_folder", { folderId }),
   loadOlder: (folderId) => invoke("load_older", { folderId }),
+  openLink: (url) => invoke("open_link", { url }),
+  onMailLink: (handler) => listen<string>("mail-link", (event) => handler(event.payload)),
   onSyncProgress: (handler) =>
     listen<SyncProgress>("sync-progress", (event) => handler(event.payload)),
 };

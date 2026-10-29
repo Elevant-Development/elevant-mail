@@ -13,7 +13,7 @@ import {
   type Theme,
 } from "@/design/themes";
 import { fonts } from "@/design/fonts";
-import { useMediaQuery } from "@/hooks/use-media-query";
+import { useResolvedMode } from "@/hooks/use-resolved-mode";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { type Density, type Mode, useUiStore } from "@/stores/ui";
@@ -104,8 +104,7 @@ export function AppearanceMenu() {
   const setFont = useUiStore((s) => s.setFont);
   const density = useUiStore((s) => s.density);
   const setDensity = useUiStore((s) => s.setDensity);
-  const systemDark = useMediaQuery("(prefers-color-scheme: dark)");
-  const resolvedMode = mode === "dark" || (mode === "system" && systemDark) ? "dark" : "light";
+  const resolvedMode = useResolvedMode();
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

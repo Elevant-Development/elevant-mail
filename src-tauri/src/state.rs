@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use elevant_mail_core::Database;
+use elevant_mail_core::mail::remote::RemoteImages;
 use elevant_mail_core::secrets::{KeyringStore, SecretStore};
 use tauri::async_runtime::Mutex as AsyncMutex;
 use tauri::{AppHandle, Manager};
@@ -15,6 +16,9 @@ pub struct AppState {
     pub keyring_available: bool,
     /// One mail server operation per account at a time; further requests wait their turn.
     account_locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    pub remote_images: RemoteImages,
+    /// External image URLs per message whose images the user allowed in this session.
+    allowed_remote_images: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl AppState {
@@ -42,7 +46,26 @@ impl AppState {
             secrets,
             keyring_available,
             account_locks: Mutex::default(),
+            remote_images: RemoteImages::new()?,
+            allowed_remote_images: Mutex::default(),
         })
+    }
+
+    pub fn allow_remote_images(&self, message_id: &str, urls: Vec<String>) {
+        self.allowed_remote_images
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(message_id.to_owned(), urls);
+    }
+
+    /// The n-th external image of a message, if the user allowed them.
+    pub fn allowed_remote_image(&self, message_id: &str, index: usize) -> Option<String> {
+        self.allowed_remote_images
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(message_id)?
+            .get(index)
+            .cloned()
     }
 
     pub fn account_lock(&self, account_id: &str) -> Arc<AsyncMutex<()>> {

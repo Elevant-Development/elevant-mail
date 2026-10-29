@@ -82,6 +82,12 @@ pub enum Error {
 
     #[error("message not found")]
     MessageNotFound,
+
+    #[error("not a web or mail link")]
+    InvalidLink,
+
+    #[error("could not hand the link to the system: {0}")]
+    OpenLink(std::io::Error),
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -141,7 +147,9 @@ impl Error {
             Error::SchemaTooNew { .. } => ErrorKind::StorageTooNew,
             Error::KeyringUnavailable(_) => ErrorKind::KeyringUnavailable,
             Error::SecretNotFound => ErrorKind::CredentialMissing,
-            Error::InvalidEmail | Error::InvalidHost => ErrorKind::InvalidInput,
+            Error::InvalidEmail | Error::InvalidHost | Error::InvalidLink => {
+                ErrorKind::InvalidInput
+            }
             Error::HostNotFound => ErrorKind::ServerNotFound,
             Error::ConnectionFailed(_) | Error::TlsFailed(_) | Error::StartTlsUnsupported => {
                 ErrorKind::ConnectionFailed
@@ -155,7 +163,7 @@ impl Error {
             Error::AccountNotFound | Error::FolderNotFound | Error::MessageNotFound => {
                 ErrorKind::NotFound
             }
-            Error::Keyring(_) | Error::TlsSetup(_) => ErrorKind::Internal,
+            Error::Keyring(_) | Error::TlsSetup(_) | Error::OpenLink(_) => ErrorKind::Internal,
         }
     }
 
@@ -188,7 +196,9 @@ impl Error {
             | Error::AccountExists
             | Error::AccountNotFound
             | Error::FolderNotFound
-            | Error::MessageNotFound => None,
+            | Error::MessageNotFound
+            | Error::InvalidLink
+            | Error::OpenLink(_) => None,
         }
     }
 }

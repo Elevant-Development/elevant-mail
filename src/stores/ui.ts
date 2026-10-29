@@ -29,6 +29,8 @@ interface UiState {
   /** Only used in the narrow layout, where the sidebar is an overlay. */
   sidebarOpen: boolean;
   accountDialogOpen: boolean;
+  /** Mails whose external images the user allowed in this session. */
+  remoteImagesAllowed: Record<string, boolean | undefined>;
 
   setMode: (mode: Mode) => void;
   setTheme: (themeId: ThemeId) => void;
@@ -40,6 +42,7 @@ interface UiState {
   selectMessage: (messageId: string | null) => void;
   setSidebarOpen: (open: boolean) => void;
   setAccountDialogOpen: (open: boolean) => void;
+  allowRemoteImages: (messageId: string) => void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -55,6 +58,7 @@ export const useUiStore = create<UiState>()(
       selectedMessageId: null,
       sidebarOpen: false,
       accountDialogOpen: false,
+      remoteImagesAllowed: {},
 
       setMode: (mode) => set({ mode }),
       setTheme: (themeId) => set({ themeId }),
@@ -67,6 +71,10 @@ export const useUiStore = create<UiState>()(
       selectMessage: (messageId) => set({ selectedMessageId: messageId }),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       setAccountDialogOpen: (open) => set({ accountDialogOpen: open, sidebarOpen: false }),
+      allowRemoteImages: (messageId) =>
+        set((state) => ({
+          remoteImagesAllowed: { ...state.remoteImagesAllowed, [messageId]: true },
+        })),
     }),
     {
       // Appearance survives a restart; selection does not. Moves into the settings store once

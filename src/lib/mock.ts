@@ -59,6 +59,39 @@ interface MockMessage {
   /** Cached with headers only, like large mail from the server. */
   large?: boolean;
   body: string;
+  html?: MockHtml;
+}
+
+/** HTML as the backend hands it out: already sanitized. */
+interface MockHtml {
+  body: string;
+  styled: boolean;
+  /** External images: `data-remote="n"` in the body gets the n-th once allowed. */
+  images?: string[];
+}
+
+const swatch = (color: string, label: string) =>
+  `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="552" height="180"><rect width="552" height="180" fill="${color}"/><text x="24" y="100" font-family="sans-serif" font-size="28" fill="#fff">${label}</text></svg>`,
+  )}`;
+
+const newsletter: MockHtml = {
+  styled: true,
+  images: [swatch("#c2410c", "Kürbiswoche"), swatch("#3f6212", "Äpfel aus der Region")],
+  body: `<style>.card { background: #fff7ed; border-radius: 12px; padding: 16px 24px; } h1 { color: #9a3412; font-family: Georgia, serif; }</style>
+<table width="600" cellpadding="0" cellspacing="0" bgcolor="#ffffff" align="center"><tbody>
+<tr><td><img data-remote="0" width="552" height="180" alt="Kürbiswoche"></td></tr>
+<tr><td class="card"><h1>Herbst auf dem Wochenmarkt</h1>
+<p>Diese Woche gibt es frische Kürbisse, Äpfel und den ersten Glühwein. <a href="https://markt.example.org/angebote">Alle Angebote ansehen</a></p>
+<p><img data-remote="1" width="552" height="180" alt="Äpfel aus der Region"></p>
+<p style="color: #57534e; font-size: 13px">Gutschein einlösen unter <a href="https://login.example.net/gutschein">www.markt.example.org/gutschein</a></p>
+</td></tr></tbody></table>`,
+};
+
+function renderMockHtml(html: MockHtml, remoteImages: boolean): string {
+  return html.body.replace(/ data-remote="(\d+)"/g, (_, index: string) =>
+    remoteImages ? ` src="${html.images?.[Number(index)] ?? ""}"` : "",
+  );
 }
 
 const me = (accountId: string): Address => {
@@ -74,6 +107,20 @@ const mockMessages: MockMessage[] = [
     subject: "Wanderung am Samstag?",
     ago: 14 * MINUTE,
     body: "Hi Alex,\n\nhast du am Samstag Lust auf die große Runde um den See? Wir würden gegen 9 Uhr am Bahnhof losfahren und unterwegs irgendwo einkehren.\n\nSag mir bis Freitag Bescheid, dann reserviere ich einen Tisch.\n\nViele Grüße\nLena",
+    html: {
+      styled: false,
+      body: `<div>Hi Alex,</div><div><br></div><div>hast du am Samstag Lust auf die <b>große Runde um den See</b>? Wir würden gegen 9 Uhr am Bahnhof losfahren und unterwegs irgendwo einkehren. Die Strecke: <a href="https://karten.example.org/route/see">Route ansehen</a></div><div><br></div><div>Sag mir bis Freitag Bescheid, dann reserviere ich einen Tisch.</div><div><br></div><div>Viele Grüße<br>Lena</div><blockquote><div>Am Montag schrieb Alex:</div><div>Wollen wir am Wochenende mal wieder raus?</div></blockquote>`,
+    },
+  },
+  {
+    account: "acc-private",
+    role: "inbox",
+    from: { name: "Wochenmarkt Lindenau", address: "post@markt.example.org" },
+    subject: "Herbst auf dem Wochenmarkt",
+    ago: 50 * MINUTE,
+    read: true,
+    body: "Herbst auf dem Wochenmarkt. Diese Woche gibt es frische Kürbisse, Äpfel und den ersten Glühwein.",
+    html: newsletter,
   },
   {
     account: "acc-work",
@@ -295,6 +342,9 @@ function buildMessages(): Message[] {
     // Large mail arrives without its body; the reader loads it when opened.
     bodyText: m.large ? null : m.body,
     bodyComplete: !m.large,
+    bodyHtml: null,
+    htmlStyled: m.html?.styled ?? false,
+    remoteImageCount: m.html?.images?.length ?? 0,
   }));
 }
 
@@ -324,6 +374,9 @@ function toSummary({
   cc: _cc,
   bodyText: _body,
   bodyComplete: _complete,
+  bodyHtml: _html,
+  htmlStyled: _styled,
+  remoteImageCount: _images,
   ...summary
 }: Message): MessageSummary {
   return summary;
@@ -390,7 +443,18 @@ export const mockBackend: Backend = {
         : messages.filter((m) => m.folderId === mailboxId);
     return inMailbox.map(toSummary).sort((a, b) => b.dateSent - a.dateSent);
   },
-  getMessage: async (messageId) => messages.find((m) => m.id === messageId) ?? null,
+  getMessage: async (messageId, remoteImages) => {
+    const index = messages.findIndex((m) => m.id === messageId);
+    const message = messages[index];
+    if (!message) return null;
+    const html = allMockMessages[index]?.html;
+    return {
+      ...message,
+      bodyHtml: html && message.bodyComplete ? renderMockHtml(html, remoteImages) : null,
+    };
+  },
+  openLink: async (url) => console.info("open link", url),
+  onMailLink: async () => () => undefined,
   loadMessageBody: async (messageId) => {
     await wait(900);
     const index = messages.findIndex((m) => m.id === messageId);

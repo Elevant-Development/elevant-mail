@@ -106,4 +106,10 @@ pub struct Message {
     pub body_text: Option<String>,
     /// False for large mail fetched with headers only; the body is loaded when opened.
     pub body_complete: bool,
+    /// Sanitized HTML for the sandboxed frame; `None` for plain-text mail.
+    pub body_html: Option<String>,
+    /// The HTML sets its own colours, so dark mode shows it on a light page.
+    pub html_styled: bool,
+    /// External images in the HTML. They are left out unless the request allowed them.
+    pub remote_image_count: u32,
 }

@@ -5,7 +5,19 @@ export type Message = { to: Array<Address>, cc: Array<Address>, bodyText: string
 /**
  * False for large mail fetched with headers only; the body is loaded when opened.
  */
-bodyComplete: boolean, id: string, accountId: string, folderId: string, subject: string | null, from: Address, 
+bodyComplete: boolean, 
+/**
+ * Sanitized HTML for the sandboxed frame; `None` for plain-text mail.
+ */
+bodyHtml: string | null, 
+/**
+ * The HTML sets its own colours, so dark mode shows it on a light page.
+ */
+htmlStyled: boolean, 
+/**
+ * External images in the HTML. They are left out unless the request allowed them.
+ */
+remoteImageCount: number, id: string, accountId: string, folderId: string, subject: string | null, from: Address, 
 /**
  * Unix time in milliseconds.
  */
