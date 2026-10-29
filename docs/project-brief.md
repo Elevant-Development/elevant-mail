@@ -6,7 +6,8 @@ Status: 2026-10-29 · v0.2 (reading with several accounts)
 
 Elevant Mail is a free, open-source desktop mail client for **Linux (Ubuntu/Debian)** and
 **Windows**: modern, fast and light on resources, for several IMAP accounts with a unified inbox.
-It is not an enterprise client, not a calendar all-rounder and not a full Thunderbird replacement.
+It is not an enterprise client and not a full Thunderbird replacement. Mail comes first; a calendar
+may follow later as its own area (see "Later: calendar").
 
 Not negotiable:
 
@@ -303,7 +304,7 @@ src/
   queries/     accounts, folders, messages   # TanStack Query
   stores/      ui, sync                      # Zustand
   lib/         tauri.ts  mock.ts  folders.ts  links.ts  keyboard.ts  formatting.ts  i18n.ts
-  locales/     de.ts
+  locales/     de.ts  en.ts
 ```
 
 `lib/mock.ts` provides sample data when the frontend runs in a browser without Tauri. That is for
@@ -457,6 +458,17 @@ Optional AI help in the app, with a freely chosen provider. Nothing is active wi
 - **Mail content is untrusted:** instructions in a mail must not steer the AI (prompt
   injection); actions only after the user confirms.
 
+### Later: calendar
+
+A calendar as its own area next to mail, after sending works.
+
+- Earlier, in phase 3 or 4: show invitations (`.ics`) in the reader; accepting and declining needs
+  sending (phase 4)
+- Sources: CalDAV (self-hosted, for example Mailcow with SOGo), Microsoft 365 and Outlook.com via
+  Microsoft Graph (`Calendars.ReadWrite`), Google via OAuth. Google's calendar scope is
+  "sensitive" and needs Google's app verification; unlike Gmail there is no app password route.
+- Local first like mail: events are cached in SQLite, the interface reads only from the cache
+
 ## Tests
 
 - Rust unit tests for parser, sanitizer, sync logic (UIDVALIDITY change, deleted mail, flag
@@ -489,16 +501,18 @@ Optional AI help in the app, with a freely chosen provider. Nothing is active wi
   `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
 - The keyring needs a running Secret Service on Linux (GNOME Keyring, or KWallet with the Secret
   Service interface on KDE).
-- The README lists the system packages for Ubuntu and the requirements on Windows.
+- `docs/development.md` lists the system packages for Ubuntu and the requirements on Windows.
 
 ## Open source
 
 - Licence GPL-3.0-or-later: forks stay free, which fits "no paywall". The Elevant mark is a
   trademark and not covered by the code licence.
-- Code, comments, commits, README and docs in English. The interface is German first; all texts
-  go through i18n keys, English follows.
-- Public GitHub repository `Elevant-Development/elevant-mail` with `LICENSE`, `README.md` and
-  `SECURITY.md`; `CONTRIBUTING.md` later
+- Code, comments, commits, README and docs in English. The interface is in English and German,
+  more languages can follow: all texts go through i18n keys (`src/locales/`, German defines the
+  keys). The language follows the system (English where there is no translation) and can be
+  changed under Appearance.
+- Public GitHub repository `Elevant-Development/elevant-mail` with `LICENSE`, `README.md` for
+  users, `CONTRIBUTING.md`, `SECURITY.md` and `docs/development.md` for building from source
 - No credentials, real account addresses or server names in the repository, tests or fixtures.
 - The OAuth client ID may be public (public client without a secret).
 
