@@ -29,6 +29,11 @@ interface UiState {
   /** Only used in the narrow layout, where the sidebar is an overlay. */
   sidebarOpen: boolean;
   accountDialogOpen: boolean;
+  /**
+   * Sidebar sections and folders the user collapsed (true) or opened (false), by node key;
+   * missing means the default. Survives a restart.
+   */
+  collapsed: Record<string, boolean | undefined>;
   /** Text in the search field; while it is not empty, the list shows search results. */
   searchQuery: string;
   /** Mails whose external images the user allowed in this session. */
@@ -46,6 +51,7 @@ interface UiState {
   setAccountDialogOpen: (open: boolean) => void;
   allowRemoteImages: (messageId: string) => void;
   setSearchQuery: (query: string) => void;
+  setCollapsed: (key: string, collapsed: boolean) => void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -63,6 +69,7 @@ export const useUiStore = create<UiState>()(
       accountDialogOpen: false,
       remoteImagesAllowed: {},
       searchQuery: "",
+      collapsed: {},
 
       setMode: (mode) => set({ mode }),
       setTheme: (themeId) => set({ themeId }),
@@ -81,6 +88,8 @@ export const useUiStore = create<UiState>()(
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       setAccountDialogOpen: (open) => set({ accountDialogOpen: open, sidebarOpen: false }),
       setSearchQuery: (query) => set({ searchQuery: query }),
+      setCollapsed: (key, collapsed) =>
+        set((state) => ({ collapsed: { ...state.collapsed, [key]: collapsed } })),
       allowRemoteImages: (messageId) =>
         set((state) => ({
           remoteImagesAllowed: { ...state.remoteImagesAllowed, [messageId]: true },
@@ -99,6 +108,7 @@ export const useUiStore = create<UiState>()(
         style: state.style,
         fontId: state.fontId,
         density: state.density,
+        collapsed: state.collapsed,
       }),
       // Version 1 stored the design comparison and other theme ids; version 2 font pairings and
       // the icon set, both gone since.

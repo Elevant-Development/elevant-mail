@@ -45,6 +45,30 @@ const folderRoles: { role: FolderRole; name: string }[] = [
 
 const folderId = (accountId: string, role: FolderRole) => `${accountId}:${role}`;
 
+/** Folders of the work account without a role, to show the tree: "/"-separated paths. */
+const workFolders = [
+  "INBOX/Projekte",
+  "INBOX/Projekte/Website",
+  "Kunden",
+  "Kunden/Berger",
+  "Kunden/Lindenau",
+  // Next to the special "Sent": an old folder another program left behind.
+  "Gesendet",
+];
+
+function roleFolder(accountId: string, role: FolderRole, name: string): Folder {
+  return {
+    id: folderId(accountId, role),
+    accountId,
+    name,
+    path: name,
+    pathNames: [name],
+    role,
+    unreadCount: 0,
+    totalCount: 0,
+  };
+}
+
 interface MockMessage {
   account: string;
   role: FolderRole;
@@ -375,20 +399,31 @@ function buildMessages(): Message[] {
 const messages = buildMessages();
 
 function buildFolders(): Folder[] {
-  return accounts.flatMap((account) =>
+  const withRoles = accounts.flatMap((account) =>
     folderRoles.map(({ role, name }) => {
-      const id = folderId(account.id, role);
-      const inFolder = messages.filter((m) => m.folderId === id);
+      const folder = roleFolder(account.id, role, name);
+      const inFolder = messages.filter((m) => m.folderId === folder.id);
       return {
-        id,
-        accountId: account.id,
-        name,
-        role,
+        ...folder,
         unreadCount: inFolder.filter((m) => !m.isRead).length,
         totalCount: inFolder.length,
       };
     }),
   );
+  const plain = workFolders.map((path, index) => {
+    const pathNames = path.split("/");
+    return {
+      id: `acc-work:folder-${index + 1}`,
+      accountId: "acc-work",
+      name: pathNames[pathNames.length - 1] ?? path,
+      path,
+      pathNames,
+      role: null,
+      unreadCount: path === "Kunden/Berger" ? 2 : 0,
+      totalCount: 0,
+    };
+  });
+  return [...withRoles, ...plain];
 }
 
 let folders = buildFolders();
@@ -464,14 +499,7 @@ export const mockBackend: Backend = {
     accounts = [...accounts, added];
     folders = [
       ...folders,
-      ...folderRoles.map(({ role, name }) => ({
-        id: folderId(added.id, role),
-        accountId: added.id,
-        name,
-        role,
-        unreadCount: 0,
-        totalCount: 0,
-      })),
+      ...folderRoles.map(({ role, name }) => roleFolder(added.id, role, name)),
     ];
     return added;
   },

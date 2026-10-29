@@ -152,7 +152,9 @@ pub(crate) async fn list_folders(session: &mut ImapSession) -> Result<Vec<Remote
         .try_collect()
         .await
         .map_err(protocol_error)?;
-    Ok(names.iter().map(RemoteFolder::from_name).collect())
+    let mut folders: Vec<RemoteFolder> = names.iter().map(RemoteFolder::from_name).collect();
+    crate::mail::folders::settle_roles(&mut folders);
+    Ok(folders)
 }
 
 pub(crate) async fn with_timeout<F: Future>(duration: Duration, future: F) -> Result<F::Output> {

@@ -63,6 +63,10 @@ pub struct Folder {
     pub id: String,
     pub account_id: String,
     pub name: String,
+    /// Server path, for telling folders apart.
+    pub path: String,
+    /// The path split at the server's delimiter and decoded, for showing folders as a tree.
+    pub path_names: Vec<String>,
     pub role: Option<FolderRole>,
     pub unread_count: u32,
     pub total_count: u32,

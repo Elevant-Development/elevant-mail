@@ -35,17 +35,22 @@ pub fn message_account(conn: &Connection, message_id: &str) -> Result<Option<Str
 
 pub fn list_folders(conn: &Connection) -> Result<Vec<Folder>> {
     let mut statement = conn.prepare(
-        "SELECT f.id, f.account_id, f.name, f.role, f.unread_count, f.total_count
+        "SELECT f.id, f.account_id, f.name, f.role, f.unread_count, f.total_count, f.path,
+           f.delimiter
          FROM folders f JOIN accounts a ON a.id = f.account_id
          ORDER BY a.sort_order, a.created_at, f.path",
     )?;
     let folders = statement
         .query_map([], |row| {
             let role: Option<String> = row.get(3)?;
+            let path: String = row.get(6)?;
+            let delimiter: Option<String> = row.get(7)?;
             Ok(Folder {
                 id: row.get(0)?,
                 account_id: row.get(1)?,
                 name: row.get(2)?,
+                path_names: path_names(&path, delimiter.as_deref()),
+                path,
                 role: role.as_deref().and_then(FolderRole::parse),
                 unread_count: row.get(4)?,
                 total_count: row.get(5)?,
@@ -53,6 +58,18 @@ pub fn list_folders(conn: &Connection) -> Result<Vec<Folder>> {
         })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(folders)
+}
+
+/// "INBOX.Projekte.2026" → ["INBOX", "Projekte", "2026"], with modified UTF-7 decoded.
+fn path_names(path: &str, delimiter: Option<&str>) -> Vec<String> {
+    let segments: Vec<&str> = match delimiter.filter(|delimiter| !delimiter.is_empty()) {
+        Some(delimiter) => path.split(delimiter).collect(),
+        None => vec![path],
+    };
+    segments
+        .into_iter()
+        .map(|segment| utf7_imap::decode_utf7_imap(segment.to_owned()))
+        .collect()
 }
 
 const SUMMARY_COLUMNS: &str = "m.id, m.account_id, m.folder_id, m.subject, m.from_name,
@@ -100,14 +117,25 @@ const SEARCH_LIMIT: u32 = 300;
 
 /// Full-text search over subject, sender and text of all cached mail, newest first. Every word
 /// must match, as a word or the start of one ("rech" finds "Rechnung").
+///
+/// A message that sits in several folders of an account (Gmail shows labels and "All Mail" as
+/// folders, other servers keep copies) is listed once, preferably from the inbox.
 pub fn search_messages(conn: &Connection, query: &str) -> Result<Vec<MessageSummary>> {
     let Some(fts_query) = fts_query(query) else {
         return Ok(Vec::new());
     };
     let sql = format!(
-        "SELECT {SUMMARY_COLUMNS} FROM messages_fts
-         JOIN messages m ON m.seq = messages_fts.rowid
-         WHERE messages_fts MATCH ?1
+        "SELECT {SUMMARY_COLUMNS} FROM (
+           SELECT m.*, row_number() OVER (
+             PARTITION BY m.account_id, coalesce(m.message_id, m.id)
+             ORDER BY f.role = 'inbox' DESC, f.role IS NOT NULL AND f.role <> 'all' DESC
+           ) AS copy
+           FROM messages_fts
+           JOIN messages m ON m.seq = messages_fts.rowid
+           JOIN folders f ON f.id = m.folder_id
+           WHERE messages_fts MATCH ?1
+         ) m
+         WHERE m.copy = 1
          ORDER BY coalesce(m.date_sent, m.date_received, m.fetched_at) DESC, m.uid DESC
          LIMIT {SEARCH_LIMIT}"
     );
@@ -378,5 +406,43 @@ mod tests {
         assert!(ids("").is_empty());
         // Sender addresses, newest first, across folders.
         assert_eq!(ids("lena@example").len(), 3);
+    }
+
+    #[test]
+    fn search_lists_a_message_in_several_folders_once() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed(&conn);
+        conn.execute_batch(
+            "INSERT INTO folders (id, account_id, name, path, role)
+               VALUES ('all', 'acc', 'Alle Nachrichten', '[Gmail]/All Mail', 'all'),
+                      ('label', 'acc', 'Projekt', 'Projekt', NULL);
+             INSERT INTO messages (id, account_id, folder_id, uid, message_id, subject, fetched_at)
+               VALUES ('in-all', 'acc', 'all', 7, '<x@example.org>', 'Quartalszahlen', 0),
+                      ('in-label', 'acc', 'label', 3, '<x@example.org>', 'Quartalszahlen', 0),
+                      ('in-inbox', 'acc', 'inbox', 9, '<x@example.org>', 'Quartalszahlen', 0),
+                      ('other', 'acc', 'all', 8, '<y@example.org>', 'Quartalszahlen alt', 0);",
+        )
+        .unwrap();
+        let mut ids: Vec<String> = search_messages(&conn, "quartal")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["in-inbox", "other"]);
+    }
+
+    #[test]
+    fn splits_and_decodes_folder_paths() {
+        assert_eq!(
+            path_names("INBOX.Projekte.2026", Some(".")),
+            ["INBOX", "Projekte", "2026"]
+        );
+        assert_eq!(
+            path_names("[Gmail]/Entw&APw-rfe", Some("/")),
+            ["[Gmail]", "Entwürfe"]
+        );
+        assert_eq!(path_names("Archiv", None), ["Archiv"]);
     }
 }

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useSyncActions } from "@/hooks/use-sync";
 import { describeError, type UserError } from "@/lib/errors";
 import { t, type MessageKey } from "@/lib/i18n";
 import { api, type ImapSettings, type Security, type SuggestedSettings } from "@/lib/tauri";
@@ -49,6 +50,7 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 function AccountForm({ onDone }: { onDone: () => void }) {
   const queryClient = useQueryClient();
   const selectMailbox = useUiStore((s) => s.selectMailbox);
+  const { syncAccount } = useSyncActions();
   const addAccount = useAddAccount();
 
   const [email, setEmail] = useState("");
@@ -83,7 +85,9 @@ function AccountForm({ onDone }: { onDone: () => void }) {
     updateSettings({ security, port });
   };
 
-  const detect = async () => {
+  // `quiet`: run when the address field is left, so provider tips (app passwords) show before
+  // the password is typed. A failure then waits for the explicit "Weiter".
+  const detect = async ({ quiet = false } = {}) => {
     setDetecting(true);
     setError(null);
     try {
@@ -92,9 +96,15 @@ function AccountForm({ onDone }: { onDone: () => void }) {
       setSettings(found.imap);
       setEditing(found.source === "guess");
     } catch (cause) {
-      setError(describeError(cause));
+      if (!quiet) setError(describeError(cause));
     } finally {
       setDetecting(false);
+    }
+  };
+
+  const detectEarly = () => {
+    if (!settings && !busy && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+      void detect({ quiet: true });
     }
   };
 
@@ -112,6 +122,8 @@ function AccountForm({ onDone }: { onDone: () => void }) {
       });
       const inbox = folders.find((f) => f.accountId === account.id && f.role === "inbox");
       if (inbox) selectMailbox(inbox.id);
+      // Fetched now, not left to the background sync noticing the new account.
+      void syncAccount(account.id);
       onDone();
     } catch (cause) {
       setError(describeError(cause));
@@ -145,6 +157,7 @@ function AccountForm({ onDone }: { onDone: () => void }) {
             value={email}
             readOnly={busy}
             onChange={(event) => changeEmail(event.target.value)}
+            onBlur={detectEarly}
           />
         </Field>
         <Field id="account-password" label={t("account.field.password")}>
@@ -251,7 +264,13 @@ function AccountForm({ onDone }: { onDone: () => void }) {
           {blocked ? (
             <Notice tone="info" text={t("account.tip.microsoft")} />
           ) : (
-            providerTip && <Notice tone="info" text={t(providerTip)} />
+            providerTip && (
+              <Notice
+                tone="info"
+                text={t(providerTip)}
+                link={suggestion?.provider ? providerLinks[suggestion.provider] : undefined}
+              />
+            )
           )}
         </section>
       )}
@@ -289,14 +308,23 @@ function securityLabel(security: Security) {
   return security === "tls" ? "TLS" : "STARTTLS";
 }
 
+/** Where the provider's app passwords are made, opened in the system browser. */
+const providerLinks: Partial<Record<NonNullable<SuggestedSettings["provider"]>, string>> = {
+  gmail: "https://myaccount.google.com/apppasswords",
+  icloud: "https://account.apple.com/",
+  yahoo: "https://login.yahoo.com/account/security",
+};
+
 function Notice({
   tone,
   text,
   detail,
+  link,
 }: {
   tone: "info" | "error";
   text: string;
   detail?: string | null;
+  link?: string;
 }) {
   return (
     <div
@@ -310,6 +338,15 @@ function Notice({
       <div className="grid gap-0.5">
         <p className={cn(tone === "error" && "font-medium")}>{text}</p>
         {detail && <p className="text-foreground/80">{detail}</p>}
+        {link && (
+          <button
+            type="button"
+            onClick={() => void api.openLink(link).catch(() => undefined)}
+            className="justify-self-start font-medium text-foreground underline-offset-2 hover:underline"
+          >
+            {t("account.tip.openPage")}
+          </button>
+        )}
       </div>
     </div>
   );

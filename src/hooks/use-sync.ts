@@ -37,7 +37,11 @@ export function useSyncActions() {
   };
 
   return {
-    syncAccount: (accountId: string) => run(accountId, null, () => api.syncAccount(accountId)),
+    syncAccount: (accountId: string) => {
+      // Already running (startup, poll, a new account): the running sync covers it.
+      if (useSyncStore.getState().progress[accountId]) return Promise.resolve();
+      return run(accountId, null, () => api.syncAccount(accountId));
+    },
     syncFolder: (folder: Folder, { force = false } = {}) => {
       const lastSync = useSyncStore.getState().lastFolderSync[folder.id] ?? 0;
       if (!force && Date.now() - lastSync < FOLDER_FRESH_MS) return Promise.resolve();
@@ -55,13 +59,17 @@ export function useSyncActions() {
 
 /**
  * Keeps mail current in the background: listens for progress, syncs every account once at
- * start (and new accounts when they appear), then polls. Does nothing with sample data.
+ * start (and new accounts when they appear), then polls all current accounts. Does nothing with
+ * sample data. Adding an account also syncs it right away (AccountDialog).
  */
 export function useBackgroundSync() {
   const { data: accounts } = useAccounts();
   const { syncAccount } = useSyncActions();
   const synced = useRef(new Set<string>());
   const sync = useEffectEvent((accountId: string) => void syncAccount(accountId));
+  const pollAll = useEffectEvent(() => {
+    for (const account of accounts ?? []) sync(account.id);
+  });
 
   useEffect(() => {
     if (usesMockData) return;
@@ -85,9 +93,7 @@ export function useBackgroundSync() {
 
   useEffect(() => {
     if (usesMockData) return;
-    const timer = window.setInterval(() => {
-      for (const id of synced.current) sync(id);
-    }, POLL_INTERVAL_MS);
+    const timer = window.setInterval(pollAll, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, []);
 }

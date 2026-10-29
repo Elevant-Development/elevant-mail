@@ -253,6 +253,11 @@ export function MessageList({ className }: MessageListProps) {
         >
           <Icon name="alert" className="mt-px size-3.5 shrink-0" />
           <p className="min-w-0 flex-1">
+            {accounts.length > 1 && (
+              <span className="font-semibold">
+                {accounts.find((a) => a.id === errorEntry[0])?.displayName}:{" "}
+              </span>
+            )}
             <span className="font-medium">{errorEntry[1]?.message}</span>
             {errorEntry[1]?.action && (
               <span className="text-foreground/80"> {errorEntry[1].action}</span>

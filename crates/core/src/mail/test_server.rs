@@ -219,6 +219,21 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
                 .into_bytes()
             }
             "UID" => uid_command(&tag, &arguments, &mut mailbox.lock().unwrap()),
+            // Every folder reports the one mailbox's numbers.
+            "STATUS" => {
+                let mailbox = mailbox.lock().unwrap();
+                let name = arguments
+                    .split(" (")
+                    .next()
+                    .unwrap_or_default()
+                    .trim_matches('"');
+                let unseen = mailbox.messages.iter().filter(|m| !m.seen).count();
+                format!(
+                    "* STATUS \"{name}\" (MESSAGES {} UNSEEN {unseen})\r\n{tag} OK done\r\n",
+                    mailbox.messages.len()
+                )
+                .into_bytes()
+            }
             "LOGOUT" => {
                 stream
                     .write_all(format!("* BYE\r\n{tag} OK bye\r\n").as_bytes())

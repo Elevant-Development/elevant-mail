@@ -41,8 +41,11 @@ export const de = {
     "Bei web.de muss der Abruf per IMAP eingeschaltet sein: Einstellungen → POP3/IMAP Abruf.",
   "account.tip.gmx":
     "Bei GMX muss der Abruf per IMAP eingeschaltet sein: Einstellungen → POP3/IMAP Abruf.",
+  "account.tip.openPage": "Seite im Browser öffnen",
   "account.tip.microsoft":
     "Microsoft-Konten melden sich nur über Microsoft an, nicht mit Passwort. Das kommt mit einer der nächsten Versionen.",
+  "sidebar.expand": "{name} aufklappen",
+  "sidebar.collapse": "{name} zuklappen",
   "account.remove.action": "Konto „{name}“ entfernen",
   "account.remove.title": "„{name}“ entfernen?",
   "account.remove.description":

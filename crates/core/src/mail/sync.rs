@@ -153,18 +153,50 @@ pub(crate) async fn sync_inbox_in(
     progress: ProgressFn<'_>,
 ) -> Result<SyncReport> {
     push_before_sync(db, session, account_id).await?;
-    // Bound first: in a `match` the lock guard would live through the arms and their awaits.
-    let known = inbox_state(&db.conn(), account_id)?;
-    let inbox = match known {
-        Some(inbox) => inbox,
-        None => {
-            let folders = with_timeout(COMMAND_TIMEOUT, list_folders(session)).await??;
-            crate::accounts::store_folders(&db.conn(), account_id, &folders)?;
-            let stored = inbox_state(&db.conn(), account_id)?;
-            stored.ok_or(Error::FolderNotFound)?
+    // Folders made, renamed or deleted elsewhere show up here; one LIST is cheap.
+    let folders = with_timeout(COMMAND_TIMEOUT, list_folders(session)).await??;
+    crate::accounts::replace_folders(&db.conn(), account_id, &folders)?;
+    let inbox = inbox_state(&db.conn(), account_id)?.ok_or(Error::FolderNotFound)?;
+    let report = sync_folder_in(db, session, &inbox, Mode::Newest, progress).await?;
+    update_folder_counts(db, session, account_id, &folders).await?;
+    Ok(report)
+}
+
+/// Total and unread mail of every other folder (`STATUS`), so the sidebar shows them before a
+/// folder is opened, and old folders without mail are easy to tell apart. A folder the server
+/// refuses to report on keeps its numbers.
+async fn update_folder_counts(
+    db: &Database,
+    session: &mut ImapSession,
+    account_id: &str,
+    folders: &[crate::mail::folders::RemoteFolder],
+) -> Result<()> {
+    for folder in folders.iter().filter(|folder| folder.selectable) {
+        if folder.role == Some(crate::model::FolderRole::Inbox) {
+            continue;
         }
-    };
-    sync_folder_in(db, session, &inbox, Mode::Newest, progress).await
+        let status = match with_timeout(
+            COMMAND_TIMEOUT,
+            session.status(&folder.path, "(MESSAGES UNSEEN)"),
+        )
+        .await?
+        {
+            Ok(status) => status,
+            Err(async_imap::error::Error::No(_) | async_imap::error::Error::Bad(_)) => continue,
+            Err(other) => return Err(protocol_error(other)),
+        };
+        db.conn().execute(
+            "UPDATE folders SET total_count = ?3, unread_count = ?4
+             WHERE account_id = ?1 AND path = ?2",
+            params![
+                account_id,
+                folder.path,
+                status.exists,
+                status.unseen.unwrap_or(0)
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 /// Local changes go out first, so the flag sync that follows does not undo them.
@@ -837,8 +869,16 @@ mod tests {
         assert_eq!(messages[0].from.name.as_deref(), Some("Lena Fischer"));
         assert_eq!(messages[0].snippet, "Body of message 120");
 
-        let folder = list_folders(&setup.db.conn()).unwrap().remove(0);
-        assert_eq!((folder.total_count, folder.unread_count), (120, 120));
+        let folders = list_folders(&setup.db.conn()).unwrap();
+        let inbox = folders.iter().find(|f| f.id == setup.inbox_id).unwrap();
+        assert_eq!((inbox.total_count, inbox.unread_count), (120, 120));
+        // The sync also refreshed the folder list from the server (Shared is \Noselect).
+        let mut paths: Vec<&str> = folders.iter().map(|f| f.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, ["Entw&APw-rfe", "INBOX", "Sent"]);
+        // The other folders got their numbers from STATUS without being opened.
+        let sent = folders.iter().find(|f| f.path == "Sent").unwrap();
+        assert_eq!((sent.total_count, sent.unread_count), (120, 120));
     }
 
     #[tokio::test]

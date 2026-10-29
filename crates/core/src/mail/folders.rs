@@ -12,6 +12,8 @@ pub struct RemoteFolder {
     pub name: String,
     pub delimiter: Option<String>,
     pub role: Option<FolderRole>,
+    /// The role comes from the folder's name, not from the server (SPECIAL-USE).
+    pub role_guessed: bool,
     /// `\Noselect` folders only group others and hold no mail.
     pub selectable: bool,
 }
@@ -42,13 +44,41 @@ impl RemoteFolder {
             _ => path,
         };
         let name = utf7_imap::decode_utf7_imap(last_segment.to_owned());
-        let role = role.or_else(|| role_from_name(path, &name));
+        let guessed = role
+            .is_none()
+            .then(|| role_from_name(path, &name))
+            .flatten();
         Self {
             path: path.to_owned(),
             name,
             delimiter: delimiter.map(str::to_owned),
-            role,
+            role: role.or(guessed),
+            role_guessed: guessed.is_some(),
             selectable,
+        }
+    }
+}
+
+/// One folder per role. The server's word (SPECIAL-USE) beats a guess from the name; Gmail, for
+/// example, may list both "[Gmail]/Gesendet" (marked `\Sent`) and an old "[Gmail]/Sent Mail".
+/// Among guesses the folder nearest the top wins.
+pub fn settle_roles(folders: &mut [RemoteFolder]) {
+    let mut order: Vec<usize> = (0..folders.len()).collect();
+    order.sort_by_key(|&index| {
+        let folder = &folders[index];
+        (folder.role_guessed, folder.path.len())
+    });
+    let mut taken = Vec::new();
+    for index in order {
+        let folder = &mut folders[index];
+        let Some(role) = folder.role.filter(|_| folder.selectable) else {
+            continue;
+        };
+        if taken.contains(&role) && folder.role_guessed {
+            folder.role = None;
+            folder.role_guessed = false;
+        } else {
+            taken.push(role);
         }
     }
 }
@@ -146,5 +176,44 @@ mod tests {
     fn attributes_win_over_names() {
         let folder = RemoteFolder::new("Ablage", Some("/"), Some(FolderRole::Archive), true);
         assert_eq!(folder.role, Some(FolderRole::Archive));
+    }
+
+    #[test]
+    fn the_server_role_beats_a_guess_from_the_name() {
+        let mut folders = vec![
+            RemoteFolder::new("[Gmail]/Sent Mail", Some("/"), None, true),
+            RemoteFolder::new("[Gmail]/Gesendet", Some("/"), Some(FolderRole::Sent), true),
+            RemoteFolder::new("[Gmail]/Trash", Some("/"), None, true),
+            RemoteFolder::new(
+                "[Gmail]/Papierkorb",
+                Some("/"),
+                Some(FolderRole::Trash),
+                true,
+            ),
+            RemoteFolder::new("INBOX", Some("/"), None, true),
+        ];
+        settle_roles(&mut folders);
+        let roles: Vec<_> = folders.iter().map(|f| (f.name.as_str(), f.role)).collect();
+        assert_eq!(
+            roles,
+            [
+                ("Sent Mail", None),
+                ("Gesendet", Some(FolderRole::Sent)),
+                ("Trash", None),
+                ("Papierkorb", Some(FolderRole::Trash)),
+                ("INBOX", Some(FolderRole::Inbox)),
+            ]
+        );
+    }
+
+    #[test]
+    fn among_guesses_the_top_folder_wins() {
+        let mut folders = vec![
+            RemoteFolder::new("INBOX/Archiv/Spam", Some("/"), None, true),
+            RemoteFolder::new("Spam", Some("/"), None, true),
+        ];
+        settle_roles(&mut folders);
+        assert_eq!(folders[0].role, None);
+        assert_eq!(folders[1].role, Some(FolderRole::Junk));
     }
 }

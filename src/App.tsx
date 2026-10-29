@@ -1,15 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useBackgroundSync } from "@/hooks/use-sync";
-
-// Data comes from the local cache, so refetching on window focus only adds noise.
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { refetchOnWindowFocus: false, staleTime: 30_000 },
-  },
-});
+import { queryClient } from "@/lib/query-client";
 
 function BackgroundSync() {
   useBackgroundSync();

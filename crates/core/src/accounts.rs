@@ -53,6 +53,7 @@ pub async fn add_account(
     if exists(&db.conn(), &new)? {
         return Err(Error::AccountExists);
     }
+    let password = normalize_password(&new.imap.host, password);
     let report = imap::check_login(&new.imap, &password).await?;
     save(db, secrets, &new, &password, &report)
 }
@@ -78,6 +79,16 @@ pub(crate) fn save(
         let _ = secrets.delete(&id, SecretKind::ImapPassword);
     }
     saved
+}
+
+/// Google shows app passwords in groups of four ("abcd efgh ijkl mnop") and expects them without
+/// the spaces; pasted as shown, the login would fail. Other passwords may contain spaces.
+fn normalize_password(host: &str, password: Secret) -> Secret {
+    if host.eq_ignore_ascii_case("imap.gmail.com") && password.expose().contains(' ') {
+        Secret::new(password.expose().split_whitespace().collect::<String>())
+    } else {
+        password
+    }
 }
 
 fn exists(conn: &Connection, new: &NewAccount) -> Result<bool> {
@@ -125,6 +136,31 @@ fn insert(conn: &Connection, id: &str, new: &NewAccount) -> Result<Account> {
 }
 
 /// Inserts new folders and updates known ones; folders that hold no mail are skipped.
+/// The account's folders as the server lists them now: new ones added, roles and names updated,
+/// vanished ones removed together with their cached mail.
+pub(crate) fn replace_folders(
+    conn: &Connection,
+    account_id: &str,
+    folders: &[RemoteFolder],
+) -> Result<()> {
+    store_folders(conn, account_id, folders)?;
+    let listed: Vec<&str> = folders
+        .iter()
+        .filter(|folder| folder.selectable)
+        .map(|folder| folder.path.as_str())
+        .collect();
+    let mut statement = conn.prepare("SELECT id, path FROM folders WHERE account_id = ?1")?;
+    let stored: Vec<(String, String)> = statement
+        .query_map([account_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (id, path) in stored {
+        if !listed.contains(&path.as_str()) {
+            conn.execute("DELETE FROM folders WHERE id = ?1", [id])?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn store_folders(
     conn: &Connection,
     account_id: &str,
@@ -289,5 +325,19 @@ mod tests {
             remove(&db, &secrets, &account.id),
             Err(Error::AccountNotFound)
         ));
+    }
+
+    #[test]
+    fn gmail_app_passwords_lose_their_spaces() {
+        let pasted = Secret::new("abcd efgh ijkl mnop");
+        assert_eq!(
+            normalize_password("imap.gmail.com", pasted).expose(),
+            "abcdefghijklmnop"
+        );
+        let own = Secret::new("mein geheimes Passwort");
+        assert_eq!(
+            normalize_password("imap.example.org", own).expose(),
+            "mein geheimes Passwort"
+        );
     }
 }
