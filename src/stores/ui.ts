@@ -16,6 +16,9 @@ import { UNIFIED_INBOX } from "@/lib/tauri";
 
 export type Mode = "dark" | "light" | "system";
 export type Density = "comfortable" | "compact";
+/** A page of the settings window: an account (null: the first one), or the appearance. */
+export type SettingsPage =
+  { section: "accounts"; accountId: string | null } | { section: "appearance" };
 
 interface UiState {
   mode: Mode;
@@ -32,6 +35,8 @@ interface UiState {
   /** Only used in the narrow layout, where the sidebar is an overlay. */
   sidebarOpen: boolean;
   accountDialogOpen: boolean;
+  /** The open page of the settings window; null while it is closed. */
+  settingsPage: SettingsPage | null;
   /**
    * Sidebar sections and folders the user collapsed (true) or opened (false), by node key;
    * missing means the default. Survives a restart.
@@ -53,6 +58,8 @@ interface UiState {
   selectMessage: (messageId: string | null) => void;
   setSidebarOpen: (open: boolean) => void;
   setAccountDialogOpen: (open: boolean) => void;
+  openSettings: (page: SettingsPage) => void;
+  closeSettings: () => void;
   allowRemoteImages: (messageId: string) => void;
   setSearchQuery: (query: string) => void;
   setCollapsed: (key: string, collapsed: boolean) => void;
@@ -72,6 +79,7 @@ export const useUiStore = create<UiState>()(
       selectedMessageId: null,
       sidebarOpen: false,
       accountDialogOpen: false,
+      settingsPage: null,
       remoteImagesAllowed: {},
       searchQuery: "",
       collapsed: {},
@@ -97,6 +105,8 @@ export const useUiStore = create<UiState>()(
       selectMessage: (messageId) => set({ selectedMessageId: messageId }),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       setAccountDialogOpen: (open) => set({ accountDialogOpen: open, sidebarOpen: false }),
+      openSettings: (page) => set({ settingsPage: page, sidebarOpen: false }),
+      closeSettings: () => set({ settingsPage: null }),
       setSearchQuery: (query) => set({ searchQuery: query }),
       setCollapsed: (key, collapsed) =>
         set((state) => ({ collapsed: { ...state.collapsed, [key]: collapsed } })),

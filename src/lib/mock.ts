@@ -1,10 +1,12 @@
 /**
  * Sample data for working on the UI in a plain browser (`pnpm dev`). All people, companies and
  * addresses are made up; domains are reserved example domains. Texts follow the interface language.
- * Adding an account is simulated: the password "falsch" fails the login, anything else succeeds.
+ * Adding an account or changing its login is simulated: the password "falsch" fails the login,
+ * anything else succeeds.
  */
 import type {
   Account,
+  AccountSettings,
   Address,
   Backend,
   Folder,
@@ -37,6 +39,22 @@ let accounts: Account[] = [
     color: "oklch(0.74 0.14 60)",
   },
 ];
+
+const accountSettings: Record<string, AccountSettings> = {
+  "acc-private": {
+    signIn: "password",
+    imap: { host: "imap.example.org", port: 993, security: "tls", username: "alex@example.org" },
+  },
+  "acc-work": {
+    signIn: "microsoft",
+    imap: {
+      host: "outlook.office365.com",
+      port: 993,
+      security: "tls",
+      username: "alex.berger@example.com",
+    },
+  },
+};
 
 const folderRoles: { role: FolderRole; name: string }[] = [
   { role: "inbox", name: "INBOX" },
@@ -565,6 +583,18 @@ function setMockFlag(messageIds: string[], flag: "isRead" | "isFlagged", value: 
 
 let cancelMockSignIn: () => void = () => undefined;
 
+/** Pretends the user signs in within two seconds; cancelSignIn ends the wait. */
+async function mockBrowserSignIn() {
+  const signedIn = await new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(true), 2000);
+    cancelMockSignIn = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+  });
+  if (!signedIn) throw { kind: "signInCancelled", hint: null };
+}
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function suggest(email: string): SuggestedSettings {
@@ -608,6 +638,7 @@ export const mockBackend: Backend = {
       color: "oklch(0.72 0.14 150)",
     };
     accounts = [...accounts, added];
+    accountSettings[added.id] = { signIn: "password", imap: account.imap };
     folders = [
       ...folders,
       ...folderRoles.map(({ role, name }) => roleFolder(added.id, role, name)),
@@ -615,21 +646,43 @@ export const mockBackend: Backend = {
     return added;
   },
   addMicrosoftAccount: async (account) => {
-    // Pretends the user signs in within two seconds; cancelSignIn ends the wait.
-    const signedIn = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(true), 2000);
-      cancelMockSignIn = () => {
-        clearTimeout(timer);
-        resolve(false);
-      };
-    });
-    if (!signedIn) throw { kind: "signInCancelled", hint: null };
-    return mockBackend.addAccount(account, "");
+    await mockBrowserSignIn();
+    const added = await mockBackend.addAccount(account, "");
+    accountSettings[added.id] = { signIn: "microsoft", imap: account.imap };
+    return added;
   },
   cancelSignIn: async () => cancelMockSignIn(),
   removeAccount: async (accountId) => {
     accounts = accounts.filter((a) => a.id !== accountId);
     folders = folders.filter((f) => f.accountId !== accountId);
+  },
+  getAccountSettings: async (accountId) => {
+    const settings = accountSettings[accountId];
+    if (!settings) throw { kind: "notFound", hint: null };
+    return settings;
+  },
+  updateAccount: async (accountId, changes) => {
+    const current = accounts.find((a) => a.id === accountId);
+    if (!current) throw { kind: "notFound", hint: null };
+    const updated: Account = {
+      ...current,
+      displayName: changes.displayName.trim() || current.emailAddress,
+      color: changes.color,
+    };
+    accounts = accounts.map((a) => (a.id === accountId ? updated : a));
+    return updated;
+  },
+  changeLogin: async (accountId, imap, password) => {
+    await wait(900);
+    if (password === "falsch") {
+      throw { kind: "authenticationFailed", hint: "checkCredentials" };
+    }
+    const current = accountSettings[accountId];
+    if (!current) throw { kind: "notFound", hint: null };
+    accountSettings[accountId] = { ...current, imap };
+  },
+  signInAgain: async () => {
+    await mockBrowserSignIn();
   },
   listFolders: async () => folders,
   listMessages: async (mailboxId) => {

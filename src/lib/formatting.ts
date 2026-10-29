@@ -1,4 +1,4 @@
-import type { Address } from "./tauri";
+import type { Address, ImapSettings, Security } from "./tauri";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -88,4 +88,13 @@ export function hueFromString(value: string): number {
     hash = (hash * 31 + char.codePointAt(0)!) | 0;
   }
   return Math.abs(hash) % 360;
+}
+
+export function formatSecurity(security: Security): string {
+  return security === "tls" ? "TLS" : "STARTTLS";
+}
+
+/** One line for server settings: "imap.example.org · 993 · TLS". */
+export function formatServer(settings: ImapSettings): string {
+  return `${settings.host} · ${settings.port} · ${formatSecurity(settings.security)}`;
 }

@@ -1,16 +1,19 @@
-//! Adding, listing and removing accounts. An account is only saved after a successful login;
-//! its password goes to the keyring, everything else to the database.
+//! Adding, changing, listing and removing accounts. An account is only saved after a successful
+//! login, and a new login only after it worked; passwords go to the keyring, everything else to
+//! the database.
 
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use tokio_rustls::TlsConnector;
 use ts_rs::TS;
 
 use crate::db::Database;
 use crate::ids::{new_id, now_millis};
 use crate::mail::folders::RemoteFolder;
 use crate::mail::imap::{self, ConnectionReport};
-use crate::mail::settings::ImapSettings;
+use crate::mail::settings::{ImapSettings, Security};
 use crate::model::Account;
+use crate::oauth::Tokens;
 use crate::secrets::{Secret, SecretKind, SecretStore};
 use crate::{Error, Result};
 
@@ -31,6 +34,34 @@ pub struct NewAccount {
     pub display_name: String,
     pub email_address: String,
     pub imap: ImapSettings,
+}
+
+/// How an account signs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SignInMethod {
+    Password,
+    /// Microsoft 365 or Outlook.com, signed in through the browser (OAuth2).
+    Microsoft,
+}
+
+/// What the account settings show besides name and colour.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AccountSettings {
+    pub sign_in: SignInMethod,
+    pub imap: ImapSettings,
+}
+
+/// What changes without a login.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AccountChanges {
+    pub display_name: String,
+    pub color: String,
 }
 
 /// Checks the login, then stores the password and the account with its folders. Nothing is
@@ -155,10 +186,17 @@ fn normalize_password(host: &str, password: Secret) -> Secret {
 }
 
 fn exists(conn: &Connection, new: &NewAccount) -> Result<bool> {
+    login_taken(conn, &new.imap, None)
+}
+
+/// Another account (other than `except`) already logs in as this user on this server.
+fn login_taken(conn: &Connection, server: &ImapSettings, except: Option<&str>) -> Result<bool> {
     Ok(conn
         .query_row(
-            "SELECT 1 FROM accounts WHERE lower(imap_host) = lower(?1) AND lower(imap_username) = lower(?2)",
-            params![new.imap.host, new.imap.username],
+            "SELECT 1 FROM accounts
+             WHERE lower(imap_host) = lower(?1) AND lower(imap_username) = lower(?2)
+               AND (?3 IS NULL OR id <> ?3)",
+            params![server.host, server.username, except],
             |_| Ok(()),
         )
         .optional()?
@@ -273,6 +311,207 @@ pub fn list(conn: &Connection) -> Result<Vec<Account>> {
     Ok(accounts)
 }
 
+pub fn settings(conn: &Connection, account_id: &str) -> Result<AccountSettings> {
+    conn.query_row(
+        "SELECT imap_host, imap_port, imap_security, imap_username, auth_method
+         FROM accounts WHERE id = ?1",
+        [account_id],
+        |row| {
+            let security: String = row.get(2)?;
+            let method: String = row.get(4)?;
+            Ok(AccountSettings {
+                sign_in: if method == "oauth2" {
+                    SignInMethod::Microsoft
+                } else {
+                    SignInMethod::Password
+                },
+                imap: ImapSettings {
+                    host: row.get(0)?,
+                    port: row.get(1)?,
+                    security: Security::from_db_str(&security),
+                    username: row.get(3)?,
+                },
+            })
+        },
+    )
+    .optional()?
+    .ok_or(Error::AccountNotFound)
+}
+
+/// Renames the account and sets its colour. An empty name falls back to the address, as when
+/// the account was added.
+pub fn update(conn: &Connection, account_id: &str, changes: &AccountChanges) -> Result<Account> {
+    let color = changes.color.trim();
+    if !is_color(color) {
+        return Err(Error::InvalidColor);
+    }
+    let updated = conn.execute(
+        "UPDATE accounts
+         SET display_name = CASE WHEN ?2 = '' THEN email_address ELSE ?2 END, color = ?3
+         WHERE id = ?1",
+        params![account_id, changes.display_name.trim(), color],
+    )?;
+    if updated == 0 {
+        return Err(Error::AccountNotFound);
+    }
+    list(conn)?
+        .into_iter()
+        .find(|account| account.id == account_id)
+        .ok_or(Error::AccountNotFound)
+}
+
+/// The interface offers a palette; this keeps anything but a plain colour value out of the
+/// style attribute it ends up in.
+fn is_color(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 48
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || " .,%()#-".contains(c))
+}
+
+/// New server settings or a new password (or both) for an account that signs in with a
+/// password. Logs in with them first and changes nothing if that fails. `password: None` keeps
+/// the stored one.
+pub async fn change_login(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    server: ImapSettings,
+    password: Option<Secret>,
+) -> Result<()> {
+    let connector = imap::platform_connector()?;
+    change_login_with(db, secrets, account_id, server, password, &connector).await
+}
+
+async fn change_login_with(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    server: ImapSettings,
+    password: Option<Secret>,
+    connector: &TlsConnector,
+) -> Result<()> {
+    if settings(&db.conn(), account_id)?.sign_in != SignInMethod::Password {
+        return Err(Error::WrongSignInMethod);
+    }
+    let server = ImapSettings {
+        host: server.host.trim().to_owned(),
+        username: server.username.trim().to_owned(),
+        ..server
+    };
+    if login_taken(&db.conn(), &server, Some(account_id))? {
+        return Err(Error::AccountExists);
+    }
+    let password = password.map(|password| normalize_password(&server.host, password));
+    let credential = imap::Credential::Password(match &password {
+        Some(password) => Secret::new(password.expose()),
+        None => secrets.get(account_id, SecretKind::ImapPassword)?,
+    });
+    let report = imap::check_login_with(&server, &credential, connector).await?;
+    apply_login(db, secrets, account_id, &server, password.as_ref(), &report)
+}
+
+/// Stores a login that worked, together with the folders the server listed for it.
+fn apply_login(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    server: &ImapSettings,
+    password: Option<&Secret>,
+    report: &ConnectionReport,
+) -> Result<()> {
+    let previous = match password {
+        Some(password) => {
+            let previous = secrets.get(account_id, SecretKind::ImapPassword).ok();
+            secrets.set(account_id, SecretKind::ImapPassword, password)?;
+            previous
+        }
+        None => None,
+    };
+    let saved = (|| {
+        let mut conn = db.conn();
+        let tx = conn.transaction()?;
+        let updated = tx.execute(
+            "UPDATE accounts SET imap_host = ?2, imap_port = ?3, imap_security = ?4,
+               imap_username = ?5
+             WHERE id = ?1",
+            params![
+                account_id,
+                server.host,
+                server.port,
+                server.security.as_db_str(),
+                server.username,
+            ],
+        )?;
+        if updated == 0 {
+            return Err(Error::AccountNotFound);
+        }
+        replace_folders(&tx, account_id, &report.folders)?;
+        tx.commit()?;
+        Ok(())
+    })();
+    if saved.is_err()
+        && let Some(previous) = previous
+    {
+        let _ = secrets.set(account_id, SecretKind::ImapPassword, &previous);
+    }
+    saved
+}
+
+/// The address to sign in with again: the one Microsoft confirmed the first time.
+pub fn microsoft_login(conn: &Connection, account_id: &str) -> Result<String> {
+    let current = settings(conn, account_id)?;
+    if current.sign_in != SignInMethod::Microsoft {
+        return Err(Error::WrongSignInMethod);
+    }
+    Ok(current.imap.username)
+}
+
+/// After signing in with Microsoft again: checks that it was the same account, logs in once with
+/// the new access token and keeps the new refresh token.
+pub async fn replace_oauth_tokens(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    tokens: Tokens,
+) -> Result<()> {
+    let connector = imap::platform_connector()?;
+    replace_oauth_tokens_with(db, secrets, account_id, tokens, &connector).await
+}
+
+async fn replace_oauth_tokens_with(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    tokens: Tokens,
+    connector: &TlsConnector,
+) -> Result<()> {
+    let current = settings(&db.conn(), account_id)?;
+    check_same_account(&current, &tokens)?;
+    let refresh_token = tokens
+        .refresh_token
+        .as_ref()
+        .ok_or_else(|| Error::SignInFailed("no refresh token".into()))?;
+    let credential = imap::Credential::AccessToken(Secret::new(tokens.access_token.expose()));
+    imap::check_login_with(&current.imap, &credential, connector).await?;
+    secrets.set(account_id, SecretKind::OAuthRefreshToken, refresh_token)?;
+    crate::oauth::remember(account_id, &tokens);
+    Ok(())
+}
+
+fn check_same_account(current: &AccountSettings, tokens: &Tokens) -> Result<()> {
+    if current.sign_in != SignInMethod::Microsoft {
+        return Err(Error::WrongSignInMethod);
+    }
+    match &tokens.user {
+        Some(user) if !user.eq_ignore_ascii_case(&current.imap.username) => {
+            Err(Error::DifferentAccount)
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Removes the account, its cached mail and all of its credentials. The server keeps everything.
 pub fn remove(db: &Database, secrets: &dyn SecretStore, account_id: &str) -> Result<()> {
     let removed = db
@@ -297,7 +536,7 @@ pub fn remove(db: &Database, secrets: &dyn SecretStore, account_id: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mail::settings::Security;
+    use crate::mail::test_server::{self, ACCESS_TOKEN, Mode, PASSWORD};
     use crate::model::FolderRole;
     use crate::secrets::MemoryStore;
 
@@ -431,6 +670,328 @@ mod tests {
             remove(&db, &secrets, &account.id),
             Err(Error::AccountNotFound)
         ));
+    }
+
+    /// `new_account()` on the local test server.
+    fn on_test_server(port: u16) -> NewAccount {
+        let mut new = new_account();
+        new.imap.host = "localhost".into();
+        new.imap.port = port;
+        new
+    }
+
+    fn folder_paths(db: &Database, account_id: &str) -> Vec<String> {
+        db.conn()
+            .prepare("SELECT path FROM folders WHERE account_id = ?1 ORDER BY path")
+            .unwrap()
+            .query_map([account_id], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    fn tokens(user: Option<&str>) -> Tokens {
+        Tokens {
+            access_token: Secret::new(ACCESS_TOKEN),
+            refresh_token: Some(Secret::new("new-refresh-token")),
+            expires_at: now_millis() + 3_600_000,
+            user: user.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn settings_tell_how_an_account_signs_in() {
+        let db = Database::open_in_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let password = save(
+            &db,
+            &secrets,
+            &new_account(),
+            Login::Password(&Secret::new("pw")),
+            &report(),
+        )
+        .unwrap();
+        let mut work = new_account();
+        work.imap.username = "alex@contoso.example".into();
+        let microsoft = save(
+            &db,
+            &secrets,
+            &work,
+            Login::OAuth(&Secret::new("refresh")),
+            &report(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            settings(&db.conn(), &password.id).unwrap(),
+            AccountSettings {
+                sign_in: SignInMethod::Password,
+                imap: new_account().imap,
+            }
+        );
+        assert_eq!(
+            settings(&db.conn(), &microsoft.id).unwrap().sign_in,
+            SignInMethod::Microsoft
+        );
+        assert_eq!(
+            microsoft_login(&db.conn(), &microsoft.id).unwrap(),
+            "alex@contoso.example"
+        );
+        assert!(matches!(
+            microsoft_login(&db.conn(), &password.id),
+            Err(Error::WrongSignInMethod)
+        ));
+        assert!(matches!(
+            settings(&db.conn(), "missing"),
+            Err(Error::AccountNotFound)
+        ));
+    }
+
+    #[test]
+    fn renaming_and_recolouring() {
+        let db = Database::open_in_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let account = save(
+            &db,
+            &secrets,
+            &new_account(),
+            Login::Password(&Secret::new("pw")),
+            &report(),
+        )
+        .unwrap();
+        let changes = |name: &str, color: &str| AccountChanges {
+            display_name: name.into(),
+            color: color.into(),
+        };
+
+        let renamed = update(
+            &db.conn(),
+            &account.id,
+            &changes("  Mail  ", "oklch(0.7 0.15 330)"),
+        )
+        .unwrap();
+        assert_eq!(renamed.display_name, "Mail");
+        assert_eq!(renamed.color, "oklch(0.7 0.15 330)");
+        assert_eq!(list(&db.conn()).unwrap(), vec![renamed]);
+
+        let unnamed = update(&db.conn(), &account.id, &changes(" ", "#4a90d9")).unwrap();
+        assert_eq!(unnamed.display_name, "alex@example.org");
+
+        assert!(matches!(
+            update(
+                &db.conn(),
+                &account.id,
+                &changes("Mail", "red; background: url(x)")
+            ),
+            Err(Error::InvalidColor)
+        ));
+        assert!(matches!(
+            update(&db.conn(), "missing", &changes("Mail", "#4a90d9")),
+            Err(Error::AccountNotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_new_password_is_kept_once_it_worked() {
+        let server = test_server::start(Mode::Tls).await;
+        let db = Database::open_in_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let account = save(
+            &db,
+            &secrets,
+            &on_test_server(server.port),
+            Login::Password(&Secret::new("old-password")),
+            &report(),
+        )
+        .unwrap();
+
+        change_login_with(
+            &db,
+            &secrets,
+            &account.id,
+            on_test_server(server.port).imap,
+            Some(Secret::new(PASSWORD)),
+            &server.connector,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            secrets
+                .get(&account.id, SecretKind::ImapPassword)
+                .unwrap()
+                .expose(),
+            PASSWORD
+        );
+        // The folders come from the server's listing now.
+        assert_eq!(
+            folder_paths(&db, &account.id),
+            vec!["Entw&APw-rfe", "INBOX", "Sent"]
+        );
+    }
+
+    #[tokio::test]
+    async fn new_server_settings_use_the_stored_password() {
+        let server = test_server::start(Mode::StartTls).await;
+        let db = Database::open_in_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let mut before = on_test_server(server.port);
+        before.imap.port = 1;
+        let account = save(
+            &db,
+            &secrets,
+            &before,
+            Login::Password(&Secret::new(PASSWORD)),
+            &report(),
+        )
+        .unwrap();
+
+        let mut fixed = on_test_server(server.port).imap;
+        fixed.security = Security::StartTls;
+        fixed.host = " localhost ".into();
+        change_login_with(&db, &secrets, &account.id, fixed, None, &server.connector)
+            .await
+            .unwrap();
+
+        let stored = settings(&db.conn(), &account.id).unwrap().imap;
+        assert_eq!(stored.host, "localhost");
+        assert_eq!(stored.port, server.port);
+        assert_eq!(stored.security, Security::StartTls);
+    }
+
+    #[tokio::test]
+    async fn a_failed_login_changes_nothing() {
+        let server = test_server::start(Mode::Tls).await;
+        let db = Database::open_in_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let account = save(
+            &db,
+            &secrets,
+            &on_test_server(server.port),
+            Login::Password(&Secret::new(PASSWORD)),
+            &report(),
+        )
+        .unwrap();
+
+        let mut changed = on_test_server(server.port).imap;
+        changed.username = "alex".into();
+        let error = change_login_with(
+            &db,
+            &secrets,
+            &account.id,
+            changed,
+            Some(Secret::new("wrong")),
+            &server.connector,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, Error::AuthenticationFailed { .. }));
+        assert_eq!(
+            secrets
+                .get(&account.id, SecretKind::ImapPassword)
+                .unwrap()
+                .expose(),
+            PASSWORD
+        );
+        assert_eq!(
+            settings(&db.conn(), &account.id).unwrap().imap,
+            on_test_server(server.port).imap
+        );
+    }
+
+    #[tokio::test]
+    async fn a_login_of_another_account_is_refused() {
+        let db = Database::open_in_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let first = save(
+            &db,
+            &secrets,
+            &new_account(),
+            Login::Password(&Secret::new("a")),
+            &report(),
+        )
+        .unwrap();
+        let mut other = new_account();
+        other.imap.username = "work@example.org".into();
+        let second = save(
+            &db,
+            &secrets,
+            &other,
+            Login::Password(&Secret::new("b")),
+            &report(),
+        )
+        .unwrap();
+        let connector = imap::platform_connector().unwrap();
+
+        let mut taken = new_account().imap;
+        taken.username = "ALEX@example.org".into();
+        let error = change_login_with(&db, &secrets, &second.id, taken, None, &connector)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::AccountExists));
+
+        // The account's own login is not "taken".
+        assert!(!login_taken(&db.conn(), &new_account().imap, Some(&first.id)).unwrap());
+    }
+
+    #[tokio::test]
+    async fn signing_in_again_needs_the_same_microsoft_account() {
+        let server = test_server::start(Mode::Tls).await;
+        let db = Database::open_in_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let account = save(
+            &db,
+            &secrets,
+            &on_test_server(server.port),
+            Login::OAuth(&Secret::new("old-refresh-token")),
+            &report(),
+        )
+        .unwrap();
+        let refresh_token = || {
+            secrets
+                .get(&account.id, SecretKind::OAuthRefreshToken)
+                .unwrap()
+                .expose()
+                .to_owned()
+        };
+
+        let error = replace_oauth_tokens_with(
+            &db,
+            &secrets,
+            &account.id,
+            tokens(Some("someone@example.org")),
+            &server.connector,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, Error::DifferentAccount));
+        assert_eq!(refresh_token(), "old-refresh-token");
+
+        replace_oauth_tokens_with(
+            &db,
+            &secrets,
+            &account.id,
+            tokens(Some("Alex@Example.org")),
+            &server.connector,
+        )
+        .await
+        .unwrap();
+        assert_eq!(refresh_token(), "new-refresh-token");
+        crate::oauth::forget(&account.id);
+
+        // A password account neither signs in with Microsoft nor the other way round.
+        let error = change_login_with(
+            &db,
+            &secrets,
+            &account.id,
+            on_test_server(server.port).imap,
+            Some(Secret::new(PASSWORD)),
+            &server.connector,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, Error::WrongSignInMethod));
     }
 
     #[test]

@@ -80,6 +80,15 @@ pub enum Error {
     #[error("the sign-in has expired")]
     SignInExpired,
 
+    #[error("signed in with a different account")]
+    DifferentAccount,
+
+    #[error("the account does not sign in this way")]
+    WrongSignInMethod,
+
+    #[error("not a colour")]
+    InvalidColor,
+
     #[error("unexpected reply from the mail server: {0}")]
     Protocol(String),
 
@@ -139,6 +148,8 @@ pub enum ErrorKind {
     ConsentRequired,
     /// The refresh token no longer works: sign in again.
     SignInExpired,
+    /// Signing in again ended with another address than the account's.
+    DifferentAccount,
     /// The server did not take a change; it was undone in the app.
     ActionRefused,
     /// A file chosen by the user could not be written.
@@ -170,11 +181,13 @@ pub enum Hint {
     UseAppPassword,
     /// web.de and GMX switch IMAP off until it is enabled in their web mail settings.
     EnableImapAccess,
-    /// Microsoft accounts need the sign-in with Microsoft (OAuth), coming in a later version.
+    /// Microsoft accounts sign in with Microsoft (OAuth) instead of a password.
     SignInWithMicrosoft,
     /// An admin of the organisation allows Elevant Mail once (Entra admin center).
     AskAdminForConsent,
     SignInAgain,
+    /// Signing in again needs the account's own address.
+    SignInAsAccount,
     /// Microsoft 365 switches IMAP off per mailbox (admin center → user → mail apps).
     EnableImapMicrosoft,
 }
@@ -186,9 +199,12 @@ impl Error {
             Error::SchemaTooNew { .. } => ErrorKind::StorageTooNew,
             Error::KeyringUnavailable(_) => ErrorKind::KeyringUnavailable,
             Error::SecretNotFound => ErrorKind::CredentialMissing,
-            Error::InvalidEmail | Error::InvalidHost | Error::InvalidLink | Error::NotOpenable => {
-                ErrorKind::InvalidInput
-            }
+            Error::InvalidEmail
+            | Error::InvalidHost
+            | Error::InvalidLink
+            | Error::InvalidColor
+            | Error::NotOpenable
+            | Error::WrongSignInMethod => ErrorKind::InvalidInput,
             Error::HostNotFound => ErrorKind::ServerNotFound,
             Error::ConnectionFailed(_) | Error::TlsFailed(_) | Error::StartTlsUnsupported => {
                 ErrorKind::ConnectionFailed
@@ -201,6 +217,7 @@ impl Error {
             Error::SignInFailed(_) => ErrorKind::SignInFailed,
             Error::ConsentRequired => ErrorKind::ConsentRequired,
             Error::SignInExpired => ErrorKind::SignInExpired,
+            Error::DifferentAccount => ErrorKind::DifferentAccount,
             Error::Protocol(_) => ErrorKind::ServerError,
             Error::AccountExists => ErrorKind::AccountExists,
             Error::ActionRefused => ErrorKind::ActionRefused,
@@ -236,6 +253,7 @@ impl Error {
             Error::OAuthRequired { .. } => Some(Hint::SignInWithMicrosoft),
             Error::ConsentRequired => Some(Hint::AskAdminForConsent),
             Error::SignInExpired => Some(Hint::SignInAgain),
+            Error::DifferentAccount => Some(Hint::SignInAsAccount),
             Error::SignInCancelled | Error::SignInFailed(_) => None,
             Error::Database(_)
             | Error::Migration { .. }
@@ -249,7 +267,9 @@ impl Error {
             | Error::AttachmentNotFound
             | Error::FileWrite(_)
             | Error::InvalidLink
+            | Error::InvalidColor
             | Error::NotOpenable
+            | Error::WrongSignInMethod
             | Error::ActionRefused
             | Error::OpenExternal(_) => None,
         }

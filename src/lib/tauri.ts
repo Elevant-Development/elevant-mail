@@ -9,7 +9,10 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type { Account } from "./bindings/Account";
+import type { AccountChanges } from "./bindings/AccountChanges";
+import type { AccountSettings } from "./bindings/AccountSettings";
 import type { Folder } from "./bindings/Folder";
+import type { ImapSettings } from "./bindings/ImapSettings";
 import type { Message } from "./bindings/Message";
 import type { MessageSummary } from "./bindings/MessageSummary";
 import type { NewAccount } from "./bindings/NewAccount";
@@ -19,6 +22,8 @@ import type { SyncReport } from "./bindings/SyncReport";
 import { mockBackend } from "./mock";
 
 export type { Account } from "./bindings/Account";
+export type { AccountChanges } from "./bindings/AccountChanges";
+export type { AccountSettings } from "./bindings/AccountSettings";
 export type { Attachment } from "./bindings/Attachment";
 export type { Address } from "./bindings/Address";
 export type { ErrorKind } from "./bindings/ErrorKind";
@@ -31,6 +36,7 @@ export type { MessageSummary } from "./bindings/MessageSummary";
 export type { NewAccount } from "./bindings/NewAccount";
 export type { Provider } from "./bindings/Provider";
 export type { Security } from "./bindings/Security";
+export type { SignInMethod } from "./bindings/SignInMethod";
 export type { SuggestedSettings } from "./bindings/SuggestedSettings";
 export type { SuggestionSource } from "./bindings/SuggestionSource";
 export type { SyncProgress } from "./bindings/SyncProgress";
@@ -56,6 +62,16 @@ export interface Backend {
   /** Stops waiting for the browser sign-in. */
   cancelSignIn(): Promise<void>;
   removeAccount(accountId: string): Promise<void>;
+  getAccountSettings(accountId: string): Promise<AccountSettings>;
+  /** Name and colour; they change without a login. */
+  updateAccount(accountId: string, changes: AccountChanges): Promise<Account>;
+  /**
+   * New server settings or a new password (`null` keeps the stored one). Logs in with them first
+   * and changes nothing if that fails.
+   */
+  changeLogin(accountId: string, imap: ImapSettings, password: string | null): Promise<void>;
+  /** Microsoft accounts: the browser sign-in again, for the account's own address. */
+  signInAgain(accountId: string): Promise<void>;
   listFolders(): Promise<Folder[]>;
   /** `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first. */
   listMessages(mailboxId: string): Promise<MessageSummary[]>;
@@ -97,6 +113,10 @@ const tauriBackend: Backend = {
   addMicrosoftAccount: (account) => invoke("add_microsoft_account", { account }),
   cancelSignIn: () => invoke("cancel_sign_in"),
   removeAccount: (accountId) => invoke("remove_account", { accountId }),
+  getAccountSettings: (accountId) => invoke("get_account_settings", { accountId }),
+  updateAccount: (accountId, changes) => invoke("update_account", { accountId, changes }),
+  changeLogin: (accountId, imap, password) => invoke("change_login", { accountId, imap, password }),
+  signInAgain: (accountId) => invoke("sign_in_again", { accountId }),
   listFolders: () => invoke("list_folders"),
   listMessages: (mailboxId) => invoke("list_messages", { mailboxId }),
   getMessage: (messageId, remoteImages) => invoke("get_message", { messageId, remoteImages }),

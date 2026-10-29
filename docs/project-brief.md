@@ -246,7 +246,7 @@ checks that they are current.
 | Area        | Commands                                                                                                                                 |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | App         | `app_status` (version, schema version, keyring available)                                                                                 |
-| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `remove_account` |
+| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `change_login` (server settings, password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
 | Folders     | `list_folders`                                                                                                                            |
 | Mail        | `list_messages` (folder or unified inbox), `get_message` (with `remote_images` to allow a mail's external images), `load_message_body`, `search_messages` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
@@ -294,10 +294,11 @@ src-tauri/src/             # window, start-up and commands only
 
 src/
   components/
-    layout/    AppShell, Sidebar, TitleBar, AppearanceMenu, WindowControls
+    layout/    AppShell, Sidebar, TitleBar, AppearanceMenu, AppearanceSettings, WindowControls
     mail/      MessageList, MessageListItem, MessageReader, SafeHtmlMail, AttachmentList, …
-    accounts/  AccountDialog, AccountList, RemoveAccountDialog, WelcomeScreen
-    common/    Icon, IconButton, SearchInput, Badge, Avatar, …
+    accounts/  AccountDialog, AccountList, ServerFields, RemoveAccountDialog, WelcomeScreen
+    settings/  SettingsDialog, AccountSettingsPanel
+    common/    Icon, IconButton, SearchInput, Notice, Badge, Avatar, …
     ui/        # shadcn/ui
   design/      themes and fonts
   hooks/       sync, keyboard shortcuts, message actions, …
@@ -396,13 +397,15 @@ account, errors isolated per account, folders from the cache, **OAuth2 for Micro
 Gmail's "All Mail" is not synced in the background, and search lists a message once even when it
 is in several folders. Gmail app passwords are used without the spaces Google shows them with.
 
-Still open from these phases: a "sign in again" button when a Microsoft refresh token expires
-(until then: remove and add the account again), publisher verification for Elevant so users of
-other organisations can consent without an admin, paging in `list_messages` beyond 5,000 cached
-messages per folder.
+Still open from these phases: publisher verification for Elevant so users of other organisations
+can consent without an admin, paging in `list_messages` beyond 5,000 cached messages per folder.
 
 ### Phase 3: comfort
 
+- Settings window (gear in the title bar): per account name, colour (eight to choose from), server
+  settings and password, which only change after a login with them worked, and "sign in again"
+  for Microsoft accounts (same address only); removing; the appearance. Sync errors that the
+  account settings fix get a button to them. — done
 - IMAP IDLE for the inbox, polling for other folders
 - Desktop notifications for new mail, optionally keep running in the tray
 - Archive, delete, move
@@ -541,4 +544,9 @@ A calendar as its own area next to mail, after sending works.
     as the address from the ID token. Registration: app "Elevant Mail", client ID
     `430b3404-3b08-41df-a2f6-23e5375d9bd7`, Elevant's tenant.
 
-Next: phase 3.
+Phase 3:
+
+13. **Account settings:** settings window, rename, colour, server settings and password with a login
+    check, sign in again with Microsoft — done
+
+Next: archive, delete and move.

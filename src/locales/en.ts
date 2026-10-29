@@ -56,6 +56,39 @@ export const en: Record<MessageKey, string> = {
   "account.remove.description":
     "This account's mail is deleted from this computer and its password removed from the keyring. Everything stays on the server.",
   "account.remove.confirm": "Remove",
+  "account.menu": "Options for {name}",
+  "account.color.blue": "Blue",
+  "account.color.orange": "Orange",
+  "account.color.green": "Green",
+  "account.color.pink": "Pink",
+  "account.color.cyan": "Cyan",
+  "account.color.red": "Red",
+  "account.color.yellow": "Yellow",
+  "account.color.violet": "Violet",
+
+  "settings.title": "Settings",
+  "settings.accounts": "Accounts",
+  "settings.general": "General",
+  "settings.noAccounts": "No account set up yet.",
+  "settings.account.open": "Account settings",
+  "settings.account.color": "Color",
+  "settings.account.signIn": "Sign-in",
+  "settings.account.password": "Password",
+  "settings.account.passwordNew": "New password",
+  "settings.account.passwordUnchanged": "Unchanged",
+  "settings.account.saveLogin": "Check and save",
+  "settings.account.savingLogin": "Checking the sign-in…",
+  "settings.account.loginSaved": "Sign-in checked and saved.",
+  "settings.account.loginHint":
+    "Elevant Mail signs in once with the new details. If that does not work, everything stays as it was.",
+  "settings.account.microsoft": "Signs in with Microsoft as {address}.",
+  "settings.account.signInAgain": "Sign in again",
+  "settings.account.signInAgainHint":
+    "Needed when the sign-in has expired or you changed your Microsoft password.",
+  "settings.account.signedInAgain": "Signed in again.",
+  "settings.account.remove": "Remove account",
+  "settings.account.removeHint":
+    "Deletes this account's mail from this computer. Everything stays on the server.",
 
   "error.kind.storage": "The local database is not available.",
   "error.kind.storageTooNew": "This data comes from a newer version of Elevant Mail.",
@@ -78,6 +111,7 @@ export const en: Record<MessageKey, string> = {
   "error.kind.signInFailed": "Signing in with Microsoft did not work.",
   "error.kind.consentRequired": "Your organization has to allow Elevant Mail first.",
   "error.kind.signInExpired": "The sign-in with Microsoft has expired.",
+  "error.kind.differentAccount": "You signed in with a different account.",
   "error.kind.internal": "Something went wrong.",
   "error.hint.checkDiskSpace": "Check that there is enough free disk space.",
   "error.hint.updateApp": "Update Elevant Mail to the latest version.",
@@ -93,8 +127,8 @@ export const en: Record<MessageKey, string> = {
   "error.hint.enableImapAccess": "Switch on IMAP access in your mailbox's settings.",
   "error.hint.askAdminForConsent":
     "An admin grants consent once in the Entra admin center under Enterprise applications → Elevant Mail → Permissions.",
-  "error.hint.signInAgain":
-    "Remove the account and add it again to sign in again. A button for this comes later.",
+  "error.hint.signInAgain": "Sign in again in the account settings.",
+  "error.hint.signInAsAccount": "Sign in once more with this account's address.",
   "error.hint.enableImapMicrosoft":
     "IMAP has to be enabled for this mailbox: Microsoft 365 admin center → Users → Mail → Manage email apps.",
   "error.hint.signInWithMicrosoft": "Add the account with “Sign in with Microsoft” instead.",

@@ -20,13 +20,14 @@ use serde::Serialize;
 use tokio_rustls::TlsConnector;
 use ts_rs::TS;
 
+use crate::accounts::{self, AccountSettings, SignInMethod};
 use crate::db::Database;
 use crate::ids::{new_id, now_millis};
 use crate::mail::imap::{
     self, COMMAND_TIMEOUT, Credential, ImapSession, list_folders, protocol_error, with_timeout,
 };
 use crate::mail::parse::{ParsedMessage, parse_message, parse_preview};
-use crate::mail::settings::{ImapSettings, Security};
+use crate::mail::settings::ImapSettings;
 use crate::secrets::{SecretKind, SecretStore};
 use crate::{Error, Result};
 
@@ -666,31 +667,16 @@ pub(crate) async fn credentials(
     secrets: &dyn SecretStore,
     account_id: &str,
 ) -> Result<(ImapSettings, Credential)> {
-    let (settings, auth_method) = db
-        .conn()
-        .query_row(
-            "SELECT imap_host, imap_port, imap_security, imap_username, auth_method
-             FROM accounts WHERE id = ?1",
-            [account_id],
-            |row| {
-                let security: String = row.get(2)?;
-                let settings = ImapSettings {
-                    host: row.get(0)?,
-                    port: row.get(1)?,
-                    security: Security::from_db_str(&security),
-                    username: row.get(3)?,
-                };
-                Ok((settings, row.get::<_, String>(4)?))
-            },
-        )
-        .optional()?
-        .ok_or(Error::AccountNotFound)?;
-    let credential = if auth_method == "oauth2" {
-        Credential::AccessToken(crate::oauth::access_token(secrets, account_id).await?)
-    } else {
-        Credential::Password(secrets.get(account_id, SecretKind::ImapPassword)?)
+    let AccountSettings { sign_in, imap } = accounts::settings(&db.conn(), account_id)?;
+    let credential = match sign_in {
+        SignInMethod::Microsoft => {
+            Credential::AccessToken(crate::oauth::access_token(secrets, account_id).await?)
+        }
+        SignInMethod::Password => {
+            Credential::Password(secrets.get(account_id, SecretKind::ImapPassword)?)
+        }
     };
-    Ok((settings, credential))
+    Ok((imap, credential))
 }
 
 fn report(
@@ -761,6 +747,7 @@ mod tests {
     use crate::accounts::{NewAccount, save};
     use crate::mail::folders::RemoteFolder;
     use crate::mail::imap::ConnectionReport;
+    use crate::mail::settings::Security;
     use crate::mail::test_server::{self, Mailbox, Mode, PASSWORD, TestMessage, TestServer};
     use crate::mailbox::{UNIFIED_INBOX, list_folders, list_messages};
     use crate::model::FolderRole;

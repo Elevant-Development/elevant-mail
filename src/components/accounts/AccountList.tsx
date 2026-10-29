@@ -1,5 +1,12 @@
 import { Icon, type IconName } from "@/components/common/Icon";
 import { SidebarItem } from "@/components/layout/SidebarItem";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { buildFolderTree, type FolderNode, shownUnread, unreadBelow } from "@/lib/folders";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -88,6 +95,7 @@ export function AccountList({
   const errors = useSyncStore((s) => s.errors);
   const collapsed = useUiStore((s) => s.collapsed);
   const setCollapsed = useUiStore((s) => s.setCollapsed);
+  const openSettings = useUiStore((s) => s.openSettings);
 
   return (
     <div className="flex flex-col gap-4">
@@ -147,15 +155,28 @@ export function AccountList({
                   )}
                 </h3>
               </button>
-              <button
-                type="button"
-                aria-label={t("account.remove.action", { name: account.displayName })}
-                title={t("account.remove.action", { name: account.displayName })}
-                onClick={() => onRemoveAccount(account)}
-                className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/account:opacity-100 hover:bg-sidebar-accent hover:text-foreground focus-visible:opacity-100 [&_svg]:size-3.5"
-              >
-                <Icon name="trash" />
-              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  aria-label={t("account.menu", { name: account.displayName })}
+                  title={t("account.menu", { name: account.displayName })}
+                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/account:opacity-100 hover:bg-sidebar-accent hover:text-foreground focus-visible:opacity-100 data-[state=open]:bg-sidebar-accent data-[state=open]:opacity-100 [&_svg]:size-3.5"
+                >
+                  <Icon name="more" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onSelect={() => openSettings({ section: "accounts", accountId: account.id })}
+                  >
+                    <Icon name="settings" />
+                    {t("settings.account.open")}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => onRemoveAccount(account)}>
+                    <Icon name="trash" />
+                    {t("settings.account.remove")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             {!sectionCollapsed && (
               <div id={`folders-${account.id}`}>

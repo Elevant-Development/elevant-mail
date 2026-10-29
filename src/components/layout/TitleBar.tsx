@@ -21,6 +21,7 @@ interface TitleBarProps {
 export function TitleBar({ isWide }: TitleBarProps) {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
+  const openSettings = useUiStore((s) => s.openSettings);
 
   return (
     // px-2 and the sidebar column mirror AppShell: the mark starts where the sidebar icons start
@@ -57,7 +58,11 @@ export function TitleBar({ isWide }: TitleBarProps) {
           </span>
         )}
         <AppearanceMenu />
-        <IconButton label={t("titlebar.settings")} icon={<Icon name="settings" />} disabled />
+        <IconButton
+          label={t("titlebar.settings")}
+          icon={<Icon name="settings" />}
+          onClick={() => openSettings({ section: "accounts", accountId: null })}
+        />
         {isTauri() && <WindowControls />}
       </div>
     </header>

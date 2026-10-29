@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 import { AccountDialog } from "@/components/accounts/AccountDialog";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { WelcomeScreen } from "@/components/accounts/WelcomeScreen";
 import { MessageList } from "@/components/mail/MessageList";
 import { MessageReader } from "@/components/mail/MessageReader";
@@ -72,6 +73,7 @@ export function AppShell() {
         </div>
       )}
       <AccountDialog />
+      <SettingsDialog />
     </div>
   );
 }

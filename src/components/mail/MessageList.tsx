@@ -6,6 +6,7 @@ import { IconButton } from "@/components/common/IconButton";
 import { Button } from "@/components/ui/button";
 import { useNow } from "@/hooks/use-now";
 import { useSyncActions } from "@/hooks/use-sync";
+import { isSignInError } from "@/lib/errors";
 import { mailboxTitle } from "@/lib/folders";
 import { t } from "@/lib/i18n";
 import { focusListItem } from "@/lib/keyboard";
@@ -148,6 +149,7 @@ export function MessageList({ className }: MessageListProps) {
   const accountIds = folder ? [folder.accountId] : accounts.map((a) => a.id);
   const progressById = useSyncStore((s) => s.progress);
   const errorsById = useSyncStore((s) => s.errors);
+  const openSettings = useUiStore((s) => s.openSettings);
   const loadingOlder = useSyncStore((s) => (folder ? (s.loadingOlder[folder.id] ?? false) : false));
   const progress = accountIds.map((id) => progressById[id]).find(Boolean);
   const errorEntry = accountIds
@@ -252,24 +254,37 @@ export function MessageList({ className }: MessageListProps) {
           className="flex items-start gap-2 border-b bg-destructive/10 px-4 py-2 text-xs text-destructive"
         >
           <Icon name="alert" className="mt-px size-3.5 shrink-0" />
-          <p className="min-w-0 flex-1">
-            {accounts.length > 1 && (
-              <span className="font-semibold">
-                {accounts.find((a) => a.id === errorEntry[0])?.displayName}:{" "}
-              </span>
-            )}
-            <span className="font-medium">{errorEntry[1]?.message}</span>
-            {errorEntry[1]?.action && (
-              <span className="text-foreground/80"> {errorEntry[1].action}</span>
-            )}
-          </p>
-          <button
-            type="button"
-            className="shrink-0 font-medium underline-offset-2 hover:underline"
-            onClick={() => void syncAccount(errorEntry[0])}
-          >
-            {t("sync.retry")}
-          </button>
+          <div className="grid min-w-0 flex-1 gap-1">
+            <p>
+              {accounts.length > 1 && (
+                <span className="font-semibold">
+                  {accounts.find((a) => a.id === errorEntry[0])?.displayName}:{" "}
+                </span>
+              )}
+              <span className="font-medium">{errorEntry[1]?.message}</span>
+              {errorEntry[1]?.action && (
+                <span className="text-foreground/80"> {errorEntry[1].action}</span>
+              )}
+            </p>
+            <div className="flex flex-wrap gap-x-3">
+              {isSignInError(errorEntry[1]) && (
+                <button
+                  type="button"
+                  className="font-medium underline-offset-2 hover:underline"
+                  onClick={() => openSettings({ section: "accounts", accountId: errorEntry[0] })}
+                >
+                  {t("settings.account.open")}
+                </button>
+              )}
+              <button
+                type="button"
+                className="font-medium underline-offset-2 hover:underline"
+                onClick={() => void syncAccount(errorEntry[0])}
+              >
+                {t("sync.retry")}
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {content}

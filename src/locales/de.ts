@@ -56,6 +56,39 @@ export const de = {
   "account.remove.description":
     "Die Mails dieses Kontos werden von diesem Rechner gelöscht und das Passwort aus dem Schlüsselbund entfernt. Auf dem Server bleibt alles erhalten.",
   "account.remove.confirm": "Entfernen",
+  "account.menu": "Optionen für {name}",
+  "account.color.blue": "Blau",
+  "account.color.orange": "Orange",
+  "account.color.green": "Grün",
+  "account.color.pink": "Pink",
+  "account.color.cyan": "Türkis",
+  "account.color.red": "Rot",
+  "account.color.yellow": "Gelb",
+  "account.color.violet": "Violett",
+
+  "settings.title": "Einstellungen",
+  "settings.accounts": "Konten",
+  "settings.general": "Allgemein",
+  "settings.noAccounts": "Noch kein Konto eingerichtet.",
+  "settings.account.open": "Kontoeinstellungen",
+  "settings.account.color": "Farbe",
+  "settings.account.signIn": "Anmeldung",
+  "settings.account.password": "Passwort",
+  "settings.account.passwordNew": "Neues Passwort",
+  "settings.account.passwordUnchanged": "Unverändert",
+  "settings.account.saveLogin": "Prüfen und speichern",
+  "settings.account.savingLogin": "Anmeldung wird geprüft…",
+  "settings.account.loginSaved": "Anmeldung geprüft und gespeichert.",
+  "settings.account.loginHint":
+    "Elevant Mail meldet sich mit den neuen Angaben einmal an. Klappt das nicht, bleibt alles wie bisher.",
+  "settings.account.microsoft": "Anmeldung über Microsoft als {address}.",
+  "settings.account.signInAgain": "Neu anmelden",
+  "settings.account.signInAgainHint":
+    "Nötig, wenn die Anmeldung abgelaufen ist oder du dein Microsoft-Passwort geändert hast.",
+  "settings.account.signedInAgain": "Neu angemeldet.",
+  "settings.account.remove": "Konto entfernen",
+  "settings.account.removeHint":
+    "Löscht die Mails dieses Kontos von diesem Rechner. Auf dem Server bleibt alles erhalten.",
 
   "error.kind.storage": "Die lokale Datenbank ist nicht erreichbar.",
   "error.kind.storageTooNew": "Diese Daten stammen von einer neueren Version von Elevant Mail.",
@@ -79,6 +112,7 @@ export const de = {
   "error.kind.signInFailed": "Die Anmeldung bei Microsoft hat nicht geklappt.",
   "error.kind.consentRequired": "Deine Organisation muss Elevant Mail erst freigeben.",
   "error.kind.signInExpired": "Die Anmeldung bei Microsoft ist abgelaufen.",
+  "error.kind.differentAccount": "Du hast dich mit einem anderen Konto angemeldet.",
   "error.kind.internal": "Etwas ist schiefgelaufen.",
   "error.hint.checkDiskSpace": "Prüfe, ob auf dem Rechner genug Speicherplatz frei ist.",
   "error.hint.updateApp": "Aktualisiere Elevant Mail auf die neueste Version.",
@@ -95,8 +129,8 @@ export const de = {
     "Schalte den IMAP-Abruf in den Einstellungen deines Postfachs ein.",
   "error.hint.askAdminForConsent":
     "Ein Admin erteilt die Zustimmung einmal im Entra Admin Center unter Unternehmensanwendungen → Elevant Mail → Berechtigungen.",
-  "error.hint.signInAgain":
-    "Entferne das Konto und füge es neu hinzu, um dich erneut anzumelden. Ein eigener Knopf dafür kommt später.",
+  "error.hint.signInAgain": "Melde dich in den Kontoeinstellungen neu an.",
+  "error.hint.signInAsAccount": "Melde dich noch einmal mit der Adresse dieses Kontos an.",
   "error.hint.enableImapMicrosoft":
     "IMAP muss für dieses Postfach eingeschaltet sein: Microsoft 365 Admin Center → Benutzer → E-Mail → E-Mail-Apps verwalten.",
   "error.hint.signInWithMicrosoft":

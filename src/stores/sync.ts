@@ -18,6 +18,8 @@ interface SyncState {
   finish: (accountId: string, error?: UserError) => void;
   /** A failure outside a sync, e.g. sending read or flagged state. */
   setError: (accountId: string, error: UserError) => void;
+  /** E.g. after the user fixed the login in the account settings. */
+  clearError: (accountId: string) => void;
   setLoadingOlder: (folderId: string, loading: boolean) => void;
   markFolderSynced: (folderId: string) => void;
 }
@@ -37,6 +39,8 @@ export const useSyncStore = create<SyncState>()((set) => ({
     })),
   setError: (accountId, error) =>
     set((state) => ({ errors: { ...state.errors, [accountId]: error } })),
+  clearError: (accountId) =>
+    set((state) => ({ errors: { ...state.errors, [accountId]: undefined } })),
   setLoadingOlder: (folderId, loading) =>
     set((state) => ({ loadingOlder: { ...state.loadingOlder, [folderId]: loading } })),
   markFolderSynced: (folderId) =>
