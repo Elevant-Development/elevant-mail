@@ -19,6 +19,7 @@ import type { SyncReport } from "./bindings/SyncReport";
 import { mockBackend } from "./mock";
 
 export type { Account } from "./bindings/Account";
+export type { Attachment } from "./bindings/Attachment";
 export type { Address } from "./bindings/Address";
 export type { ErrorKind } from "./bindings/ErrorKind";
 export type { Folder } from "./bindings/Folder";
@@ -70,6 +71,10 @@ export interface Backend {
   setFlagged(messageIds: string[], flagged: boolean): Promise<string[]>;
   /** Sends the account's queued changes to the server; returns how many arrived. */
   pushActions(accountId: string): Promise<number>;
+  /** Asks where to save (system dialog) and writes the file; false when cancelled. */
+  saveAttachment(attachmentId: string): Promise<boolean>;
+  /** Opens with the system's program; refused for files that could run code. */
+  openAttachment(attachmentId: string): Promise<void>;
   /** Opens a web or mail link from a mail in the system browser or mail program. */
   openLink(url: string): Promise<void>;
   /** Links clicked in a mail frame (see SafeHtmlMail); returns a function that stops listening. */
@@ -94,6 +99,8 @@ const tauriBackend: Backend = {
   setRead: (messageIds, read) => invoke("set_read", { messageIds, read }),
   setFlagged: (messageIds, flagged) => invoke("set_flagged", { messageIds, flagged }),
   pushActions: (accountId) => invoke("push_actions", { accountId }),
+  saveAttachment: (attachmentId) => invoke("save_attachment", { attachmentId }),
+  openAttachment: (attachmentId) => invoke("open_attachment", { attachmentId }),
   openLink: (url) => invoke("open_link", { url }),
   onMailLink: (handler) => listen<string>("mail-link", (event) => handler(event.payload)),
   onSyncProgress: (handler) =>

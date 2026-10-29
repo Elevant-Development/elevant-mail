@@ -1,10 +1,12 @@
 //! Shared state of the running app, created once at startup.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use elevant_mail_core::Database;
 use elevant_mail_core::mail::remote::RemoteImages;
+use elevant_mail_core::model::Attachment;
 use elevant_mail_core::secrets::{KeyringStore, SecretStore};
 use tauri::async_runtime::Mutex as AsyncMutex;
 use tauri::{AppHandle, Manager};
@@ -19,6 +21,9 @@ pub struct AppState {
     pub remote_images: RemoteImages,
     /// External image URLs per message whose images the user allowed in this session.
     allowed_remote_images: Mutex<HashMap<String, Vec<String>>>,
+    /// Attachments fetched in this session, as files for opening and saving. Emptied at start.
+    attachment_dir: PathBuf,
+    attachment_files: Mutex<HashMap<String, PathBuf>>,
 }
 
 impl AppState {
@@ -38,6 +43,9 @@ impl AppState {
                 false
             }
         };
+        let attachment_dir = app.path().app_cache_dir()?.join("attachments");
+        reset_private_dir(&attachment_dir)?;
+
         // Keyring entries are grouped under the app identifier, e.g. "dev.elevant.mail".
         let secrets = Box::new(KeyringStore::new(app.config().identifier.clone()));
 
@@ -48,6 +56,8 @@ impl AppState {
             account_locks: Mutex::default(),
             remote_images: RemoteImages::new()?,
             allowed_remote_images: Mutex::default(),
+            attachment_dir,
+            attachment_files: Mutex::default(),
         })
     }
 
@@ -68,6 +78,33 @@ impl AppState {
             .cloned()
     }
 
+    pub fn cached_attachment(&self, attachment_id: &str) -> Option<PathBuf> {
+        self.attachment_files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(attachment_id)
+            .filter(|path| path.is_file())
+            .cloned()
+    }
+
+    /// Writes a fetched attachment into the cache, one folder per attachment so the file keeps
+    /// its own name (programs show it, and some go by the extension).
+    pub fn cache_attachment(
+        &self,
+        attachment: &Attachment,
+        data: &[u8],
+    ) -> Result<PathBuf, elevant_mail_core::Error> {
+        let dir = self.attachment_dir.join(&attachment.id);
+        std::fs::create_dir_all(&dir).map_err(elevant_mail_core::Error::FileWrite)?;
+        let path = dir.join(&attachment.file_name);
+        std::fs::write(&path, data).map_err(elevant_mail_core::Error::FileWrite)?;
+        self.attachment_files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(attachment.id.clone(), path.clone());
+        Ok(path)
+    }
+
     pub fn account_lock(&self, account_id: &str) -> Arc<AsyncMutex<()>> {
         self.account_locks
             .lock()
@@ -76,4 +113,18 @@ impl AppState {
             .or_default()
             .clone()
     }
+}
+
+/// Empties the folder (files from the last session) and makes it private to the user.
+fn reset_private_dir(dir: &Path) -> std::io::Result<()> {
+    if dir.exists() {
+        std::fs::remove_dir_all(dir)?;
+    }
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }

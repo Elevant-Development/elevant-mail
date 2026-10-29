@@ -112,4 +112,21 @@ pub struct Message {
     pub html_styled: bool,
     /// External images in the HTML. They are left out unless the request allowed them.
     pub remote_image_count: u32,
+    /// Known once the full body is cached.
+    pub attachments: Vec<Attachment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Attachment {
+    pub id: String,
+    /// Safe to use as a file name; a fallback when the mail gives none.
+    pub file_name: String,
+    pub mime_type: String,
+    /// Decoded size in bytes.
+    #[ts(type = "number")]
+    pub size: u64,
+    /// False for files that could run code: those are only saved, never opened.
+    pub can_open: bool,
 }

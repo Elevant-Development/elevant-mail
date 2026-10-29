@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { displayName, formatListDate, hueFromString, initials } from "./formatting";
+import { displayName, formatListDate, formatSize, hueFromString, initials } from "./formatting";
 
 const locale = "de-DE";
 // Wednesday, 28 October 2026, 15:00 local time
@@ -60,5 +60,14 @@ describe("hueFromString", () => {
     expect(hue).toBe(hueFromString("lena@example.org"));
     expect(hue).toBeGreaterThanOrEqual(0);
     expect(hue).toBeLessThan(360);
+  });
+});
+
+describe("formatSize", () => {
+  it("picks a readable unit", () => {
+    expect(formatSize(820, locale)).toBe("820 B");
+    expect(formatSize(12_400, locale)).toBe("12 KB");
+    expect(formatSize(1.4 * 1024 * 1024, locale)).toBe("1,4 MB");
+    expect(formatSize(25 * 1024 * 1024, locale)).toBe("25 MB");
   });
 });

@@ -26,7 +26,20 @@ pub struct ParsedMessage {
     pub body_html: Option<String>,
     /// Images the HTML refers to by `cid:`, such as logos in signatures.
     pub inline_images: Vec<InlineImage>,
+    /// Files offered for download; embedded images are not among them.
+    pub attachments: Vec<AttachmentPart>,
     pub has_attachments: bool,
+}
+
+/// An attachment as listed: the bytes are fetched again from the server when needed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentPart {
+    /// MIME part, as mail-parser numbers them; the same on every parse of the message.
+    pub part_id: String,
+    /// As the sender named it; may be missing or unusable as a file name.
+    pub filename: Option<String>,
+    pub mime_type: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,14 +67,44 @@ pub fn parse_message(raw: &[u8]) -> ParsedMessage {
         .filter(|part| part.is_content_type("text", "html"))
         .filter_map(|part| part.text().map(|html| html.into_owned()))
         .collect();
+    let attachments = attachments(&message);
     ParsedMessage {
         snippet: truncate(&snippet, SNIPPET_LENGTH),
         body_text,
         body_html: (!html_parts.is_empty()).then(|| html_parts.join("\n")),
         inline_images: inline_images(&message),
-        has_attachments: message.attachments().len() > 0,
+        // Signature logos and other embedded images do not earn the paperclip.
+        has_attachments: !attachments.is_empty(),
+        attachments,
         ..parse_headers_of(&message)
     }
+}
+
+fn mime_type_of(part: &mail_parser::MessagePart<'_>) -> String {
+    part.content_type()
+        .map(|content_type| {
+            let subtype = content_type.subtype().unwrap_or("octet-stream");
+            format!("{}/{subtype}", content_type.ctype()).to_ascii_lowercase()
+        })
+        .unwrap_or_else(|| "application/octet-stream".into())
+}
+
+fn attachments(message: &mail_parser::Message<'_>) -> Vec<AttachmentPart> {
+    message
+        .attachments()
+        // An image the HTML shows (`cid:`) is part of the text, not a download.
+        .filter(|part| !(part.is_inline() && part.content_id().is_some()))
+        .map(|part| AttachmentPart {
+            part_id: part.id().to_string(),
+            filename: part
+                .attachment_name()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned),
+            mime_type: mime_type_of(&part),
+            size: u64::try_from(part.decoded_len()).unwrap_or(u64::MAX),
+        })
+        .collect()
 }
 
 fn inline_images(message: &mail_parser::Message<'_>) -> Vec<InlineImage> {
@@ -224,6 +267,39 @@ are you in for the hike?\r\n";
         assert!(body.contains("Autumn"));
         assert!(body.contains("Five recipes & more"));
         assert!(!body.contains("<p>"));
+    }
+
+    #[test]
+    fn lists_attachments_but_not_embedded_images() {
+        let raw = b"From: a@example.org\r\nSubject: Files\r\n\
+Content-Type: multipart/mixed; boundary=\"m\"\r\n\r\n\
+--m\r\nContent-Type: multipart/related; boundary=\"r\"\r\n\r\n\
+--r\r\nContent-Type: text/html\r\n\r\n<p>Hi <img src=\"cid:logo@x\"></p>\r\n\
+--r\r\nContent-Type: image/png\r\nContent-ID: <logo@x>\r\nContent-Disposition: inline\r\n\
+Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n\
+--m\r\nContent-Type: application/pdf; name=\"Rechnung.pdf\"\r\n\
+Content-Disposition: attachment; filename=\"=?UTF-8?Q?Rechnung_M=C3=A4rz.pdf?=\"\r\n\
+Content-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQ=\r\n--m--\r\n";
+        let parsed = parse_message(raw);
+        assert_eq!(parsed.inline_images.len(), 1);
+        assert_eq!(parsed.attachments.len(), 1, "{:?}", parsed.attachments);
+        let pdf = &parsed.attachments[0];
+        assert_eq!(pdf.filename.as_deref(), Some("Rechnung März.pdf"));
+        assert_eq!(pdf.mime_type, "application/pdf");
+        assert_eq!(pdf.size, 8);
+        assert!(parsed.has_attachments);
+    }
+
+    #[test]
+    fn a_signature_logo_is_no_attachment() {
+        let raw = b"From: a@example.org\r\nSubject: Hi\r\n\
+Content-Type: multipart/related; boundary=\"r\"\r\n\r\n\
+--r\r\nContent-Type: text/html\r\n\r\n<p>Hi <img src=\"cid:logo@x\"></p>\r\n\
+--r\r\nContent-Type: image/png\r\nContent-ID: <logo@x>\r\n\
+Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n";
+        let parsed = parse_message(raw);
+        assert!(parsed.attachments.is_empty(), "{:?}", parsed.attachments);
+        assert!(!parsed.has_attachments);
     }
 
     #[test]

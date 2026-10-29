@@ -165,6 +165,7 @@ pub fn get_message(
                 body_html: None,
                 html_styled: false,
                 remote_image_count: 0,
+                attachments: Vec::new(),
             };
             Ok((message, row.get::<_, Option<String>>(15)?))
         })
@@ -173,6 +174,7 @@ pub fn get_message(
         return Ok(None);
     };
 
+    message.attachments = crate::attachments::list(conn, message_id)?;
     let mut remote_images = Vec::new();
     if let Some(raw_html) = raw_html {
         let safe = sanitize(&raw_html, message_id, view);

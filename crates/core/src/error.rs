@@ -83,14 +83,23 @@ pub enum Error {
     #[error("message not found")]
     MessageNotFound,
 
+    #[error("attachment not found")]
+    AttachmentNotFound,
+
+    #[error("could not write the file: {0}")]
+    FileWrite(std::io::Error),
+
     #[error("not a web or mail link")]
     InvalidLink,
 
     #[error("the server refused a change of read or flagged state")]
     ActionRefused,
 
-    #[error("could not hand the link to the system: {0}")]
-    OpenLink(std::io::Error),
+    #[error("files that can run code are only saved, not opened")]
+    NotOpenable,
+
+    #[error("could not hand it to the system: {0}")]
+    OpenExternal(std::io::Error),
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -114,6 +123,8 @@ pub enum ErrorKind {
     NotFound,
     /// The server did not take a change; it was undone in the app.
     ActionRefused,
+    /// A file chosen by the user could not be written.
+    FileWrite,
     Internal,
 }
 
@@ -152,7 +163,7 @@ impl Error {
             Error::SchemaTooNew { .. } => ErrorKind::StorageTooNew,
             Error::KeyringUnavailable(_) => ErrorKind::KeyringUnavailable,
             Error::SecretNotFound => ErrorKind::CredentialMissing,
-            Error::InvalidEmail | Error::InvalidHost | Error::InvalidLink => {
+            Error::InvalidEmail | Error::InvalidHost | Error::InvalidLink | Error::NotOpenable => {
                 ErrorKind::InvalidInput
             }
             Error::HostNotFound => ErrorKind::ServerNotFound,
@@ -166,10 +177,12 @@ impl Error {
             Error::Protocol(_) => ErrorKind::ServerError,
             Error::AccountExists => ErrorKind::AccountExists,
             Error::ActionRefused => ErrorKind::ActionRefused,
-            Error::AccountNotFound | Error::FolderNotFound | Error::MessageNotFound => {
-                ErrorKind::NotFound
-            }
-            Error::Keyring(_) | Error::TlsSetup(_) | Error::OpenLink(_) => ErrorKind::Internal,
+            Error::AccountNotFound
+            | Error::FolderNotFound
+            | Error::MessageNotFound
+            | Error::AttachmentNotFound => ErrorKind::NotFound,
+            Error::FileWrite(_) => ErrorKind::FileWrite,
+            Error::Keyring(_) | Error::TlsSetup(_) | Error::OpenExternal(_) => ErrorKind::Internal,
         }
     }
 
@@ -203,9 +216,12 @@ impl Error {
             | Error::AccountNotFound
             | Error::FolderNotFound
             | Error::MessageNotFound
+            | Error::AttachmentNotFound
+            | Error::FileWrite(_)
             | Error::InvalidLink
+            | Error::NotOpenable
             | Error::ActionRefused
-            | Error::OpenLink(_) => None,
+            | Error::OpenExternal(_) => None,
         }
     }
 }

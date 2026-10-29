@@ -36,6 +36,21 @@ export function formatListDate(timestamp: number, now: number, locale: string): 
   return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(timestamp);
 }
 
+const SIZE_UNITS = ["B", "KB", "MB", "GB"] as const;
+
+/** File size the way file managers show it: "820 B", "12 KB", "1,4 MB". */
+export function formatSize(bytes: number, locale: string): string {
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = unit >= 2 && value < 10 ? 1 : 0;
+  const number = new Intl.NumberFormat(locale, { maximumFractionDigits: digits }).format(value);
+  return `${number} ${SIZE_UNITS[unit]}`;
+}
+
 /** Full date and time for the reader header. */
 export function formatFullDate(timestamp: number, locale: string): string {
   return new Intl.DateTimeFormat(locale, { dateStyle: "full", timeStyle: "short" }).format(

@@ -14,6 +14,7 @@ pub fn run() {
     init_logging();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let state = state::AppState::init(app.handle())?;
             app.manage(state);
@@ -39,6 +40,8 @@ pub fn run() {
             commands::sync::load_older,
             commands::sync::load_message_body,
             commands::links::open_link,
+            commands::attachments::save_attachment,
+            commands::attachments::open_attachment,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Elevant Mail");

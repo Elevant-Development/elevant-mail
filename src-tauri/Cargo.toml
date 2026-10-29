@@ -21,6 +21,8 @@ open.workspace = true
 percent-encoding.workspace = true
 serde.workspace = true
 tauri = { version = "2", features = [] }
+# Only the save dialog, called from Rust; the frontend gets no dialog permission.
+tauri-plugin-dialog = "2"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

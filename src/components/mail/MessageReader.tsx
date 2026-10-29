@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { useFullBody, useMessage } from "@/queries/messages";
 import { useUiStore } from "@/stores/ui";
 
+import { AttachmentList } from "./AttachmentList";
 import { EmptyState } from "./EmptyState";
 import { LinkAddress } from "./LinkAddress";
 import { type DeceptiveLink, LinkWarningDialog } from "./LinkWarningDialog";
@@ -193,6 +194,8 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
             {formatFullDate(message.dateSent, locale)}
           </time>
         </div>
+
+        {message.attachments.length > 0 && <AttachmentList attachments={message.attachments} />}
 
         <div className="mt-6 border-t pt-6">
           {showsHtml && message.bodyHtml !== null ? (

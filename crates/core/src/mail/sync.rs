@@ -25,7 +25,7 @@ use crate::ids::{new_id, now_millis};
 use crate::mail::imap::{
     self, COMMAND_TIMEOUT, ImapSession, list_folders, protocol_error, with_timeout,
 };
-use crate::mail::parse::{InlineImage, ParsedMessage, parse_message, parse_preview};
+use crate::mail::parse::{ParsedMessage, parse_message, parse_preview};
 use crate::mail::settings::{ImapSettings, Security};
 use crate::secrets::{SecretKind, SecretStore};
 use crate::{Error, Result};
@@ -356,7 +356,12 @@ async fn load_body_in(
             message.has_attachments
         ],
     )?;
-    store_inline_images(&tx, message_id, &message.inline_images)?;
+    crate::attachments::store(
+        &tx,
+        message_id,
+        &message.inline_images,
+        &message.attachments,
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -402,9 +407,9 @@ pub(crate) async fn fetch_all(
 }
 
 /// A large message with attachments can take minutes on a slow connection.
-const BODY_TIMEOUT: Duration = Duration::from_secs(300);
+pub(crate) const BODY_TIMEOUT: Duration = Duration::from_secs(300);
 
-async fn fetch_within(
+pub(crate) async fn fetch_within(
     session: &mut ImapSession,
     uids: &[u32],
     query: &str,
@@ -535,31 +540,7 @@ fn store_message(
         |row| row.get(0),
     )?;
     if complete {
-        store_inline_images(conn, &id, &message.inline_images)?;
-    }
-    Ok(())
-}
-
-fn store_inline_images(conn: &Connection, message_id: &str, images: &[InlineImage]) -> Result<()> {
-    conn.execute(
-        "DELETE FROM attachments WHERE message_id = ?1 AND data IS NOT NULL",
-        [message_id],
-    )?;
-    let mut insert = conn.prepare_cached(
-        "INSERT INTO attachments (id, message_id, part_id, mime_type, size_bytes, content_id,
-           is_inline, data)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
-    )?;
-    for image in images {
-        insert.execute(params![
-            new_id(),
-            message_id,
-            image.part_id,
-            image.mime_type,
-            i64::try_from(image.data.len()).unwrap_or(i64::MAX),
-            image.content_id,
-            image.data
-        ])?;
+        crate::attachments::store(conn, &id, &message.inline_images, &message.attachments)?;
     }
     Ok(())
 }
@@ -1170,5 +1151,43 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n"
         .await
         .unwrap();
         assert_eq!(setup.cached_state(1), (true, false));
+    }
+
+    #[tokio::test]
+    async fn attachments_are_listed_and_fetched_on_demand() {
+        let setup = setup(0).await;
+        {
+            let mut mail = TestMessage::new(1);
+            mail.raw = b"From: a@example.org\r\nSubject: Rechnung\r\n\
+Content-Type: multipart/mixed; boundary=\"m\"\r\n\r\n\
+--m\r\nContent-Type: text/plain\r\n\r\nAnbei die Rechnung.\r\n\
+--m\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"Rechnung.pdf\"\r\n\
+Content-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQ=\r\n--m--\r\n"
+                .to_vec();
+            setup.server.mailbox.lock().unwrap().messages.push(mail);
+        }
+        setup.sync().await;
+        let id = setup.id_of(1);
+        let attachments = crate::attachments::list(&setup.db.conn(), &id).unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].file_name, "Rechnung.pdf");
+        assert_eq!(attachments[0].size, 8);
+
+        let data = crate::mail::download::fetch_with_connector(
+            &setup.db,
+            &setup.secrets,
+            &attachments[0].id,
+            &setup.server.connector,
+        )
+        .await
+        .unwrap();
+        assert_eq!(data, b"%PDF-1.4");
+        // Fetching an attachment never marks the mail read.
+        let commands = setup.server.mailbox.lock().unwrap().commands.clone();
+        assert!(
+            !commands
+                .iter()
+                .any(|c| c.starts_with("SELECT") || c.contains("STORE"))
+        );
     }
 }

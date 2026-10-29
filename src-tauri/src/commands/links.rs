@@ -12,6 +12,6 @@ pub async fn open_link(url: String) -> Result<(), CommandError> {
     if !is_mail_link(&url) {
         return Err(Error::InvalidLink.into());
     }
-    open::that_detached(url.as_str()).map_err(Error::OpenLink)?;
+    open::that_detached(url.as_str()).map_err(Error::OpenExternal)?;
     Ok(())
 }

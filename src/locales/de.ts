@@ -63,9 +63,10 @@ export const de = {
   "error.kind.oAuthRequired": "Dieses Konto braucht die Anmeldung über den Anbieter.",
   "error.kind.serverError": "Der Server hat unerwartet geantwortet.",
   "error.kind.accountExists": "Dieses Konto ist schon eingerichtet.",
-  "error.kind.notFound": "Das Konto gibt es nicht mehr.",
+  "error.kind.notFound": "Das gibt es nicht mehr, vielleicht wurde es inzwischen gelöscht.",
   "error.kind.actionRefused":
     "Der Server hat die Änderung nicht übernommen. Sie wurde zurückgenommen.",
+  "error.kind.fileWrite": "Die Datei konnte nicht gespeichert werden.",
   "error.kind.internal": "Etwas ist schiefgelaufen.",
   "error.hint.checkDiskSpace": "Prüfe, ob auf dem Rechner genug Speicherplatz frei ist.",
   "error.hint.updateApp": "Aktualisiere Elevant Mail auf die neueste Version.",
@@ -171,6 +172,11 @@ export const de = {
   "reader.remoteImages.load": "Bilder laden",
   "reader.view.paper": "Helle Ansicht",
   "reader.view.dark": "Dunkle Ansicht",
+  "attachments.label": "Anhänge",
+  "attachments.open": "Öffnen",
+  "attachments.onlySave": "Kann Programme ausführen, wird deshalb nur gespeichert",
+  "attachments.save": "{name} speichern",
+  "attachments.saveHint": "Speichern unter …",
   "link.warning.title": "Dieser Link führt woanders hin",
   "link.warning.description":
     "Der Text zeigt eine andere Adresse als das tatsächliche Ziel. Öffne den Link nur, wenn du dem Absender vertraust.",

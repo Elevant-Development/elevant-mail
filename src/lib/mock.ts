@@ -60,6 +60,13 @@ interface MockMessage {
   large?: boolean;
   body: string;
   html?: MockHtml;
+  files?: MockFile[];
+}
+
+interface MockFile {
+  name: string;
+  type: string;
+  size: number;
 }
 
 /** HTML as the backend hands it out: already sanitized. */
@@ -146,6 +153,7 @@ const mockMessages: MockMessage[] = [
     subject: "Protokoll Sprint-Review",
     ago: 4 * HOUR,
     attachments: true,
+    files: [{ name: "Protokoll Sprint-Review.pdf", type: "application/pdf", size: 248_320 }],
     large: true,
     body: "Hallo,\n\nanbei das Protokoll vom heutigen Sprint-Review. Die offenen Punkte sind im Board eingetragen.\n\nDanke an alle für die Demo!\n\nDas Projektteam",
   },
@@ -157,6 +165,11 @@ const mockMessages: MockMessage[] = [
     ago: 6 * HOUR,
     read: true,
     attachments: true,
+    files: [
+      { name: "IMG_2041.jpg", type: "image/jpeg", size: 3_481_002 },
+      { name: "IMG_2042.jpg", type: "image/jpeg", size: 3_102_114 },
+      { name: "Fotos.zip", type: "application/zip", size: 18_420_660 },
+    ],
     body: "Servus,\n\nhier sind endlich die Fotos vom Samstag. Das Bild mit dem verbrannten Maiskolben ist mein Favorit.\n\nBis bald\nJonas",
   },
   {
@@ -187,6 +200,10 @@ const mockMessages: MockMessage[] = [
     ago: 2 * DAY,
     read: true,
     attachments: true,
+    files: [
+      { name: "Rechnung 2026-1042.pdf", type: "application/pdf", size: 96_210 },
+      { name: "Zahlungsportal.exe", type: "application/octet-stream", size: 1_240_000 },
+    ],
     body: "Sehr geehrte Damen und Herren,\n\nim Anhang finden Sie die Rechnung 2026-1042. Bitte überweisen Sie den Betrag innerhalb von 14 Tagen.\n\nMit freundlichen Grüßen\nRechnungswesen",
   },
   {
@@ -196,7 +213,7 @@ const mockMessages: MockMessage[] = [
     subject: "Erinnerung: Rückgabe in 3 Tagen",
     ago: 2 * DAY + 7 * HOUR,
     read: true,
-    body: "Liebe Leserin, lieber Leser,\n\ndie Leihfrist für folgende Medien endet in drei Tagen:\n\n- Der Gesang der Flusskrebse\n- Kochen ohne Rezept\n\nSie können die Frist online verlängern.\n\nIhre Stadtbibliothek",
+    body: "Lieber Leser,\n\ndie Leihfrist für folgende Medien endet in drei Tagen:\n\n- Der Gesang der Flusskrebse\n- Kochen ohne Rezept\n\nSie können die Frist online verlängern.\n\nIhre Stadtbibliothek",
   },
   {
     account: "acc-work",
@@ -215,7 +232,7 @@ const mockMessages: MockMessage[] = [
     ago: 4 * DAY,
     read: true,
     attachments: true,
-    body: "Sehr geehrte Mieterinnen und Mieter,\n\nam 12. November zwischen 8 und 12 Uhr werden die Heizkörper abgelesen. Bitte sorgen Sie dafür, dass alle Räume zugänglich sind.\n\nMit freundlichen Grüßen\nIhre Hausverwaltung",
+    body: "Sehr geehrte Mieter,\n\nam 12. November zwischen 8 und 12 Uhr werden die Heizkörper abgelesen. Bitte sorgen Sie dafür, dass alle Räume zugänglich sind.\n\nMit freundlichen Grüßen\nIhre Hausverwaltung",
   },
   {
     account: "acc-work",
@@ -279,7 +296,7 @@ const mockMessages: MockMessage[] = [
     subject: "Weihnachtsfeier 2025",
     ago: 320 * DAY,
     read: true,
-    body: "Liebe Kolleginnen und Kollegen,\n\nunsere Weihnachtsfeier findet am 18. Dezember statt. Bitte meldet euch bis Ende November an.",
+    body: "Liebe Kollegen,\n\nunsere Weihnachtsfeier findet am 18. Dezember statt. Bitte meldet euch bis Ende November an.",
   },
   {
     account: "acc-private",
@@ -345,6 +362,13 @@ function buildMessages(): Message[] {
     bodyHtml: null,
     htmlStyled: m.html?.styled ?? false,
     remoteImageCount: m.html?.images?.length ?? 0,
+    attachments: (m.files ?? []).map((file, n) => ({
+      id: `att-${index + 1}-${n + 1}`,
+      fileName: file.name,
+      mimeType: file.type,
+      size: file.size,
+      canOpen: !/\.(exe|bat|cmd|ps1|sh|desktop|appimage|docm|xlsm)$/i.test(file.name),
+    })),
   }));
 }
 
@@ -377,6 +401,7 @@ function toSummary({
   bodyHtml: _html,
   htmlStyled: _styled,
   remoteImageCount: _images,
+  attachments: _attachments,
   ...summary
 }: Message): MessageSummary {
   return summary;
@@ -489,6 +514,15 @@ export const mockBackend: Backend = {
   setRead: async (messageIds, read) => setMockFlag(messageIds, "isRead", read),
   setFlagged: async (messageIds, flagged) => setMockFlag(messageIds, "isFlagged", flagged),
   pushActions: async () => 0,
+  saveAttachment: async (attachmentId) => {
+    await wait(500);
+    console.info("save attachment", attachmentId);
+    return true;
+  },
+  openAttachment: async (attachmentId) => {
+    await wait(700);
+    console.info("open attachment", attachmentId);
+  },
   openLink: async (url) => console.info("open link", url),
   onMailLink: async () => () => undefined,
   loadMessageBody: async (messageId) => {
