@@ -9,7 +9,7 @@ use crate::mail::parse::{AttachmentPart, InlineImage};
 use crate::model::Attachment;
 
 /// File types that run code when opened. They can be saved, but the app never hands them to
-/// the system to open (see docs/projekt-brief.md, "Sicherheit").
+/// the system to open (see docs/project-brief.md, "Security").
 const EXECUTABLE_EXTENSIONS: &[&str] = &[
     "exe",
     "com",

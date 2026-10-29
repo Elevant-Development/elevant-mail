@@ -1,5 +1,5 @@
 //! Desktop shell of Elevant Mail: window, startup and the commands the frontend calls. Mail,
-//! storage and credentials live in `elevant-mail-core` (see docs/projekt-brief.md).
+//! storage and credentials live in `elevant-mail-core` (see docs/project-brief.md).
 
 mod commands;
 mod error;

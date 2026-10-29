@@ -7,9 +7,10 @@ inbox, a calm dark interface.
 - Mail is cached locally and stays readable offline
 - Passwords live in the system keyring, never in files
 
-> **Status:** early scaffold. The interface runs on sample data; IMAP, the local cache and the
-> keyring are being added step by step. The project brief (German) is in
-> [`docs/projekt-brief.md`](docs/projekt-brief.md).
+> **Status:** v0.2. Reading works with several IMAP accounts (self-hosted, web.de, Gmail with
+> app passwords, Microsoft 365 with sign-in via Microsoft): local cache, search, read and flagged
+> state, safe HTML, attachments. Sending comes later. See the
+> [project brief](docs/project-brief.md) for scope, architecture and roadmap.
 
 Built with [Tauri 2](https://tauri.app), React, TypeScript, Tailwind CSS and Rust.
 
@@ -78,19 +79,20 @@ especially hybrid Nvidia setups. Start with:
 WEBKIT_DISABLE_DMABUF_RENDERER=1 pnpm tauri dev
 ```
 
-**Keyring (later).** On Linux, saving passwords needs a running Secret Service, which GNOME
-Keyring provides. On KDE, use KWallet with its Secret Service interface enabled.
+**Keyring.** On Linux, saving passwords needs a running Secret Service, which GNOME Keyring
+provides. On KDE, use KWallet with its Secret Service interface enabled.
 
 ## Project layout
 
 ```text
+crates/core/         mail, cache, credentials and sign-in, independent of the desktop shell
+src-tauri/           desktop shell (Tauri): window, commands, mail-asset protocol
 src/                 React frontend
   components/        layout, mail, accounts, common, ui (shadcn/ui)
-  lib/tauri.ts       the only bridge to the backend, with all command types
-  lib/mock.ts        sample data until the backend exists
+  lib/tauri.ts       the only bridge to the backend; data types come from Rust (lib/bindings)
+  lib/mock.ts        sample data for working on the interface in a browser
   locales/           UI strings (German first)
-src-tauri/           Rust backend (Tauri)
-docs/                project brief and decisions
+docs/                project brief: scope, architecture, decisions, roadmap
 ```
 
 ## License

@@ -2,7 +2,7 @@
 //! message is opened, so a stricter sanitizer also covers mail that is already cached.
 //!
 //! This is the first of two layers: the frontend shows the result in a sandboxed frame without
-//! scripts and with its own Content Security Policy (see docs/projekt-brief.md, "Mail-HTML").
+//! scripts and with its own Content Security Policy (see docs/project-brief.md, "Mail HTML").
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex, PoisonError};
