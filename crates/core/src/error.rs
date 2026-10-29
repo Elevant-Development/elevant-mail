@@ -68,6 +68,18 @@ pub enum Error {
     #[error("this provider needs a sign-in via OAuth")]
     OAuthRequired { provider: Provider },
 
+    #[error("the sign-in was cancelled")]
+    SignInCancelled,
+
+    #[error("the sign-in did not work: {0}")]
+    SignInFailed(String),
+
+    #[error("the organisation has to allow the app first")]
+    ConsentRequired,
+
+    #[error("the sign-in has expired")]
+    SignInExpired,
+
     #[error("unexpected reply from the mail server: {0}")]
     Protocol(String),
 
@@ -121,6 +133,12 @@ pub enum ErrorKind {
     ServerError,
     AccountExists,
     NotFound,
+    SignInCancelled,
+    SignInFailed,
+    /// The organisation (tenant) lets only admins allow new apps.
+    ConsentRequired,
+    /// The refresh token no longer works: sign in again.
+    SignInExpired,
     /// The server did not take a change; it was undone in the app.
     ActionRefused,
     /// A file chosen by the user could not be written.
@@ -154,6 +172,11 @@ pub enum Hint {
     EnableImapAccess,
     /// Microsoft accounts need the sign-in with Microsoft (OAuth), coming in a later version.
     SignInWithMicrosoft,
+    /// An admin of the organisation allows Elevant Mail once (Entra admin center).
+    AskAdminForConsent,
+    SignInAgain,
+    /// Microsoft 365 switches IMAP off per mailbox (admin center → user → mail apps).
+    EnableImapMicrosoft,
 }
 
 impl Error {
@@ -174,6 +197,10 @@ impl Error {
             Error::CertificateInvalid(_) => ErrorKind::CertificateInvalid,
             Error::AuthenticationFailed { .. } => ErrorKind::AuthenticationFailed,
             Error::OAuthRequired { .. } => ErrorKind::OAuthRequired,
+            Error::SignInCancelled => ErrorKind::SignInCancelled,
+            Error::SignInFailed(_) => ErrorKind::SignInFailed,
+            Error::ConsentRequired => ErrorKind::ConsentRequired,
+            Error::SignInExpired => ErrorKind::SignInExpired,
             Error::Protocol(_) => ErrorKind::ServerError,
             Error::AccountExists => ErrorKind::AccountExists,
             Error::ActionRefused => ErrorKind::ActionRefused,
@@ -203,10 +230,13 @@ impl Error {
             Error::AuthenticationFailed { provider } => Some(match provider {
                 Some(Provider::Gmail | Provider::Icloud | Provider::Yahoo) => Hint::UseAppPassword,
                 Some(Provider::WebDe | Provider::Gmx) => Hint::EnableImapAccess,
-                Some(Provider::Microsoft) => Hint::SignInWithMicrosoft,
+                Some(Provider::Microsoft) => Hint::EnableImapMicrosoft,
                 None => Hint::CheckCredentials,
             }),
             Error::OAuthRequired { .. } => Some(Hint::SignInWithMicrosoft),
+            Error::ConsentRequired => Some(Hint::AskAdminForConsent),
+            Error::SignInExpired => Some(Hint::SignInAgain),
+            Error::SignInCancelled | Error::SignInFailed(_) => None,
             Error::Database(_)
             | Error::Migration { .. }
             | Error::Keyring(_)

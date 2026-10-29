@@ -26,6 +26,8 @@ pub fn run() {
             commands::app::app_status,
             commands::accounts::detect_settings,
             commands::accounts::add_account,
+            commands::accounts::add_microsoft_account,
+            commands::accounts::cancel_sign_in,
             commands::accounts::list_accounts,
             commands::accounts::remove_account,
             commands::mailbox::list_folders,

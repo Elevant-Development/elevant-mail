@@ -461,21 +461,30 @@ function setMockFlag(messageIds: string[], flag: "isRead" | "isFlagged", value: 
   return [...accountIds];
 }
 
+let cancelMockSignIn: () => void = () => undefined;
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function suggest(email: string): SuggestedSettings {
   const domain = email.split("@")[1]?.toLowerCase() ?? "";
-  const known = domain === "gmail.com";
+  // Sample domains: Gmail by name, Microsoft 365 for "outlook.com" and "example.com".
+  const provider =
+    domain === "gmail.com"
+      ? "gmail"
+      : domain === "outlook.com" || domain === "example.com"
+        ? "microsoft"
+        : null;
+  const host =
+    provider === "gmail"
+      ? "imap.gmail.com"
+      : provider === "microsoft"
+        ? "outlook.office365.com"
+        : `imap.${domain}`;
   return {
-    imap: {
-      host: known ? "imap.gmail.com" : `imap.${domain}`,
-      port: 993,
-      security: "tls",
-      username: email,
-    },
-    source: known ? "preset" : "guess",
-    provider: known ? "gmail" : null,
-    needsOauth: false,
+    imap: { host, port: 993, security: "tls", username: email },
+    source: provider ? "preset" : "guess",
+    provider,
+    needsOauth: provider === "microsoft",
   };
 }
 
@@ -503,6 +512,19 @@ export const mockBackend: Backend = {
     ];
     return added;
   },
+  addMicrosoftAccount: async (account) => {
+    // Pretends the user signs in within two seconds; cancelSignIn ends the wait.
+    const signedIn = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(true), 2000);
+      cancelMockSignIn = () => {
+        clearTimeout(timer);
+        resolve(false);
+      };
+    });
+    if (!signedIn) throw { kind: "signInCancelled", hint: null };
+    return mockBackend.addAccount(account, "");
+  },
+  cancelSignIn: async () => cancelMockSignIn(),
   removeAccount: async (accountId) => {
     accounts = accounts.filter((a) => a.id !== accountId);
     folders = folders.filter((f) => f.accountId !== accountId);

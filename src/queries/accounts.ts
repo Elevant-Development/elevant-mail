@@ -20,8 +20,9 @@ function useRefreshMailData() {
 export function useAddAccount() {
   const refresh = useRefreshMailData();
   return useMutation({
-    mutationFn: ({ account, password }: { account: NewAccount; password: string }) =>
-      api.addAccount(account, password),
+    /** `password: null` signs in with Microsoft in the browser instead. */
+    mutationFn: ({ account, password }: { account: NewAccount; password: string | null }) =>
+      password === null ? api.addMicrosoftAccount(account) : api.addAccount(account, password),
     onSuccess: refresh,
   });
 }

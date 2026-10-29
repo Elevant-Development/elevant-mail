@@ -13,7 +13,7 @@ export const de = {
 
   "account.add.title": "Konto hinzufügen",
   "account.add.description":
-    "Elevant Mail meldet sich einmal an, um die Einstellungen zu prüfen. Das Passwort landet im Schlüsselbund deines Systems.",
+    "Elevant Mail meldet sich einmal an, um die Einstellungen zu prüfen. Die Zugangsdaten landen im Schlüsselbund deines Systems.",
   "account.add.cancel": "Abbrechen",
   "account.add.next": "Weiter",
   "account.add.detecting": "Suche Einstellungen…",
@@ -43,7 +43,12 @@ export const de = {
     "Bei GMX muss der Abruf per IMAP eingeschaltet sein: Einstellungen → POP3/IMAP Abruf.",
   "account.tip.openPage": "Seite im Browser öffnen",
   "account.tip.microsoft":
-    "Microsoft-Konten melden sich nur über Microsoft an, nicht mit Passwort. Das kommt mit einer der nächsten Versionen.",
+    "Microsoft-Konten melden sich über Microsoft an: Der Browser öffnet die Anmeldung, ein Passwort gibst du hier nicht ein.",
+  "account.microsoft.signIn": "Mit Microsoft anmelden",
+  "account.microsoft.waiting": "Warte auf die Anmeldung …",
+  "account.microsoft.inBrowser":
+    "Melde dich im Browser bei Microsoft an und erlaube Elevant Mail den Zugriff. Danach geht es hier von selbst weiter.",
+  "account.microsoft.cancel": "Anmeldung abbrechen",
   "sidebar.expand": "{name} aufklappen",
   "sidebar.collapse": "{name} zuklappen",
   "account.remove.action": "Konto „{name}“ entfernen",
@@ -70,6 +75,10 @@ export const de = {
   "error.kind.actionRefused":
     "Der Server hat die Änderung nicht übernommen. Sie wurde zurückgenommen.",
   "error.kind.fileWrite": "Die Datei konnte nicht gespeichert werden.",
+  "error.kind.signInCancelled": "Die Anmeldung wurde abgebrochen.",
+  "error.kind.signInFailed": "Die Anmeldung bei Microsoft hat nicht geklappt.",
+  "error.kind.consentRequired": "Deine Organisation muss Elevant Mail erst freigeben.",
+  "error.kind.signInExpired": "Die Anmeldung bei Microsoft ist abgelaufen.",
   "error.kind.internal": "Etwas ist schiefgelaufen.",
   "error.hint.checkDiskSpace": "Prüfe, ob auf dem Rechner genug Speicherplatz frei ist.",
   "error.hint.updateApp": "Aktualisiere Elevant Mail auf die neueste Version.",
@@ -84,6 +93,12 @@ export const de = {
   "error.hint.useAppPassword": "Verwende ein App-Passwort statt deines normalen Passworts.",
   "error.hint.enableImapAccess":
     "Schalte den IMAP-Abruf in den Einstellungen deines Postfachs ein.",
+  "error.hint.askAdminForConsent":
+    "Ein Admin erteilt die Zustimmung einmal im Entra Admin Center unter Unternehmensanwendungen → Elevant Mail → Berechtigungen.",
+  "error.hint.signInAgain":
+    "Entferne das Konto und füge es neu hinzu, um dich erneut anzumelden. Ein eigener Knopf dafür kommt später.",
+  "error.hint.enableImapMicrosoft":
+    "IMAP muss für dieses Postfach eingeschaltet sein: Microsoft 365 Admin Center → Benutzer → E-Mail → E-Mail-Apps verwalten.",
   "error.hint.signInWithMicrosoft":
     "Die Anmeldung über Microsoft kommt mit einer der nächsten Versionen.",
 

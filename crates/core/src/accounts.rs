@@ -54,29 +54,92 @@ pub async fn add_account(
         return Err(Error::AccountExists);
     }
     let password = normalize_password(&new.imap.host, password);
-    let report = imap::check_login(&new.imap, &password).await?;
-    save(db, secrets, &new, &password, &report)
+    let credential = imap::Credential::Password(password);
+    let report = imap::check_login(&new.imap, &credential).await?;
+    let imap::Credential::Password(password) = credential else {
+        unreachable!("built above");
+    };
+    save(db, secrets, &new, Login::Password(&password), &report)
+}
+
+/// Adds a Microsoft account after the browser sign-in: logs in once with the access token to
+/// check it and list the folders, then keeps the refresh token in the keyring. The address the
+/// user signed in with is the IMAP user name.
+pub async fn add_oauth_account(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    new: NewAccount,
+    tokens: crate::oauth::Tokens,
+) -> Result<Account> {
+    let refresh_token = tokens
+        .refresh_token
+        .as_ref()
+        .ok_or_else(|| Error::SignInFailed("no refresh token".into()))?;
+    let new = NewAccount {
+        display_name: new.display_name.trim().to_owned(),
+        email_address: new.email_address.trim().to_owned(),
+        imap: ImapSettings {
+            host: new.imap.host.trim().to_owned(),
+            username: tokens
+                .user
+                .clone()
+                .unwrap_or_else(|| new.email_address.trim().to_owned()),
+            ..new.imap
+        },
+    };
+    if exists(&db.conn(), &new)? {
+        return Err(Error::AccountExists);
+    }
+    let credential = imap::Credential::AccessToken(Secret::new(tokens.access_token.expose()));
+    let report = imap::check_login(&new.imap, &credential).await?;
+    let account = save(db, secrets, &new, Login::OAuth(refresh_token), &report)?;
+    crate::oauth::remember(&account.id, &tokens);
+    Ok(account)
+}
+
+/// What an account logs in with, as stored.
+pub(crate) enum Login<'a> {
+    Password(&'a Secret),
+    /// Microsoft: the refresh token; access tokens are fetched with it.
+    OAuth(&'a Secret),
+}
+
+impl Login<'_> {
+    fn secret(&self) -> (SecretKind, &Secret) {
+        match self {
+            Login::Password(password) => (SecretKind::ImapPassword, password),
+            Login::OAuth(token) => (SecretKind::OAuthRefreshToken, token),
+        }
+    }
+
+    fn method(&self) -> (&'static str, Option<&'static str>) {
+        match self {
+            Login::Password(_) => ("password", None),
+            Login::OAuth(_) => ("oauth2", Some("microsoft")),
+        }
+    }
 }
 
 pub(crate) fn save(
     db: &Database,
     secrets: &dyn SecretStore,
     new: &NewAccount,
-    password: &Secret,
+    login: Login<'_>,
     report: &ConnectionReport,
 ) -> Result<Account> {
     let id = new_id();
-    secrets.set(&id, SecretKind::ImapPassword, password)?;
+    let (kind, secret) = login.secret();
+    secrets.set(&id, kind, secret)?;
     let saved = (|| {
         let mut conn = db.conn();
         let tx = conn.transaction()?;
-        let account = insert(&tx, &id, new)?;
+        let account = insert(&tx, &id, new, login.method())?;
         store_folders(&tx, &id, &report.folders)?;
         tx.commit()?;
         Ok(account)
     })();
     if saved.is_err() {
-        let _ = secrets.delete(&id, SecretKind::ImapPassword);
+        let _ = secrets.delete(&id, kind);
     }
     saved
 }
@@ -102,7 +165,12 @@ fn exists(conn: &Connection, new: &NewAccount) -> Result<bool> {
         .is_some())
 }
 
-fn insert(conn: &Connection, id: &str, new: &NewAccount) -> Result<Account> {
+fn insert(
+    conn: &Connection,
+    id: &str,
+    new: &NewAccount,
+    (auth_method, oauth_provider): (&str, Option<&str>),
+) -> Result<Account> {
     let count: i64 = conn.query_row("SELECT count(*) FROM accounts", [], |row| row.get(0))?;
     let color = ACCOUNT_COLORS[usize::try_from(count).unwrap_or(0) % ACCOUNT_COLORS.len()];
     let display_name = if new.display_name.is_empty() {
@@ -112,8 +180,8 @@ fn insert(conn: &Connection, id: &str, new: &NewAccount) -> Result<Account> {
     };
     conn.execute(
         "INSERT INTO accounts (id, display_name, email_address, color, sort_order, auth_method,
-           imap_host, imap_port, imap_security, imap_username, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'password', ?6, ?7, ?8, ?9, ?10)",
+           oauth_provider, imap_host, imap_port, imap_security, imap_username, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?11, ?12, ?6, ?7, ?8, ?9, ?10)",
         params![
             id,
             display_name,
@@ -125,6 +193,8 @@ fn insert(conn: &Connection, id: &str, new: &NewAccount) -> Result<Account> {
             new.imap.security.as_db_str(),
             new.imap.username,
             now_millis(),
+            auth_method,
+            oauth_provider,
         ],
     )?;
     Ok(Account {
@@ -211,6 +281,7 @@ pub fn remove(db: &Database, secrets: &dyn SecretStore, account_id: &str) -> Res
     if removed == 0 {
         return Err(Error::AccountNotFound);
     }
+    crate::oauth::forget(account_id);
     for kind in [
         SecretKind::ImapPassword,
         SecretKind::SmtpPassword,
@@ -257,7 +328,14 @@ mod tests {
     fn saving_stores_account_folders_and_password() {
         let db = Database::open_in_memory().unwrap();
         let secrets = MemoryStore::default();
-        let account = save(&db, &secrets, &new_account(), &Secret::new("pw"), &report()).unwrap();
+        let account = save(
+            &db,
+            &secrets,
+            &new_account(),
+            Login::Password(&Secret::new("pw")),
+            &report(),
+        )
+        .unwrap();
 
         assert_eq!(list(&db.conn()).unwrap(), vec![account.clone()]);
         assert_eq!(
@@ -294,7 +372,14 @@ mod tests {
     fn duplicates_are_detected_case_insensitively() {
         let db = Database::open_in_memory().unwrap();
         let secrets = MemoryStore::default();
-        save(&db, &secrets, &new_account(), &Secret::new("pw"), &report()).unwrap();
+        save(
+            &db,
+            &secrets,
+            &new_account(),
+            Login::Password(&Secret::new("pw")),
+            &report(),
+        )
+        .unwrap();
         let mut again = new_account();
         again.imap.host = "IMAP.Example.org".into();
         assert!(exists(&db.conn(), &again).unwrap());
@@ -304,10 +389,24 @@ mod tests {
     fn accounts_get_different_colours() {
         let db = Database::open_in_memory().unwrap();
         let secrets = MemoryStore::default();
-        let first = save(&db, &secrets, &new_account(), &Secret::new("a"), &report()).unwrap();
+        let first = save(
+            &db,
+            &secrets,
+            &new_account(),
+            Login::Password(&Secret::new("a")),
+            &report(),
+        )
+        .unwrap();
         let mut other = new_account();
         other.imap.username = "work@example.org".into();
-        let second = save(&db, &secrets, &other, &Secret::new("b"), &report()).unwrap();
+        let second = save(
+            &db,
+            &secrets,
+            &other,
+            Login::Password(&Secret::new("b")),
+            &report(),
+        )
+        .unwrap();
         assert_ne!(first.color, second.color);
     }
 
@@ -315,7 +414,14 @@ mod tests {
     fn removing_deletes_data_and_credentials() {
         let db = Database::open_in_memory().unwrap();
         let secrets = MemoryStore::default();
-        let account = save(&db, &secrets, &new_account(), &Secret::new("pw"), &report()).unwrap();
+        let account = save(
+            &db,
+            &secrets,
+            &new_account(),
+            Login::Password(&Secret::new("pw")),
+            &report(),
+        )
+        .unwrap();
 
         remove(&db, &secrets, &account.id).unwrap();
 

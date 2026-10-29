@@ -40,7 +40,7 @@ pub async fn push_actions(
     if queue(&db.conn(), account_id)?.is_empty() {
         return Ok(0);
     }
-    let (settings, password) = credentials(db, secrets, account_id)?;
+    let (settings, password) = credentials(db, secrets, account_id).await?;
     let connector = imap::platform_connector()?;
     let mut session = imap::open_session(&settings, &password, &connector).await?;
     let result = push_actions_in(db, &mut session, account_id).await;
@@ -214,7 +214,7 @@ pub(crate) async fn push_with_connector(
     account_id: &str,
     connector: &tokio_rustls::TlsConnector,
 ) -> Result<u32> {
-    let (settings, password) = credentials(db, secrets, account_id)?;
+    let (settings, password) = credentials(db, secrets, account_id).await?;
     let mut session = imap::open_session(&settings, &password, connector).await?;
     let result = push_actions_in(db, &mut session, account_id).await;
     let _ = session.logout().await;

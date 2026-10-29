@@ -10,6 +10,7 @@ pub mod ids;
 pub mod mail;
 pub mod mailbox;
 pub mod model;
+pub mod oauth;
 pub mod redact;
 pub mod secrets;
 

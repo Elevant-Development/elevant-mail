@@ -10,6 +10,7 @@ use elevant_mail_core::model::Attachment;
 use elevant_mail_core::secrets::{KeyringStore, SecretStore};
 use tauri::async_runtime::Mutex as AsyncMutex;
 use tauri::{AppHandle, Manager};
+use tokio::sync::oneshot;
 
 pub struct AppState {
     pub db: Database,
@@ -24,6 +25,8 @@ pub struct AppState {
     /// Attachments fetched in this session, as files for opening and saving. Emptied at start.
     attachment_dir: PathBuf,
     attachment_files: Mutex<HashMap<String, PathBuf>>,
+    /// Ends the browser sign-in that is waiting, if any.
+    sign_in_cancel: Mutex<Option<oneshot::Sender<()>>>,
 }
 
 impl AppState {
@@ -58,6 +61,7 @@ impl AppState {
             allowed_remote_images: Mutex::default(),
             attachment_dir,
             attachment_files: Mutex::default(),
+            sign_in_cancel: Mutex::default(),
         })
     }
 
@@ -76,6 +80,28 @@ impl AppState {
             .get(message_id)?
             .get(index)
             .cloned()
+    }
+
+    /// One sign-in at a time: starting another ends the one before. The receiver completes when
+    /// the sign-in is cancelled or replaced.
+    pub fn start_sign_in(&self) -> oneshot::Receiver<()> {
+        let (sender, receiver) = oneshot::channel();
+        *self
+            .sign_in_cancel
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(sender);
+        receiver
+    }
+
+    pub fn cancel_sign_in(&self) {
+        if let Some(sender) = self
+            .sign_in_cancel
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            let _ = sender.send(());
+        }
     }
 
     pub fn cached_attachment(&self, attachment_id: &str) -> Option<PathBuf> {

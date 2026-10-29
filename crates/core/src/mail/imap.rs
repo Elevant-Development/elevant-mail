@@ -32,16 +32,19 @@ pub struct ConnectionReport {
 }
 
 /// Connects, logs in, lists the folders and logs out again.
-pub async fn check_login(settings: &ImapSettings, password: &Secret) -> Result<ConnectionReport> {
-    check_login_with(settings, password, &platform_connector()?).await
+pub async fn check_login(
+    settings: &ImapSettings,
+    credential: &Credential,
+) -> Result<ConnectionReport> {
+    check_login_with(settings, credential, &platform_connector()?).await
 }
 
 pub(crate) async fn check_login_with(
     settings: &ImapSettings,
-    password: &Secret,
+    credential: &Credential,
     connector: &TlsConnector,
 ) -> Result<ConnectionReport> {
-    let mut session = open_session(settings, password, connector).await?;
+    let mut session = open_session(settings, credential, connector).await?;
     let folders = with_timeout(COMMAND_TIMEOUT, list_folders(&mut session)).await??;
     // Best effort: the check succeeded even if the goodbye gets lost.
     let _ = with_timeout(COMMAND_TIMEOUT, session.logout()).await;
@@ -49,25 +52,62 @@ pub(crate) async fn check_login_with(
     Ok(ConnectionReport { folders })
 }
 
+/// How an account logs in.
+pub enum Credential {
+    Password(Secret),
+    /// An OAuth access token, sent with SASL XOAUTH2 (Microsoft).
+    AccessToken(Secret),
+}
+
 /// Connects and logs in; the caller logs out.
 pub(crate) async fn open_session(
     settings: &ImapSettings,
-    password: &Secret,
+    credential: &Credential,
     connector: &TlsConnector,
 ) -> Result<ImapSession> {
     let provider = Provider::from_imap_host(&settings.host);
-    if provider.is_some_and(Provider::needs_oauth) {
-        return Err(Error::OAuthRequired {
-            provider: Provider::Microsoft,
-        });
+    let client = match credential {
+        Credential::Password(_) if provider.is_some_and(Provider::needs_oauth) => {
+            return Err(Error::OAuthRequired {
+                provider: Provider::Microsoft,
+            });
+        }
+        _ => with_timeout(CONNECT_TIMEOUT, connect(settings, connector)).await??,
+    };
+    let session = match credential {
+        Credential::Password(password) => {
+            with_timeout(
+                COMMAND_TIMEOUT,
+                client.login(&settings.username, password.expose()),
+            )
+            .await?
+        }
+        Credential::AccessToken(token) => {
+            let auth = XOAuth2 {
+                response: Some(format!(
+                    "user={}\x01auth=Bearer {}\x01\x01",
+                    settings.username,
+                    token.expose()
+                )),
+            };
+            with_timeout(COMMAND_TIMEOUT, client.authenticate("XOAUTH2", auth)).await?
+        }
+    };
+    session.map_err(|(error, _client)| login_error(error, provider))
+}
+
+/// SASL XOAUTH2: the token once; after a refusal the server sends its reason as a challenge and
+/// expects an empty answer before it says NO.
+struct XOAuth2 {
+    response: Option<String>,
+}
+
+impl async_imap::Authenticator for XOAuth2 {
+    type Response = String;
+
+    fn process(&mut self, _challenge: &[u8]) -> String {
+        self.response.take().unwrap_or_default()
     }
-    let client = with_timeout(CONNECT_TIMEOUT, connect(settings, connector)).await??;
-    with_timeout(
-        COMMAND_TIMEOUT,
-        client.login(&settings.username, password.expose()),
-    )
-    .await?
-    .map_err(|(error, _client)| login_error(error, provider))
 }
 
 /// TLS with the operating system's trust store and checks (revocation, enterprise CAs).
@@ -215,7 +255,7 @@ mod tests {
         let server = test_server::start(Mode::Tls).await;
         let report = check_login_with(
             &settings(server.port, Security::Tls),
-            &Secret::new(PASSWORD),
+            &Credential::Password(Secret::new(PASSWORD)),
             &server.connector,
         )
         .await
@@ -239,7 +279,7 @@ mod tests {
         let server = test_server::start(Mode::StartTls).await;
         let report = check_login_with(
             &settings(server.port, Security::StartTls),
-            &Secret::new(PASSWORD),
+            &Credential::Password(Secret::new(PASSWORD)),
             &server.connector,
         )
         .await
@@ -252,7 +292,7 @@ mod tests {
         let server = test_server::start(Mode::Tls).await;
         let error = check_login_with(
             &settings(server.port, Security::Tls),
-            &Secret::new("wrong"),
+            &Credential::Password(Secret::new("wrong")),
             &server.connector,
         )
         .await
@@ -269,7 +309,7 @@ mod tests {
         let server = test_server::start(Mode::NoStartTls).await;
         let error = check_login_with(
             &settings(server.port, Security::StartTls),
-            &Secret::new(PASSWORD),
+            &Credential::Password(Secret::new(PASSWORD)),
             &server.connector,
         )
         .await
@@ -283,7 +323,7 @@ mod tests {
         // The operating system does not know the throwaway certificate.
         let error = check_login_with(
             &settings(server.port, Security::Tls),
-            &Secret::new(PASSWORD),
+            &Credential::Password(Secret::new(PASSWORD)),
             &platform_connector().unwrap(),
         )
         .await
@@ -296,7 +336,7 @@ mod tests {
         let server = test_server::start(Mode::StartTls).await;
         let error = check_login_with(
             &settings(server.port, Security::Tls),
-            &Secret::new(PASSWORD),
+            &Credential::Password(Secret::new(PASSWORD)),
             &server.connector,
         )
         .await
@@ -314,7 +354,7 @@ mod tests {
         settings.host = "mail.does-not-exist.invalid".into();
         let error = check_login_with(
             &settings,
-            &Secret::new(PASSWORD),
+            &Credential::Password(Secret::new(PASSWORD)),
             &platform_connector().unwrap(),
         )
         .await
@@ -326,9 +366,34 @@ mod tests {
     async fn microsoft_accounts_are_told_about_oauth_without_connecting() {
         let mut settings = settings(993, Security::Tls);
         settings.host = "outlook.office365.com".into();
-        let error = check_login(&settings, &Secret::new("any"))
+        let error = check_login(&settings, &Credential::Password(Secret::new("any")))
             .await
             .unwrap_err();
         assert!(matches!(error, Error::OAuthRequired { .. }));
+    }
+
+    #[tokio::test]
+    async fn logs_in_with_an_access_token() {
+        let server = test_server::start(Mode::Tls).await;
+        let report = check_login_with(
+            &settings(server.port, Security::Tls),
+            &Credential::AccessToken(Secret::new(test_server::ACCESS_TOKEN)),
+            &server.connector,
+        )
+        .await
+        .unwrap();
+        assert!(!report.folders.is_empty());
+
+        let refused = check_login_with(
+            &settings(server.port, Security::Tls),
+            &Credential::AccessToken(Secret::new("expired-token")),
+            &server.connector,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(refused, Error::AuthenticationFailed { .. }),
+            "{refused:?}"
+        );
     }
 }

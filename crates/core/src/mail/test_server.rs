@@ -11,6 +11,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 pub const PASSWORD: &str = "right-password";
+/// The only access token the server takes over XOAUTH2.
+pub const ACCESS_TOKEN: &str = "test-access-token";
 
 #[derive(Debug, Clone, Copy)]
 pub enum Mode {
@@ -193,6 +195,26 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
             }
             "LOGIN" => {
                 format!("{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n").into_bytes()
+            }
+            // SASL XOAUTH2 like Microsoft: the token in one line, an error challenge on refusal.
+            "AUTHENTICATE" if arguments.eq_ignore_ascii_case("XOAUTH2") => {
+                stream.write_all(b"+ \r\n").await?;
+                let mut answer = String::new();
+                stream.read_line(&mut answer).await?;
+                use base64::Engine;
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(answer.trim())
+                    .unwrap_or_default();
+                if String::from_utf8_lossy(&decoded)
+                    .contains(&format!("auth=Bearer {ACCESS_TOKEN}\x01"))
+                {
+                    format!("{tag} OK authenticated\r\n").into_bytes()
+                } else {
+                    stream.write_all(b"+ eyJzdGF0dXMiOiI0MDEifQ==\r\n").await?;
+                    answer.clear();
+                    stream.read_line(&mut answer).await?;
+                    format!("{tag} NO AUTHENTICATE failed\r\n").into_bytes()
+                }
             }
             "LIST" => format!(
                 "* LIST (\\HasNoChildren) \"/\" INBOX\r\n\

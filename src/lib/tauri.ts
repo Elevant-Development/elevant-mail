@@ -48,6 +48,13 @@ export interface Backend {
   detectSettings(email: string): Promise<SuggestedSettings>;
   /** Logs in once to check the settings, then stores the account and its password. */
   addAccount(account: NewAccount, password: string): Promise<Account>;
+  /**
+   * Microsoft 365 or Outlook.com: opens Microsoft's sign-in in the system browser and waits for
+   * it, then stores the account like `addAccount`.
+   */
+  addMicrosoftAccount(account: NewAccount): Promise<Account>;
+  /** Stops waiting for the browser sign-in. */
+  cancelSignIn(): Promise<void>;
   removeAccount(accountId: string): Promise<void>;
   listFolders(): Promise<Folder[]>;
   /** `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first. */
@@ -87,6 +94,8 @@ const tauriBackend: Backend = {
   listAccounts: () => invoke("list_accounts"),
   detectSettings: (email) => invoke("detect_settings", { email }),
   addAccount: (account, password) => invoke("add_account", { account, password }),
+  addMicrosoftAccount: (account) => invoke("add_microsoft_account", { account }),
+  cancelSignIn: () => invoke("cancel_sign_in"),
   removeAccount: (accountId) => invoke("remove_account", { accountId }),
   listFolders: () => invoke("list_folders"),
   listMessages: (mailboxId) => invoke("list_messages", { mailboxId }),

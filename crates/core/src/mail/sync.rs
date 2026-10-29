@@ -23,7 +23,7 @@ use ts_rs::TS;
 use crate::db::Database;
 use crate::ids::{new_id, now_millis};
 use crate::mail::imap::{
-    self, COMMAND_TIMEOUT, ImapSession, list_folders, protocol_error, with_timeout,
+    self, COMMAND_TIMEOUT, Credential, ImapSession, list_folders, protocol_error, with_timeout,
 };
 use crate::mail::parse::{ParsedMessage, parse_message, parse_preview};
 use crate::mail::settings::{ImapSettings, Security};
@@ -90,7 +90,7 @@ pub async fn sync_account(
     account_id: &str,
     progress: ProgressFn<'_>,
 ) -> Result<SyncReport> {
-    let (settings, password) = credentials(db, secrets, account_id)?;
+    let (settings, password) = credentials(db, secrets, account_id).await?;
     let connector = imap::platform_connector()?;
     report(progress, account_id, None, SyncStage::Connecting, 0, 0);
     let mut session = imap::open_session(&settings, &password, &connector).await?;
@@ -127,7 +127,7 @@ async fn run_on_folder(
     progress: ProgressFn<'_>,
 ) -> Result<SyncReport> {
     let folder = folder_state(&db.conn(), folder_id)?.ok_or(Error::FolderNotFound)?;
-    let (settings, password) = credentials(db, secrets, &folder.account_id)?;
+    let (settings, password) = credentials(db, secrets, &folder.account_id).await?;
     let connector = imap::platform_connector()?;
     report(
         progress,
@@ -325,7 +325,7 @@ pub async fn load_body(db: &Database, secrets: &dyn SecretStore, message_id: &st
     if target.complete {
         return Ok(());
     }
-    let (settings, password) = credentials(db, secrets, &target.account_id)?;
+    let (settings, password) = credentials(db, secrets, &target.account_id).await?;
     let connector = imap::platform_connector()?;
     let mut session = imap::open_session(&settings, &password, &connector).await?;
     let result = load_body_in(db, &mut session, message_id, &target).await;
@@ -661,30 +661,36 @@ fn inbox_state(conn: &Connection, account_id: &str) -> Result<Option<FolderState
     }
 }
 
-pub(crate) fn credentials(
+pub(crate) async fn credentials(
     db: &Database,
     secrets: &dyn SecretStore,
     account_id: &str,
-) -> Result<(ImapSettings, crate::secrets::Secret)> {
-    let settings = db
+) -> Result<(ImapSettings, Credential)> {
+    let (settings, auth_method) = db
         .conn()
         .query_row(
-            "SELECT imap_host, imap_port, imap_security, imap_username FROM accounts WHERE id = ?1",
+            "SELECT imap_host, imap_port, imap_security, imap_username, auth_method
+             FROM accounts WHERE id = ?1",
             [account_id],
             |row| {
                 let security: String = row.get(2)?;
-                Ok(ImapSettings {
+                let settings = ImapSettings {
                     host: row.get(0)?,
                     port: row.get(1)?,
                     security: Security::from_db_str(&security),
                     username: row.get(3)?,
-                })
+                };
+                Ok((settings, row.get::<_, String>(4)?))
             },
         )
         .optional()?
         .ok_or(Error::AccountNotFound)?;
-    let password = secrets.get(account_id, SecretKind::ImapPassword)?;
-    Ok((settings, password))
+    let credential = if auth_method == "oauth2" {
+        Credential::AccessToken(crate::oauth::access_token(secrets, account_id).await?)
+    } else {
+        Credential::Password(secrets.get(account_id, SecretKind::ImapPassword)?)
+    };
+    Ok((settings, credential))
 }
 
 fn report(
@@ -712,7 +718,7 @@ pub(crate) async fn sync_with_connector(
     account_id: &str,
     connector: &TlsConnector,
 ) -> Result<SyncReport> {
-    let (settings, password) = credentials(db, secrets, account_id)?;
+    let (settings, password) = credentials(db, secrets, account_id).await?;
     let mut session = imap::open_session(&settings, &password, connector).await?;
     let result = sync_inbox_in(db, &mut session, account_id, &|_| {}).await;
     let _ = session.logout().await;
@@ -727,7 +733,7 @@ pub(crate) async fn load_older_with_connector(
     connector: &TlsConnector,
 ) -> Result<SyncReport> {
     let folder = folder_state(&db.conn(), folder_id)?.ok_or(Error::FolderNotFound)?;
-    let (settings, password) = credentials(db, secrets, &folder.account_id)?;
+    let (settings, password) = credentials(db, secrets, &folder.account_id).await?;
     let mut session = imap::open_session(&settings, &password, connector).await?;
     let result = sync_folder_in(db, &mut session, &folder, Mode::Older, &|_| {}).await;
     let _ = session.logout().await;
@@ -742,7 +748,7 @@ pub(crate) async fn load_body_with_connector(
     connector: &TlsConnector,
 ) -> Result<()> {
     let target = body_target(&db.conn(), message_id)?.ok_or(Error::MessageNotFound)?;
-    let (settings, password) = credentials(db, secrets, &target.account_id)?;
+    let (settings, password) = credentials(db, secrets, &target.account_id).await?;
     let mut session = imap::open_session(&settings, &password, connector).await?;
     let result = load_body_in(db, &mut session, message_id, &target).await;
     let _ = session.logout().await;
@@ -790,7 +796,7 @@ mod tests {
                     username: "alex@example.org".into(),
                 },
             },
-            &Secret::new(PASSWORD),
+            crate::accounts::Login::Password(&Secret::new(PASSWORD)),
             &ConnectionReport {
                 folders: vec![RemoteFolder::new("INBOX", Some("/"), None, true)],
             },
@@ -1174,8 +1180,9 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n"
         let cached = cached_flags(&setup.db.conn(), &setup.inbox_id).unwrap();
         let mut cached_before = cached.clone();
         cached_before.insert(1, (false, false));
-        let (settings, password) =
-            credentials(&setup.db, &setup.secrets, &setup.account_id).unwrap();
+        let (settings, password) = credentials(&setup.db, &setup.secrets, &setup.account_id)
+            .await
+            .unwrap();
         let mut session = imap::open_session(&settings, &password, &setup.server.connector)
             .await
             .unwrap();

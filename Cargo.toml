@@ -11,6 +11,7 @@ publish = false
 
 [workspace.dependencies]
 ammonia = "4"
+base64 = "0.23"
 async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
 elevant-mail-core = { path = "crates/core" }
 futures = "0.3"
@@ -21,7 +22,8 @@ open = "5"
 percent-encoding = "2"
 rcgen = "0.14"
 # TLS comes from our own rustls config (ring + platform verifier), like the IMAP client.
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+ring = "0.17"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "form", "json"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-platform-verifier = "0.7"
@@ -29,7 +31,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["net", "time", "macros", "rt-multi-thread", "io-util"] }
+tokio = { version = "1", features = ["net", "time", "macros", "rt-multi-thread", "io-util", "sync"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

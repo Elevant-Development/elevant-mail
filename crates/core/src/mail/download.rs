@@ -28,7 +28,7 @@ pub async fn fetch_attachment(
     attachment_id: &str,
 ) -> Result<AttachmentFile> {
     let source = locate(db, attachment_id)?;
-    let (settings, password) = credentials(db, secrets, &source.account_id)?;
+    let (settings, password) = credentials(db, secrets, &source.account_id).await?;
     let connector = imap::platform_connector()?;
     let mut session = imap::open_session(&settings, &password, &connector).await?;
     let result = fetch_in(&mut session, &source).await;
@@ -70,7 +70,7 @@ pub(crate) async fn fetch_with_connector(
     connector: &tokio_rustls::TlsConnector,
 ) -> Result<Vec<u8>> {
     let source = locate(db, attachment_id)?;
-    let (settings, password) = credentials(db, secrets, &source.account_id)?;
+    let (settings, password) = credentials(db, secrets, &source.account_id).await?;
     let mut session = imap::open_session(&settings, &password, connector).await?;
     let result = fetch_in(&mut session, &source).await;
     let _ = session.logout().await;

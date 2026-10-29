@@ -114,7 +114,8 @@ function AccountForm({ onDone }: { onDone: () => void }) {
     try {
       const account = await addAccount.mutateAsync({
         account: { displayName, emailAddress: email.trim(), imap: settings },
-        password,
+        // Microsoft: no password, the browser sign-in instead.
+        password: microsoft ? null : password,
       });
       const folders = await queryClient.fetchQuery({
         queryKey: ["folders"],
@@ -126,7 +127,13 @@ function AccountForm({ onDone }: { onDone: () => void }) {
       void syncAccount(account.id);
       onDone();
     } catch (cause) {
-      setError(describeError(cause));
+      // Cancelled on purpose: nothing to report.
+      const cancelled =
+        typeof cause === "object" &&
+        cause !== null &&
+        "kind" in cause &&
+        cause.kind === "signInCancelled";
+      if (!cancelled) setError(describeError(cause));
     }
   };
 
@@ -137,7 +144,7 @@ function AccountForm({ onDone }: { onDone: () => void }) {
   };
 
   const providerTip = suggestion?.provider ? providerTips[suggestion.provider] : undefined;
-  const blocked = suggestion?.needsOauth ?? false;
+  const microsoft = suggestion?.needsOauth ?? false;
 
   return (
     <form onSubmit={submit} className="grid gap-4">
@@ -160,17 +167,19 @@ function AccountForm({ onDone }: { onDone: () => void }) {
             onBlur={detectEarly}
           />
         </Field>
-        <Field id="account-password" label={t("account.field.password")}>
-          <Input
-            id="account-password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            readOnly={busy}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </Field>
+        {!microsoft && (
+          <Field id="account-password" label={t("account.field.password")}>
+            <Input
+              id="account-password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              readOnly={busy}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </Field>
+        )}
         <Field id="account-name" label={t("account.field.displayName")}>
           <Input
             id="account-name"
@@ -261,8 +270,11 @@ function AccountForm({ onDone }: { onDone: () => void }) {
             </div>
           )}
 
-          {blocked ? (
-            <Notice tone="info" text={t("account.tip.microsoft")} />
+          {microsoft ? (
+            <Notice
+              tone="info"
+              text={t(connecting ? "account.microsoft.inBrowser" : "account.tip.microsoft")}
+            />
           ) : (
             providerTip && (
               <Notice
@@ -278,18 +290,29 @@ function AccountForm({ onDone }: { onDone: () => void }) {
       {error && <Notice tone="error" text={error.message} detail={error.action} />}
 
       <DialogFooter>
-        <Button type="button" variant="ghost" onClick={onDone} disabled={connecting}>
-          {t("account.add.cancel")}
-        </Button>
-        <Button type="submit" disabled={busy || blocked || !email || !password}>
+        {connecting && microsoft ? (
+          // Waiting for the browser: cancelling ends the wait, not the dialog.
+          <Button type="button" variant="ghost" onClick={() => void api.cancelSignIn()}>
+            {t("account.microsoft.cancel")}
+          </Button>
+        ) : (
+          <Button type="button" variant="ghost" onClick={onDone} disabled={connecting}>
+            {t("account.add.cancel")}
+          </Button>
+        )}
+        <Button type="submit" disabled={busy || !email || (!microsoft && !password)}>
           {busy && <Icon name="spinner" className="animate-spin" />}
           {connecting
-            ? t("account.add.connecting")
+            ? microsoft
+              ? t("account.microsoft.waiting")
+              : t("account.add.connecting")
             : detecting
               ? t("account.add.detecting")
-              : settings
-                ? t("account.add.connect")
-                : t("account.add.next")}
+              : microsoft
+                ? t("account.microsoft.signIn")
+                : settings
+                  ? t("account.add.connect")
+                  : t("account.add.next")}
         </Button>
       </DialogFooter>
     </form>
