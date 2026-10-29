@@ -1,8 +1,34 @@
-//! Elevant Mail backend. For now it only opens the window; IMAP, SQLite and the keyring
-//! follow step by step (see docs/projekt-brief.md).
+//! Desktop shell of Elevant Mail: window, startup and the commands the frontend calls. Mail,
+//! storage and credentials live in `elevant-mail-core` (see docs/projekt-brief.md).
+
+mod commands;
+mod error;
+mod state;
+
+use tauri::Manager;
+use tracing_subscriber::EnvFilter;
 
 pub fn run() {
+    init_logging();
+
     tauri::Builder::default()
+        .setup(|app| {
+            let state = state::AppState::init(app.handle())?;
+            app.manage(state);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![commands::app::app_status])
         .run(tauri::generate_context!())
         .expect("failed to start Elevant Mail");
+}
+
+/// Logs to stderr. The level comes from `ELEVANT_MAIL_LOG` (e.g. `debug`), default `info`.
+/// Credentials never reach a log line: see `elevant_mail_core::redact`.
+fn init_logging() {
+    let filter =
+        EnvFilter::try_from_env("ELEVANT_MAIL_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .init();
 }
