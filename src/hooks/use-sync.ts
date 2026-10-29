@@ -1,12 +1,26 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useEffectEvent, useRef } from "react";
 
+import { notificationsAllowed, showNotification } from "@/lib/desktop-notify";
 import { describeError } from "@/lib/errors";
-import { api, type Folder, type SyncReport, usesMockData } from "@/lib/tauri";
+import { newMailNotice } from "@/lib/notify";
+import {
+  type Account,
+  api,
+  type Folder,
+  type NewMail,
+  type SyncReport,
+  usesMockData,
+} from "@/lib/tauri";
 import { useAccounts } from "@/queries/accounts";
 import { useSyncStore } from "@/stores/sync";
+import { useUiStore } from "@/stores/ui";
 
-/** New mail is checked this often while the app is open (IMAP IDLE comes later). */
+/**
+ * All accounts are checked this often while the app is open. Where the server supports IMAP
+ * IDLE, new mail in the inbox arrives at once anyway (`inbox-changed`); the poll covers the
+ * other servers and the other folders' counts.
+ */
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 /** Selecting a folder syncs it, unless that happened within this time. */
 const FOLDER_FRESH_MS = 60 * 1000;
@@ -19,14 +33,16 @@ export function useSyncActions() {
     accountId: string,
     folderId: string | null,
     task: () => Promise<SyncReport>,
-  ) => {
+  ): Promise<SyncReport | null> => {
     const store = useSyncStore.getState();
     store.setProgress({ accountId, folderId, stage: "connecting", done: 0, total: 0 });
     try {
-      await task();
+      const report = await task();
       store.finish(accountId);
+      return report;
     } catch (error) {
       store.finish(accountId, describeError(error));
+      return null;
     } finally {
       await Promise.all(
         ["folders", "messages", "message"].map((key) =>
@@ -36,11 +52,23 @@ export function useSyncActions() {
     }
   };
 
+  /** New mail in an inbox, as a notification while the window is not in front. */
+  const announce = async (accountId: string, mail: NewMail[]) => {
+    const { notifications, notificationPreview } = useUiStore.getState();
+    if (!notifications || mail.length === 0 || document.hasFocus()) return;
+    if (!(await notificationsAllowed())) return;
+    const account = queryClient
+      .getQueryData<Account[]>(["accounts"])
+      ?.find((a) => a.id === accountId);
+    showNotification(newMailNotice(mail, account?.displayName ?? "", notificationPreview));
+  };
+
   return {
-    syncAccount: (accountId: string) => {
+    syncAccount: async (accountId: string) => {
       // Already running (startup, poll, a new account): the running sync covers it.
-      if (useSyncStore.getState().progress[accountId]) return Promise.resolve();
-      return run(accountId, null, () => api.syncAccount(accountId));
+      if (useSyncStore.getState().progress[accountId]) return;
+      const report = await run(accountId, null, () => api.syncAccount(accountId));
+      if (report) await announce(accountId, report.newMail);
     },
     syncFolder: (folder: Folder, { force = false } = {}) => {
       const lastSync = useSyncStore.getState().lastFolderSync[folder.id] ?? 0;
@@ -59,7 +87,8 @@ export function useSyncActions() {
 
 /**
  * Keeps mail current in the background: listens for progress, syncs every account once at
- * start (and new accounts when they appear), then polls all current accounts. Does nothing with
+ * start (and new accounts when they appear), syncs an account whenever its server reports a
+ * change in the inbox, and polls all current accounts. Does nothing with
  * sample data. Adding an account also syncs it right away (AccountDialog).
  */
 export function useBackgroundSync() {
@@ -76,7 +105,12 @@ export function useBackgroundSync() {
     const listening = api.onSyncProgress((progress) => {
       if (progress.stage !== "done") useSyncStore.getState().setProgress(progress);
     });
-    return () => void listening.then((stop) => stop());
+    // The server told the backend's waiting connection about a change in an inbox.
+    const watching = api.onInboxChanged(sync);
+    return () => {
+      void listening.then((stop) => stop());
+      void watching.then((stop) => stop());
+    };
   }, []);
 
   useEffect(() => {

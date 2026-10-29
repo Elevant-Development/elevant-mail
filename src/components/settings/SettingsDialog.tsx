@@ -12,6 +12,7 @@ import { useAccounts } from "@/queries/accounts";
 import { useUiStore } from "@/stores/ui";
 
 import { AccountSettingsPanel } from "./AccountSettingsPanel";
+import { NotificationSettings } from "./NotificationSettings";
 
 function NavGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -107,6 +108,13 @@ export function SettingsDialog() {
               <Icon name="palette" />
               <span className="truncate">{t("appearance.open")}</span>
             </NavItem>
+            <NavItem
+              selected={page?.section === "notifications"}
+              onSelect={() => openSettings({ section: "notifications" })}
+            >
+              <Icon name="bell" />
+              <span className="truncate">{t("settings.notifications")}</span>
+            </NavItem>
           </NavGroup>
         </nav>
 
@@ -115,6 +123,11 @@ export function SettingsDialog() {
             <div className="grid max-w-md gap-6">
               <h2 className="text-base font-medium">{t("appearance.open")}</h2>
               <AppearanceSettings />
+            </div>
+          ) : page?.section === "notifications" ? (
+            <div className="grid max-w-md gap-6">
+              <h2 className="text-base font-medium">{t("settings.notifications")}</h2>
+              <NotificationSettings />
             </div>
           ) : account ? (
             <div className="max-w-md">

@@ -810,8 +810,9 @@ export const mockBackend: Backend = {
     messages[index] = { ...current, bodyText: sample.body, bodyComplete: true };
   },
   // Sample data is always "in sync".
-  syncAccount: async () => ({ added: 0, updated: 0, removed: 0 }),
-  syncFolder: async () => ({ added: 0, updated: 0, removed: 0 }),
-  loadOlder: async () => ({ added: 0, updated: 0, removed: 0 }),
+  syncAccount: async () => ({ added: 0, updated: 0, removed: 0, newMail: [] }),
+  syncFolder: async () => ({ added: 0, updated: 0, removed: 0, newMail: [] }),
+  loadOlder: async () => ({ added: 0, updated: 0, removed: 0, newMail: [] }),
   onSyncProgress: async () => () => undefined,
+  onInboxChanged: async () => () => undefined,
 };

@@ -69,6 +69,22 @@ export const de = {
   "settings.title": "Einstellungen",
   "settings.accounts": "Konten",
   "settings.general": "Allgemein",
+  "settings.notifications": "Benachrichtigungen",
+  "settings.notifications.enabled": "Bei neuen Mails benachrichtigen",
+  "settings.notifications.enabledHint":
+    "Solange Elevant Mail nicht im Vordergrund ist. Neue Mails kommen sofort an, wo der Server das unterstützt, sonst alle fünf Minuten.",
+  "settings.notifications.preview": "Absender und Betreff zeigen",
+  "settings.notifications.previewHint":
+    "Ausgeschaltet nennt die Benachrichtigung nur das Konto, etwa wenn andere deinen Bildschirm sehen.",
+  "settings.notifications.try": "Ausprobieren",
+  "settings.notifications.denied":
+    "Das System erlaubt Elevant Mail keine Benachrichtigungen. Schalte sie in den Systemeinstellungen ein.",
+  "notify.newMail.one": "Neue Mail",
+  "notify.newMail.other": "{count} neue Mails",
+  "notify.from": "Von {names}",
+  "notify.fromMore": "Von {names} und weiteren",
+  "notify.in": "In {account}",
+  "notify.sample": "So erscheinen neue Mails.",
   "settings.noAccounts": "Noch kein Konto eingerichtet.",
   "settings.account.open": "Kontoeinstellungen",
   "settings.account.color": "Farbe",

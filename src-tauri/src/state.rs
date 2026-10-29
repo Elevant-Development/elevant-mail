@@ -12,6 +12,8 @@ use tauri::async_runtime::Mutex as AsyncMutex;
 use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
 
+use crate::watch::Watchers;
+
 pub struct AppState {
     pub db: Database,
     pub secrets: Box<dyn SecretStore>,
@@ -27,6 +29,8 @@ pub struct AppState {
     attachment_files: Mutex<HashMap<String, PathBuf>>,
     /// Ends the browser sign-in that is waiting, if any.
     sign_in_cancel: Mutex<Option<oneshot::Sender<()>>>,
+    /// Waiting for new mail, per account.
+    pub watchers: Watchers,
 }
 
 impl AppState {
@@ -62,6 +66,7 @@ impl AppState {
             attachment_dir,
             attachment_files: Mutex::default(),
             sign_in_cancel: Mutex::default(),
+            watchers: Watchers::default(),
         })
     }
 

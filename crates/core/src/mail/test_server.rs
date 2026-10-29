@@ -1,5 +1,5 @@
 //! A tiny IMAP server for tests: greeting, STARTTLS, LOGIN, LIST, CREATE, EXAMINE, UID SEARCH,
-//! UID FETCH, UID STORE, UID MOVE and COPY, EXPUNGE
+//! UID FETCH, UID STORE, UID MOVE and COPY, EXPUNGE, IDLE
 //! and LOGOUT on one INBOX, with a throwaway certificate for "localhost". Tests change the
 //! mailbox between syncs and can read the commands the client sent.
 
@@ -66,6 +66,10 @@ pub struct Mailbox {
     pub without_move: bool,
     /// Folders made with CREATE; LIST shows them. Messages moved there are simply gone.
     pub created: Vec<String>,
+    /// An older server without IDLE.
+    pub without_idle: bool,
+    /// Wakes a session in IDLE, which then reports the number of messages (see `announce`).
+    pub idle_wake: Arc<tokio::sync::Notify>,
 }
 
 impl Mailbox {
@@ -78,6 +82,8 @@ impl Mailbox {
             refuse_move: false,
             without_move: false,
             created: Vec::new(),
+            without_idle: false,
+            idle_wake: Arc::default(),
         }
     }
 }
@@ -89,6 +95,19 @@ pub struct TestServer {
     /// Trusts exactly the server's throwaway certificate.
     pub connector: TlsConnector,
     pub mailbox: SharedMailbox,
+}
+
+impl TestServer {
+    /// New mail, as the server tells a client waiting in IDLE.
+    pub fn deliver(&self, message: TestMessage) {
+        let mut mailbox = self.mailbox.lock().unwrap();
+        mailbox.messages.push(message);
+        mailbox.idle_wake.notify_one();
+    }
+
+    pub fn commands(&self) -> Vec<String> {
+        self.mailbox.lock().unwrap().commands.clone()
+    }
 }
 
 pub async fn start(mode: Mode) -> TestServer {
@@ -200,11 +219,14 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
         }
         let reply: Vec<u8> = match command.as_str() {
             "CAPABILITY" => {
-                let extensions = if mailbox.lock().unwrap().without_move {
-                    ""
-                } else {
-                    " MOVE UIDPLUS"
-                };
+                let mailbox = mailbox.lock().unwrap();
+                let mut extensions = String::new();
+                if !mailbox.without_move {
+                    extensions.push_str(" MOVE UIDPLUS");
+                }
+                if !mailbox.without_idle {
+                    extensions.push_str(" IDLE");
+                }
                 format!("* CAPABILITY IMAP4rev1 SPECIAL-USE{extensions}\r\n{tag} OK done\r\n")
                     .into_bytes()
             }
@@ -255,6 +277,29 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
                 let name = arguments.trim_matches('"').to_owned();
                 mailbox.lock().unwrap().created.push(name);
                 format!("{tag} OK created\r\n").into_bytes()
+            }
+            // Until DONE; each wake-up reports the messages, as a server does for new mail.
+            "IDLE" => {
+                stream.write_all(b"+ idling\r\n").await?;
+                let wake = mailbox.lock().unwrap().idle_wake.clone();
+                loop {
+                    let mut done = String::new();
+                    let woken = tokio::select! {
+                        read = stream.read_line(&mut done) => {
+                            read?;
+                            false
+                        }
+                        () = wake.notified() => true,
+                    };
+                    if !woken {
+                        break;
+                    }
+                    let exists = mailbox.lock().unwrap().messages.len();
+                    stream
+                        .write_all(format!("* {exists} EXISTS\r\n").as_bytes())
+                        .await?;
+                }
+                format!("{tag} OK IDLE done\r\n").into_bytes()
             }
             "EXPUNGE" => {
                 mailbox.lock().unwrap().messages.retain(|m| !m.deleted);

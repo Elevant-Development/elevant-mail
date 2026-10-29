@@ -4,7 +4,7 @@ use elevant_mail_core::mail::settings::ImapSettings;
 use elevant_mail_core::model::Account;
 use elevant_mail_core::secrets::Secret;
 use elevant_mail_core::{Error, oauth};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::error::CommandError;
 use crate::state::AppState;
@@ -16,15 +16,19 @@ pub async fn detect_settings(email: String) -> Result<SuggestedSettings, Command
 }
 
 /// Logs in once to check the settings, then stores the account. The password goes straight
-/// into the system keyring.
+/// into the system keyring. From then on the app waits for the account's new mail.
 #[tauri::command]
 pub async fn add_account(
+    app: AppHandle,
     state: State<'_, AppState>,
     account: NewAccount,
     password: String,
 ) -> Result<Account, CommandError> {
     let password = Secret::new(password);
-    Ok(accounts::add_account(&state.db, state.secrets.as_ref(), account, password).await?)
+    let account =
+        accounts::add_account(&state.db, state.secrets.as_ref(), account, password).await?;
+    state.watchers.start(&app, &account.id);
+    Ok(account)
 }
 
 #[tauri::command]
@@ -54,26 +58,31 @@ pub async fn update_account(
 /// fails. Without a password the stored one is used.
 #[tauri::command]
 pub async fn change_login(
+    app: AppHandle,
     state: State<'_, AppState>,
     account_id: String,
     imap: ImapSettings,
     password: Option<String>,
 ) -> Result<(), CommandError> {
     let password = password.map(Secret::new);
-    Ok(accounts::change_login(
+    accounts::change_login(
         &state.db,
         state.secrets.as_ref(),
         &account_id,
         imap,
         password,
     )
-    .await?)
+    .await?;
+    // The waiting connection still uses the old login.
+    state.watchers.start(&app, &account_id);
+    Ok(())
 }
 
 /// A Microsoft account whose sign-in expired: Microsoft's sign-in in the browser again, for the
 /// account's own address, then the new tokens replace the old ones.
 #[tauri::command]
 pub async fn sign_in_again(
+    app: AppHandle,
     state: State<'_, AppState>,
     account_id: String,
 ) -> Result<(), CommandError> {
@@ -88,10 +97,9 @@ pub async fn sign_in_again(
         },
     )
     .await?;
-    Ok(
-        accounts::replace_oauth_tokens(&state.db, state.secrets.as_ref(), &account_id, tokens)
-            .await?,
-    )
+    accounts::replace_oauth_tokens(&state.db, state.secrets.as_ref(), &account_id, tokens).await?;
+    state.watchers.start(&app, &account_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -99,6 +107,7 @@ pub async fn remove_account(
     state: State<'_, AppState>,
     account_id: String,
 ) -> Result<(), CommandError> {
+    state.watchers.stop(&account_id);
     Ok(accounts::remove(
         &state.db,
         state.secrets.as_ref(),
@@ -110,6 +119,7 @@ pub async fn remove_account(
 /// and waits for it (until `cancel_sign_in`), then checks the login and stores the account.
 #[tauri::command]
 pub async fn add_microsoft_account(
+    app: AppHandle,
     state: State<'_, AppState>,
     account: NewAccount,
 ) -> Result<Account, CommandError> {
@@ -124,7 +134,10 @@ pub async fn add_microsoft_account(
         },
     )
     .await?;
-    Ok(accounts::add_oauth_account(&state.db, state.secrets.as_ref(), account, tokens).await?)
+    let account =
+        accounts::add_oauth_account(&state.db, state.secrets.as_ref(), account, tokens).await?;
+    state.watchers.start(&app, &account.id);
+    Ok(account)
 }
 
 #[tauri::command]

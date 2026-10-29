@@ -28,6 +28,7 @@ use crate::mail::imap::{
 };
 use crate::mail::parse::{ParsedMessage, parse_message, parse_preview};
 use crate::mail::settings::ImapSettings;
+use crate::model::Address;
 use crate::secrets::{SecretKind, SecretStore};
 use crate::{Error, Result};
 
@@ -60,13 +61,27 @@ pub struct SyncProgress {
     pub total: u32,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SyncReport {
     pub added: u32,
     pub updated: u32,
     pub removed: u32,
+    /// Unread mail that arrived since the folder's last sync, for notifications. Empty on the
+    /// first sync of a folder, which only fills the cache.
+    pub new_mail: Vec<NewMail>,
+}
+
+/// What a notification about a new message shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NewMail {
+    pub id: String,
+    pub account_id: String,
+    pub from: Address,
+    pub subject: Option<String>,
 }
 
 pub type ProgressFn<'a> = &'a (dyn Fn(SyncProgress) + Send + Sync);
@@ -247,6 +262,12 @@ async fn sync_folder_in(
     let cached = cached_flags(&db.conn(), &folder.id)?;
 
     let mut result = SyncReport::default();
+    // Mail above this arrived since the last sync; none on the first one.
+    let known_until = if mode == Mode::Newest {
+        cached.keys().next_back().copied()
+    } else {
+        None
+    };
     let to_fetch: Vec<u32> = match (mode, cached.keys().next(), cached.keys().next_back()) {
         (Mode::Newest, _, Some(&newest)) => server_uids.range(newest + 1..).copied().collect(),
         (Mode::Newest, _, None) => newest(&server_uids, None),
@@ -288,6 +309,10 @@ async fn sync_folder_in(
             result.added,
             total,
         );
+    }
+
+    if let Some(known_until) = known_until.filter(|_| result.added > 0) {
+        result.new_mail = new_mail(&db.conn(), &folder.id, known_until)?;
     }
 
     let unseen = with_timeout(COMMAND_TIMEOUT, session.uid_search("UNSEEN"))
@@ -620,6 +645,28 @@ fn remove_messages(conn: &Connection, folder_id: &str, uids: &[u32]) -> Result<u
     Ok(u32::try_from(removed).unwrap_or(u32::MAX))
 }
 
+fn new_mail(conn: &Connection, folder_id: &str, above_uid: u32) -> Result<Vec<NewMail>> {
+    let mut statement = conn.prepare(
+        "SELECT id, account_id, from_name, from_address, subject FROM messages
+         WHERE folder_id = ?1 AND uid > ?2 AND is_read = 0 AND leaving = 0
+         ORDER BY uid",
+    )?;
+    let mail = statement
+        .query_map(params![folder_id, above_uid], |row| {
+            Ok(NewMail {
+                id: row.get(0)?,
+                account_id: row.get(1)?,
+                from: Address {
+                    name: row.get(2)?,
+                    address: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                },
+                subject: row.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(mail)
+}
+
 fn cached_flags(conn: &Connection, folder_id: &str) -> Result<BTreeMap<u32, (bool, bool)>> {
     let mut statement =
         conn.prepare("SELECT uid, is_read, is_flagged FROM messages WHERE folder_id = ?1")?;
@@ -874,6 +921,8 @@ mod tests {
         let report = setup.sync().await;
 
         assert_eq!(report.added, 100);
+        // Filling the cache is no news.
+        assert!(report.new_mail.is_empty());
         assert_eq!(setup.cached_uids(), (21..=120).collect::<Vec<_>>());
         let messages = list_messages(&setup.db.conn(), UNIFIED_INBOX).unwrap();
         assert_eq!(messages[0].subject.as_deref(), Some("Message 120"));
@@ -928,14 +977,11 @@ mod tests {
 
         let report = setup.sync().await;
 
-        assert_eq!(
-            report,
-            SyncReport {
-                added: 1,
-                updated: 1,
-                removed: 1
-            }
-        );
+        assert_eq!((report.added, report.updated, report.removed), (1, 1, 1));
+        // What arrived is announced, for a notification.
+        assert_eq!(report.new_mail.len(), 1);
+        assert_eq!(report.new_mail[0].subject.as_deref(), Some("Message 6"));
+        assert_eq!(report.new_mail[0].from.address, "lena@example.org");
         assert_eq!(setup.cached_uids(), vec![1, 3, 4, 5, 6]);
         let flags = cached_flags(&setup.db.conn(), &setup.inbox_id).unwrap();
         assert_eq!(flags[&1], (true, true));

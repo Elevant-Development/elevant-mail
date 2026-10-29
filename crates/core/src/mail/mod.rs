@@ -2,6 +2,7 @@
 
 pub mod download;
 pub mod folders;
+pub mod idle;
 pub mod imap;
 pub mod parse;
 pub mod presets;

@@ -4,6 +4,7 @@
 import {
   Archive,
   ArrowLeft,
+  Bell,
   Check,
   ChevronRight,
   CircleAlert,
@@ -53,6 +54,7 @@ const icons = {
   alert: CircleAlert,
   archive: Archive,
   back: ArrowLeft,
+  bell: Bell,
   check: Check,
   chevron: ChevronRight,
   close: X,

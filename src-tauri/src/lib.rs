@@ -5,6 +5,7 @@ mod commands;
 mod error;
 mod protocol;
 mod state;
+mod watch;
 mod window;
 
 use tauri::Manager;
@@ -15,10 +16,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let state = state::AppState::init(app.handle())?;
             app.manage(state);
             window::create_main(app.handle())?;
+            let state = app.state::<state::AppState>();
+            for account in elevant_mail_core::accounts::list(&state.db.conn())? {
+                state.watchers.start(app.handle(), &account.id);
+            }
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)

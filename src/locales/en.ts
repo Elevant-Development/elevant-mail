@@ -69,6 +69,22 @@ export const en: Record<MessageKey, string> = {
   "settings.title": "Settings",
   "settings.accounts": "Accounts",
   "settings.general": "General",
+  "settings.notifications": "Notifications",
+  "settings.notifications.enabled": "Notify about new mail",
+  "settings.notifications.enabledHint":
+    "While Elevant Mail is not in front. New mail arrives at once where the server supports it, otherwise every five minutes.",
+  "settings.notifications.preview": "Show sender and subject",
+  "settings.notifications.previewHint":
+    "Off, the notification only names the account, for example when others can see your screen.",
+  "settings.notifications.try": "Try it",
+  "settings.notifications.denied":
+    "The system does not allow Elevant Mail to show notifications. Turn them on in the system settings.",
+  "notify.newMail.one": "New message",
+  "notify.newMail.other": "{count} new messages",
+  "notify.from": "From {names}",
+  "notify.fromMore": "From {names} and others",
+  "notify.in": "In {account}",
+  "notify.sample": "This is how new mail shows up.",
   "settings.noAccounts": "No account set up yet.",
   "settings.account.open": "Account settings",
   "settings.account.color": "Color",

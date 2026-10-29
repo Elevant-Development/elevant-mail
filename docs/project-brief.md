@@ -130,8 +130,13 @@ Sync rules (implemented in `crates/core/src/mail/sync.rs`):
   trash, sent, drafts and "All Mail" they say nothing.
 - Every sync of an account also refreshes its folder list (new, renamed and deleted folders).
 - Syncs run at start, for a new account (right after adding it), every 5 minutes and on
-  "refresh". Folders other than the inbox sync when opened (at most once a minute). IMAP IDLE
-  replaces polling in phase 3.
+  "refresh". Folders other than the inbox sync when opened (at most once a minute).
+- New mail arrives at once where the server offers IMAP IDLE (`crates/core/src/mail/idle.rs`,
+  `src-tauri/src/watch.rs`): per account one more connection waits read-only in the inbox,
+  renews IDLE every 25 minutes and reconnects after errors with growing pauses (30 seconds to
+  10 minutes). A change there makes the frontend sync the account (`inbox-changed`). The
+  connection starts with the app and a new account, restarts after a new login and stops when the
+  account is removed. Servers without IDLE stay with the 5-minute poll.
 - Only one operation per account runs at a time; further ones wait. Accounts do not block each
   other, and an error shows only on its own account.
 - Progress goes to the interface as the event `sync-progress` ("connecting…", "checking for new
@@ -410,8 +415,12 @@ can consent without an admin, paging in `list_messages` beyond 5,000 cached mess
   settings and password, which only change after a login with them worked, and "sign in again"
   for Microsoft accounts (same address only); removing; the appearance. Sync errors that the
   account settings fix get a button to them. — done
-- IMAP IDLE for the inbox, polling for other folders
-- Desktop notifications for new mail, optionally keep running in the tray
+- IMAP IDLE for the inbox, polling for other folders — done
+- Desktop notifications for new mail (`tauri-plugin-notification`) — done. Only for mail that
+  arrived since the last sync and is unread, only while the window is not in front; one message
+  by sender and subject, several by count and senders. Settings: on/off, and without sender and
+  subject (only the account). Keeping the app running in the tray after the window is closed
+  comes later.
 - Archive, delete, move, also for several messages at once — done. Local at once, the server
   after a 10-second undo window (`crates/core/src/moves.rs`): `UID MOVE`, without MOVE `UID COPY`
   plus `\Deleted` and `UID EXPUNGE` (plain `EXPUNGE` without UIDPLUS). Archiving goes to the
@@ -560,4 +569,7 @@ Phase 3:
 14. **Archive, delete, move:** with undo, several messages at once, `e` / `#` / `Del` / `v` / `z`
     — done
 
-Next: IMAP IDLE and desktop notifications.
+15. **New mail at once and notifications:** IMAP IDLE per account, desktop notifications with
+    their settings — done
+
+Next: threads (conversation view).

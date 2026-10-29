@@ -36,6 +36,7 @@ export type { Message } from "./bindings/Message";
 export type { MessageSummary } from "./bindings/MessageSummary";
 export type { MoveOutcome } from "./bindings/MoveOutcome";
 export type { NewAccount } from "./bindings/NewAccount";
+export type { NewMail } from "./bindings/NewMail";
 export type { Provider } from "./bindings/Provider";
 export type { Security } from "./bindings/Security";
 export type { SignInMethod } from "./bindings/SignInMethod";
@@ -120,6 +121,11 @@ export interface Backend {
   onMailLink(handler: (url: string) => void): Promise<() => void>;
   /** Progress of running syncs; returns a function that stops listening. */
   onSyncProgress(handler: (progress: SyncProgress) => void): Promise<() => void>;
+  /**
+   * The server reported a change in an account's inbox (IMAP IDLE), with the account id;
+   * returns a function that stops listening.
+   */
+  onInboxChanged(handler: (accountId: string) => void): Promise<() => void>;
 }
 
 const tauriBackend: Backend = {
@@ -155,6 +161,7 @@ const tauriBackend: Backend = {
   onMailLink: (handler) => listen<string>("mail-link", (event) => handler(event.payload)),
   onSyncProgress: (handler) =>
     listen<SyncProgress>("sync-progress", (event) => handler(event.payload)),
+  onInboxChanged: (handler) => listen<string>("inbox-changed", (event) => handler(event.payload)),
 };
 
 export const usesMockData = !isTauri();

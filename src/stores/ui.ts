@@ -18,7 +18,9 @@ export type Mode = "dark" | "light" | "system";
 export type Density = "comfortable" | "compact";
 /** A page of the settings window: an account (null: the first one), or the appearance. */
 export type SettingsPage =
-  { section: "accounts"; accountId: string | null } | { section: "appearance" };
+  | { section: "accounts"; accountId: string | null }
+  | { section: "appearance" }
+  | { section: "notifications" };
 
 interface UiState {
   mode: Mode;
@@ -29,6 +31,10 @@ interface UiState {
   density: Density;
   /** Read once at start by lib/i18n; changing it reloads the interface. */
   language: LanguageSetting;
+  /** A desktop notification for new mail while the window is not in front. */
+  notifications: boolean;
+  /** Sender and subject in it; off, it only names the account. */
+  notificationPreview: boolean;
   /** Folder id or UNIFIED_INBOX. */
   selectedMailboxId: string;
   /** The open message, and the fixed end of a Shift range. */
@@ -63,6 +69,8 @@ interface UiState {
   setFont: (fontId: FontId) => void;
   setDensity: (density: Density) => void;
   setLanguage: (language: LanguageSetting) => void;
+  setNotifications: (on: boolean) => void;
+  setNotificationPreview: (on: boolean) => void;
   selectMailbox: (mailboxId: string) => void;
   selectMessage: (messageId: string | null) => void;
   /** Ctrl+click: adds the message or takes it out again. */
@@ -94,6 +102,8 @@ export const useUiStore = create<UiState>()(
       fontId: defaultFontId,
       density: "comfortable",
       language: "system",
+      notifications: true,
+      notificationPreview: true,
       selectedMailboxId: UNIFIED_INBOX,
       selectedMessageId: null,
       selectedIds: [],
@@ -113,6 +123,8 @@ export const useUiStore = create<UiState>()(
       setStyle: (style) => set({ style }),
       setFont: (fontId) => set({ fontId }),
       setDensity: (density) => set({ density }),
+      setNotifications: (notifications) => set({ notifications }),
+      setNotificationPreview: (notificationPreview) => set({ notificationPreview }),
       setLanguage: (language) => {
         set({ language });
         // The texts are read once; a reload shows them in the new language.
@@ -209,6 +221,8 @@ export const useUiStore = create<UiState>()(
         fontId: state.fontId,
         density: state.density,
         language: state.language,
+        notifications: state.notifications,
+        notificationPreview: state.notificationPreview,
         collapsed: state.collapsed,
       }),
       // Version 1 stored the design comparison and other theme ids; version 2 font pairings and

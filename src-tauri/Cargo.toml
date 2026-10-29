@@ -23,6 +23,8 @@ serde.workspace = true
 tauri = { version = "2", features = [] }
 # Only the save dialog, called from Rust; the frontend gets no dialog permission.
 tauri-plugin-dialog = "2"
+# Desktop notifications for new mail, shown by the frontend.
+tauri-plugin-notification = "2"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
