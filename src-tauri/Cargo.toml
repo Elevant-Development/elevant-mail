@@ -1,0 +1,32 @@
+[package]
+name = "elevant-mail"
+version = "0.1.0"
+description = "A fast, private desktop mail client for Linux and Windows"
+license = "GPL-3.0-or-later"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[lib]
+# The binary is a thin wrapper around this library (Tauri's standard layout).
+name = "elevant_mail_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

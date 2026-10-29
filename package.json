@@ -1,0 +1,60 @@
+{
+  "name": "elevant-mail",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A fast, private desktop mail client for Linux and Windows",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "format": "prettier --write . && cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "format:check": "prettier --check . && cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "test": "vitest run",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm lint:rust && pnpm test"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@tanstack/react-query": "^5.105.0",
+    "@tauri-apps/api": "^2.12.4",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.5.0",
+    "lucide-react": "~1.61.0",
+    "radix-ui": "^1.8.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "shadcn": "^4.23.0",
+    "tw-animate-css": "^1.4.0",
+    "zustand": "^5.0.16"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.12.4",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

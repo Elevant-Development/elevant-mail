@@ -1,0 +1,67 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Elevant Mail",
+  "mainBinaryName": "elevant-mail",
+  "version": "0.1.0",
+  "identifier": "dev.elevant.mail",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Elevant Mail",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 480,
+        "minHeight": 400,
+        "theme": "Dark",
+        "backgroundColor": "#0f1013"
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data:",
+        "font-src": "'self' data:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
+      },
+      "devCsp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'unsafe-inline'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost ws://localhost:1420",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Fast, private mail client",
+    "longDescription": "A fast, private desktop mail client for several IMAP accounts with a unified inbox. No account, no cloud, no telemetry.",
+    "license": "GPL-3.0-or-later",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

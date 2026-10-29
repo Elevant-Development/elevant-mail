@@ -1,0 +1,27 @@
+import type { ReactNode } from "react";
+
+import { cn } from "@/lib/utils";
+
+interface EmptyStateProps {
+  icon: ReactNode;
+  title: string;
+  hint?: string;
+  className?: string;
+}
+
+export function EmptyState({ icon, title, hint, className }: EmptyStateProps) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center gap-2 p-8 text-center select-none",
+        className,
+      )}
+    >
+      <div className="mb-1 text-muted-foreground/50 [&_svg]:size-10 [&_svg]:stroke-[1.25]">
+        {icon}
+      </div>
+      <p className="font-medium text-foreground/80">{title}</p>
+      {hint && <p className="max-w-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
