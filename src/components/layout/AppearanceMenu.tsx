@@ -14,7 +14,7 @@ import {
 } from "@/design/themes";
 import { fonts } from "@/design/fonts";
 import { useResolvedMode } from "@/hooks/use-resolved-mode";
-import { t } from "@/lib/i18n";
+import { type LanguageSetting, languages, t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { type Density, type Mode, useUiStore } from "@/stores/ui";
 
@@ -104,6 +104,8 @@ export function AppearanceMenu() {
   const setFont = useUiStore((s) => s.setFont);
   const density = useUiStore((s) => s.density);
   const setDensity = useUiStore((s) => s.setDensity);
+  const languageSetting = useUiStore((s) => s.language);
+  const setLanguage = useUiStore((s) => s.setLanguage);
   const resolvedMode = useResolvedMode();
 
   return (
@@ -221,6 +223,19 @@ export function AppearanceMenu() {
           value={density}
           options={densities.map((d) => ({ value: d, label: t(`appearance.density.${d}`) }))}
           onChange={setDensity}
+        />
+        <Segmented<LanguageSetting>
+          label={t("appearance.language")}
+          value={languageSetting}
+          options={[
+            { value: "system", label: t("appearance.language.system") },
+            // Each language in its own name, so it can be found whatever is set now.
+            ...Object.entries(languages).map(([value, { name }]) => ({
+              value: value as LanguageSetting,
+              label: name,
+            })),
+          ]}
+          onChange={setLanguage}
         />
       </PopoverContent>
     </Popover>

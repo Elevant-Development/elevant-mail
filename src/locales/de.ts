@@ -100,7 +100,7 @@ export const de = {
   "error.hint.enableImapMicrosoft":
     "IMAP muss für dieses Postfach eingeschaltet sein: Microsoft 365 Admin Center → Benutzer → E-Mail → E-Mail-Apps verwalten.",
   "error.hint.signInWithMicrosoft":
-    "Die Anmeldung über Microsoft kommt mit einer der nächsten Versionen.",
+    "Füge das Konto stattdessen mit „Mit Microsoft anmelden“ hinzu.",
 
   "window.minimize": "Minimieren",
   "window.maximize": "Maximieren",
@@ -125,6 +125,8 @@ export const de = {
   "appearance.contrast.soft": "Weich",
   "appearance.contrast.clear": "Klar",
   "appearance.contrast.hard": "Hart",
+  "appearance.language": "Sprache",
+  "appearance.language.system": "System",
 
   "theme.coral": "Koralle",
   "theme.teal": "Türkis",

@@ -248,12 +248,17 @@ async fn wait_for_redirect(
     }
 }
 
+// Shown in the user's browser, which may not use the app's language: both languages.
 const PAGE_DONE: &str = "<!doctype html><meta charset=utf-8><title>Elevant Mail</title>\
-<body style=\"font-family:sans-serif;padding:3rem\"><h1>Anmeldung abgeschlossen</h1>\
-<p>Du kannst dieses Fenster schließen und zu Elevant Mail zurückkehren.</p>";
+<body style=\"font-family:sans-serif;padding:3rem\"><h1>Signed in</h1>\
+<p>You can close this window and return to Elevant Mail.</p>\
+<p lang=de>Anmeldung abgeschlossen. Du kannst dieses Fenster schließen und zu Elevant Mail \
+zurückkehren.</p>";
 const PAGE_FAILED: &str = "<!doctype html><meta charset=utf-8><title>Elevant Mail</title>\
-<body style=\"font-family:sans-serif;padding:3rem\"><h1>Anmeldung nicht abgeschlossen</h1>\
-<p>Elevant Mail zeigt, was passiert ist. Du kannst dieses Fenster schließen.</p>";
+<body style=\"font-family:sans-serif;padding:3rem\"><h1>Sign-in not completed</h1>\
+<p>Elevant Mail shows what happened. You can close this window.</p>\
+<p lang=de>Anmeldung nicht abgeschlossen. Elevant Mail zeigt, was passiert ist. Du kannst \
+dieses Fenster schließen.</p>";
 
 async fn read_request_target(stream: &mut TcpStream) -> Option<String> {
     let mut buffer = vec![0u8; 8192];

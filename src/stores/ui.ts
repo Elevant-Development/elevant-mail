@@ -11,6 +11,7 @@ import {
   type ThemeId,
 } from "@/design/themes";
 import { defaultFontId, type FontId } from "@/design/fonts";
+import type { LanguageSetting } from "@/lib/i18n";
 import { UNIFIED_INBOX } from "@/lib/tauri";
 
 export type Mode = "dark" | "light" | "system";
@@ -23,6 +24,8 @@ interface UiState {
   style: Style;
   fontId: FontId;
   density: Density;
+  /** Read once at start by lib/i18n; changing it reloads the interface. */
+  language: LanguageSetting;
   /** Folder id or UNIFIED_INBOX. */
   selectedMailboxId: string;
   selectedMessageId: string | null;
@@ -45,6 +48,7 @@ interface UiState {
   setStyle: (style: Style) => void;
   setFont: (fontId: FontId) => void;
   setDensity: (density: Density) => void;
+  setLanguage: (language: LanguageSetting) => void;
   selectMailbox: (mailboxId: string) => void;
   selectMessage: (messageId: string | null) => void;
   setSidebarOpen: (open: boolean) => void;
@@ -63,6 +67,7 @@ export const useUiStore = create<UiState>()(
       style: defaultStyle,
       fontId: defaultFontId,
       density: "comfortable",
+      language: "system",
       selectedMailboxId: UNIFIED_INBOX,
       selectedMessageId: null,
       sidebarOpen: false,
@@ -77,6 +82,11 @@ export const useUiStore = create<UiState>()(
       setStyle: (style) => set({ style }),
       setFont: (fontId) => set({ fontId }),
       setDensity: (density) => set({ density }),
+      setLanguage: (language) => {
+        set({ language });
+        // The texts are read once; a reload shows them in the new language.
+        window.location.reload();
+      },
       selectMailbox: (mailboxId) =>
         set({
           selectedMailboxId: mailboxId,
@@ -108,6 +118,7 @@ export const useUiStore = create<UiState>()(
         style: state.style,
         fontId: state.fontId,
         density: state.density,
+        language: state.language,
         collapsed: state.collapsed,
       }),
       // Version 1 stored the design comparison and other theme ids; version 2 font pairings and

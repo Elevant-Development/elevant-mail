@@ -7,6 +7,12 @@ const locale = "de-DE";
 const now = new Date(2026, 9, 28, 15, 0).getTime();
 
 describe("formatListDate", () => {
+  it("uses the 12-hour clock where it is usual", () => {
+    expect(formatListDate(new Date(2026, 9, 28, 9, 5).getTime(), now, "en-US")).toMatch(
+      /^9:05\sAM$/,
+    );
+  });
+
   it("shows the time for today", () => {
     expect(formatListDate(new Date(2026, 9, 28, 9, 5).getTime(), now, locale)).toBe("09:05");
   });

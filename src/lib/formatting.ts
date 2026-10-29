@@ -13,16 +13,20 @@ function capitalize(text: string): string {
 }
 
 /**
- * Short date for the message list: the time for today, "Gestern", the weekday within the last
+ * Short date for the message list: the time for today, "yesterday", the weekday within the last
  * week, day and month within the year, the full date otherwise.
  */
 export function formatListDate(timestamp: number, now: number, locale: string): string {
   const daysAgo = Math.round((startOfDay(now) - startOfDay(timestamp)) / DAY_MS);
 
   if (daysAgo <= 0) {
-    return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(
-      timestamp,
-    );
+    // "09:05" where the day has 24 hours, "9:05 AM" where it has twice 12.
+    const twelveHours = new Intl.DateTimeFormat(locale, { hour: "numeric" }).resolvedOptions()
+      .hour12;
+    return new Intl.DateTimeFormat(locale, {
+      hour: twelveHours ? "numeric" : "2-digit",
+      minute: "2-digit",
+    }).format(timestamp);
   }
   if (daysAgo === 1) {
     return capitalize(new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(-1, "day"));
