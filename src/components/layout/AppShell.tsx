@@ -3,8 +3,11 @@ import { useEffect } from "react";
 import { AccountDialog } from "@/components/accounts/AccountDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { WelcomeScreen } from "@/components/accounts/WelcomeScreen";
+import { DeleteForeverDialog } from "@/components/mail/DeleteForeverDialog";
 import { MessageList } from "@/components/mail/MessageList";
 import { MessageReader } from "@/components/mail/MessageReader";
+import { MoveDialog } from "@/components/mail/MoveDialog";
+import { UndoToast } from "@/components/mail/UndoToast";
 import { useMailKeyboard } from "@/hooks/use-mail-keyboard";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
@@ -74,6 +77,9 @@ export function AppShell() {
       )}
       <AccountDialog />
       <SettingsDialog />
+      <MoveDialog />
+      <DeleteForeverDialog />
+      <UndoToast />
     </div>
   );
 }

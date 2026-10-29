@@ -60,3 +60,19 @@ export function t(key: MessageKey, vars?: Record<string, string | number>): stri
     name in vars ? String(vars[name]) : placeholder,
   );
 }
+
+/** Keys that come as `.one` and `.other`, by their common start. */
+type CountedKey = MessageKey extends infer Key
+  ? Key extends `${infer Base}.one`
+    ? Base
+    : never
+  : never;
+
+/** `key.one` for exactly one, `key.other` otherwise; both get `{count}`. */
+export function tCount(
+  key: CountedKey,
+  count: number,
+  vars?: Record<string, string | number>,
+): string {
+  return t(`${key}.${count === 1 ? "one" : "other"}` as MessageKey, { count, ...vars });
+}

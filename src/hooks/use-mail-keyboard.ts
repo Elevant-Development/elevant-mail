@@ -23,50 +23,85 @@ interface MailKeyboardOptions {
 
 /**
  * Shortcuts of the mail view: j/k (and the arrow keys outside the reader) move through the list,
- * Enter opens the first mail or moves the focus into the reader, Escape goes back one level
- * (and finally clears a search), u toggles read, s the star, / jumps to the search field.
+ * with Shift they widen the selection; Ctrl+A selects the whole list. Enter opens the first mail
+ * or moves the focus into the reader, Escape goes back one level (and finally clears a search).
+ * On the selection: u toggles read, s the star, e archives, # and Delete delete, v moves; z takes
+ * the last archiving, deleting or moving back. / jumps to the search field.
  */
 export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
   const { data: messages = [] } = useVisibleMessages();
-  const { setRead, setFlagged } = useMessageActions();
+  const { setRead, setFlagged, archive, trash, undo } = useMessageActions();
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (!enabled || event.defaultPrevented) return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (!enabled || event.defaultPrevented || event.altKey) return;
     if (isTypingTarget(event.target) || hasOpenOverlay()) return;
 
     const target = event.target instanceof Element ? event.target : null;
     const inList = target?.closest(`[${LIST_ATTRIBUTE}]`) != null;
     const inReader = target?.closest(`[${READER_ATTRIBUTE}]`) != null;
-    const { selectedMessageId, selectMessage } = useUiStore.getState();
+    const ui = useUiStore.getState();
+    const { selectedMessageId, selectedIds, selectMessage } = ui;
+    const order = messages.map((m) => m.id);
+
+    if (event.ctrlKey || event.metaKey) {
+      // In the reader Ctrl+A selects the text, as everywhere.
+      if (event.key.toLowerCase() === "a" && !inReader) {
+        event.preventDefault();
+        ui.selectAll(order);
+      }
+      return;
+    }
 
     const move = (step: 1 | -1) => {
-      const next = adjacentMessageId(
-        messages.map((m) => m.id),
-        selectedMessageId,
-        step,
-      );
-      if (next) selectMessage(next);
       event.preventDefault();
+      // From the end that moved last; with Shift the open message stays the other end.
+      const next = adjacentMessageId(order, ui.selectionEnd ?? selectedMessageId, step);
+      if (!next) return;
+      if (event.shiftKey) ui.selectRange(order, next);
+      else selectMessage(next);
     };
 
-    const selected = messages.find((m) => m.id === selectedMessageId);
+    const selected = messages.filter((m) => selectedIds.includes(m.id));
+    const ids = selected.map((m) => m.id);
+    const onSelection = (action: () => unknown) => {
+      if (ids.length === 0) return;
+      event.preventDefault();
+      void action();
+    };
 
     switch (event.key) {
       case "/":
         event.preventDefault();
         return focusSearch();
       case "u":
-        if (!selected) return;
-        event.preventDefault();
-        return void setRead([selected.id], !selected.isRead);
+        return onSelection(() =>
+          setRead(
+            ids,
+            selected.some((m) => !m.isRead),
+          ),
+        );
       case "s":
-        if (!selected) return;
+        return onSelection(() =>
+          setFlagged(
+            ids,
+            selected.some((m) => !m.isFlagged),
+          ),
+        );
+      case "e":
+        return onSelection(() => archive(ids));
+      case "#":
+      case "Delete":
+        return onSelection(() => trash(ids));
+      case "v":
+        return onSelection(() => ui.openMoveDialog(ids));
+      case "z":
         event.preventDefault();
-        return void setFlagged([selected.id], !selected.isFlagged);
+        return void undo();
       case "j":
+      case "J":
         return move(1);
       case "k":
+      case "K":
         return move(-1);
       case "ArrowDown":
       case "ArrowUp":
@@ -92,7 +127,9 @@ export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
           return;
         }
         event.preventDefault();
-        if (isWide && inReader && focusListItem(selectedMessageId)) return;
+        if (selectedIds.length <= 1 && isWide && inReader && focusListItem(selectedMessageId)) {
+          return;
+        }
         selectMessage(null);
         return;
     }

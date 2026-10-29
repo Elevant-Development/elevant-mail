@@ -1,4 +1,4 @@
-import { Icon, type IconName } from "@/components/common/Icon";
+import { Icon } from "@/components/common/Icon";
 import { SidebarItem } from "@/components/layout/SidebarItem";
 import {
   DropdownMenu,
@@ -7,22 +7,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { buildFolderTree, type FolderNode, shownUnread, unreadBelow } from "@/lib/folders";
+import {
+  buildFolderTree,
+  type FolderNode,
+  roleIcons,
+  shownUnread,
+  unreadBelow,
+} from "@/lib/folders";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
-import type { Account, Folder, FolderRole } from "@/lib/tauri";
-
-const roleIcons: Record<FolderRole, IconName> = {
-  inbox: "inbox",
-  drafts: "drafts",
-  sent: "sent",
-  archive: "archive",
-  junk: "junk",
-  trash: "trash",
-  all: "archive",
-};
+import type { Account, Folder } from "@/lib/tauri";
 
 interface AccountListProps {
   accounts: Account[];

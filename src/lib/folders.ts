@@ -1,6 +1,19 @@
+import type { IconName } from "@/components/common/Icon";
+
 import { locale, t } from "./i18n";
 import type { Account, Folder, FolderRole } from "./tauri";
 import { UNIFIED_INBOX } from "./tauri";
+
+/** The icon of a special folder; other folders show a plain folder. */
+export const roleIcons: Record<FolderRole, IconName> = {
+  inbox: "inbox",
+  drafts: "drafts",
+  sent: "sent",
+  archive: "archive",
+  junk: "junk",
+  trash: "trash",
+  all: "archive",
+};
 
 const roleOrder: FolderRole[] = ["inbox", "drafts", "sent", "archive", "all", "junk", "trash"];
 

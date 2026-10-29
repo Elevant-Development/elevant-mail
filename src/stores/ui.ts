@@ -31,7 +31,16 @@ interface UiState {
   language: LanguageSetting;
   /** Folder id or UNIFIED_INBOX. */
   selectedMailboxId: string;
+  /** The open message, and the fixed end of a Shift range. */
   selectedMessageId: string | null;
+  /** All selected messages; just the open one unless Ctrl or Shift added more. */
+  selectedIds: string[];
+  /** The moving end of a Shift range (Shift+j/k, Shift+click). */
+  selectionEnd: string | null;
+  /** Messages the folder picker moves; null while it is closed. */
+  moveDialogIds: string[] | null;
+  /** Messages waiting for "delete for good?"; null while nothing asks. */
+  deleteForeverIds: string[] | null;
   /** Only used in the narrow layout, where the sidebar is an overlay. */
   sidebarOpen: boolean;
   accountDialogOpen: boolean;
@@ -56,6 +65,16 @@ interface UiState {
   setLanguage: (language: LanguageSetting) => void;
   selectMailbox: (mailboxId: string) => void;
   selectMessage: (messageId: string | null) => void;
+  /** Ctrl+click: adds the message or takes it out again. */
+  toggleSelected: (messageId: string) => void;
+  /** Shift+click and Shift+j/k: everything from the open message to `messageId`, in `order`. */
+  selectRange: (order: string[], messageId: string) => void;
+  selectAll: (messageIds: string[]) => void;
+  /** Several selected messages at once, e.g. after undo. */
+  setSelection: (messageIds: string[]) => void;
+  openMoveDialog: (messageIds: string[]) => void;
+  closeMoveDialog: () => void;
+  askDeleteForever: (messageIds: string[] | null) => void;
   setSidebarOpen: (open: boolean) => void;
   setAccountDialogOpen: (open: boolean) => void;
   openSettings: (page: SettingsPage) => void;
@@ -77,6 +96,10 @@ export const useUiStore = create<UiState>()(
       language: "system",
       selectedMailboxId: UNIFIED_INBOX,
       selectedMessageId: null,
+      selectedIds: [],
+      selectionEnd: null,
+      moveDialogIds: null,
+      deleteForeverIds: null,
       sidebarOpen: false,
       accountDialogOpen: false,
       settingsPage: null,
@@ -99,10 +122,67 @@ export const useUiStore = create<UiState>()(
         set({
           selectedMailboxId: mailboxId,
           selectedMessageId: null,
+          selectedIds: [],
+          selectionEnd: null,
           sidebarOpen: false,
           searchQuery: "",
         }),
-      selectMessage: (messageId) => set({ selectedMessageId: messageId }),
+      selectMessage: (messageId) =>
+        set({
+          selectedMessageId: messageId,
+          selectedIds: messageId === null ? [] : [messageId],
+          selectionEnd: messageId,
+        }),
+      toggleSelected: (messageId) =>
+        set((state) => {
+          if (!state.selectedIds.includes(messageId)) {
+            return {
+              selectedIds: [...state.selectedIds, messageId],
+              selectedMessageId: messageId,
+              selectionEnd: messageId,
+            };
+          }
+          const selectedIds = state.selectedIds.filter((id) => id !== messageId);
+          const open =
+            state.selectedMessageId === messageId
+              ? (selectedIds[selectedIds.length - 1] ?? null)
+              : state.selectedMessageId;
+          return { selectedIds, selectedMessageId: open, selectionEnd: open };
+        }),
+      selectRange: (order, messageId) =>
+        set((state) => {
+          const from = order.indexOf(state.selectedMessageId ?? messageId);
+          const to = order.indexOf(messageId);
+          if (from === -1 || to === -1) {
+            return {
+              selectedMessageId: messageId,
+              selectedIds: [messageId],
+              selectionEnd: messageId,
+            };
+          }
+          return {
+            selectedIds: order.slice(Math.min(from, to), Math.max(from, to) + 1),
+            selectionEnd: messageId,
+          };
+        }),
+      selectAll: (messageIds) =>
+        set((state) => ({
+          selectedIds: messageIds,
+          selectedMessageId:
+            state.selectedMessageId && messageIds.includes(state.selectedMessageId)
+              ? state.selectedMessageId
+              : (messageIds[0] ?? null),
+          selectionEnd: messageIds[messageIds.length - 1] ?? null,
+        })),
+      setSelection: (messageIds) =>
+        set({
+          selectedIds: messageIds,
+          selectedMessageId: messageIds[0] ?? null,
+          selectionEnd: messageIds[messageIds.length - 1] ?? null,
+        }),
+      openMoveDialog: (messageIds) => set({ moveDialogIds: messageIds }),
+      closeMoveDialog: () => set({ moveDialogIds: null }),
+      askDeleteForever: (messageIds) => set({ deleteForeverIds: messageIds }),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       setAccountDialogOpen: (open) => set({ accountDialogOpen: open, sidebarOpen: false }),
       openSettings: (page) => set({ settingsPage: page, sidebarOpen: false }),

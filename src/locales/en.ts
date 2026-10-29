@@ -213,6 +213,40 @@ export const en: Record<MessageKey, string> = {
   "reader.unflag": "Remove star",
   "reader.archive": "Archive",
   "reader.delete": "Delete",
+  "reader.deleteForever": "Delete for good",
+  "reader.move": "Move",
+
+  "selection.count": "{count} messages selected",
+  "selection.hint": "Ctrl-click adds single messages, Shift-click a range.",
+  "selection.clear": "Clear selection",
+  "selection.markRead": "Mark as read",
+  "selection.markUnread": "Mark as unread",
+  "selection.flag": "Star",
+  "selection.unflag": "Remove star",
+
+  "undo.action": "Undo",
+  "undo.archived.one": "Message archived",
+  "undo.archived.other": "{count} messages archived",
+  "undo.trashed.one": "Message moved to the trash",
+  "undo.trashed.other": "{count} messages moved to the trash",
+  "undo.moved.one": "Message moved to “{folder}”",
+  "undo.moved.other": "{count} messages moved to “{folder}”",
+  "undo.deleted.one": "Message deleted for good",
+  "undo.deleted.other": "{count} messages deleted for good",
+  "undo.tooLate": "This has reached the server already and cannot be taken back.",
+
+  "move.title": "Move to",
+  "move.search": "Find a folder",
+  "move.empty": "No matching folder",
+  "move.mixedAccounts":
+    "Messages from different accounts cannot be moved together. Select messages from one account.",
+
+  "deleteForever.title.one": "Delete this message for good?",
+  "deleteForever.title.other": "Delete {count} messages for good?",
+  "deleteForever.description.one":
+    "It is in the trash already, or the account has none. This cannot be undone, not even on the server.",
+  "deleteForever.description.other":
+    "They are in the trash already, or the account has none. This cannot be undone, not even on the server.",
   "reader.noBody": "This mail has no text.",
   "reader.error": "This mail could not be loaded",
   "reader.loadingBody": "Loading the content from the server…",

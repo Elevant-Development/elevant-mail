@@ -101,8 +101,9 @@ pub fn list_messages(conn: &Connection, mailbox_id: &str) -> Result<Vec<MessageS
     } else {
         "m.folder_id = ?1"
     };
+    // Mail on its way to another folder (moves::move_messages) no longer shows here.
     let sql = format!(
-        "SELECT {SUMMARY_COLUMNS} FROM messages m WHERE {filter}
+        "SELECT {SUMMARY_COLUMNS} FROM messages m WHERE {filter} AND m.leaving = 0
          ORDER BY coalesce(m.date_sent, m.date_received, m.fetched_at) DESC, m.uid DESC LIMIT {LIST_LIMIT}"
     );
     let messages = conn
@@ -133,7 +134,7 @@ pub fn search_messages(conn: &Connection, query: &str) -> Result<Vec<MessageSumm
            FROM messages_fts
            JOIN messages m ON m.seq = messages_fts.rowid
            JOIN folders f ON f.id = m.folder_id
-           WHERE messages_fts MATCH ?1
+           WHERE messages_fts MATCH ?1 AND m.leaving = 0
          ) m
          WHERE m.copy = 1
          ORDER BY coalesce(m.date_sent, m.date_received, m.fetched_at) DESC, m.uid DESC

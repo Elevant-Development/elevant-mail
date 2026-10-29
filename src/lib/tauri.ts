@@ -15,6 +15,7 @@ import type { Folder } from "./bindings/Folder";
 import type { ImapSettings } from "./bindings/ImapSettings";
 import type { Message } from "./bindings/Message";
 import type { MessageSummary } from "./bindings/MessageSummary";
+import type { MoveOutcome } from "./bindings/MoveOutcome";
 import type { NewAccount } from "./bindings/NewAccount";
 import type { SuggestedSettings } from "./bindings/SuggestedSettings";
 import type { SyncProgress } from "./bindings/SyncProgress";
@@ -33,6 +34,7 @@ export type { Hint } from "./bindings/Hint";
 export type { ImapSettings } from "./bindings/ImapSettings";
 export type { Message } from "./bindings/Message";
 export type { MessageSummary } from "./bindings/MessageSummary";
+export type { MoveOutcome } from "./bindings/MoveOutcome";
 export type { NewAccount } from "./bindings/NewAccount";
 export type { Provider } from "./bindings/Provider";
 export type { Security } from "./bindings/Security";
@@ -45,6 +47,9 @@ export type { SyncStage } from "./bindings/SyncStage";
 
 /** Mailbox id that shows the inboxes of all accounts together (same value in Rust). */
 export const UNIFIED_INBOX = "unified-inbox";
+
+/** How long a move can be undone before it goes to the server (`UNDO_WINDOW_MS` in Rust). */
+export const UNDO_WINDOW_MS = 10_000;
 
 /** Where the backend serves mail images (`mail-asset://`; on Windows `http://mail-asset.localhost`). */
 export const ASSET_SOURCES = "mail-asset: http://mail-asset.localhost";
@@ -94,6 +99,17 @@ export interface Backend {
   setFlagged(messageIds: string[], flagged: boolean): Promise<string[]>;
   /** Sends the account's queued changes to the server; returns how many arrived. */
   pushActions(accountId: string): Promise<number>;
+  /**
+   * Hidden from the lists at once; the server follows after {@link UNDO_WINDOW_MS}, until then
+   * {@link Backend.undoMoves} takes it back. Messages of other accounts are left alone.
+   */
+  moveMessages(messageIds: string[], folderId: string): Promise<MoveOutcome>;
+  /** Like a move; an account without an archive gets a folder named `folderName` first. */
+  archiveMessages(messageIds: string[], folderName: string): Promise<MoveOutcome>;
+  /** Into the trash; what is in the trash already (or has no trash) is deleted for good. */
+  deleteMessages(messageIds: string[]): Promise<MoveOutcome>;
+  /** Returns the messages that are back. */
+  undoMoves(messageIds: string[]): Promise<string[]>;
   /** Asks where to save (system dialog) and writes the file; false when cancelled. */
   saveAttachment(attachmentId: string): Promise<boolean>;
   /** Opens with the system's program; refused for files that could run code. */
@@ -128,6 +144,11 @@ const tauriBackend: Backend = {
   setRead: (messageIds, read) => invoke("set_read", { messageIds, read }),
   setFlagged: (messageIds, flagged) => invoke("set_flagged", { messageIds, flagged }),
   pushActions: (accountId) => invoke("push_actions", { accountId }),
+  moveMessages: (messageIds, folderId) => invoke("move_messages", { messageIds, folderId }),
+  archiveMessages: (messageIds, folderName) =>
+    invoke("archive_messages", { messageIds, folderName }),
+  deleteMessages: (messageIds) => invoke("delete_messages", { messageIds }),
+  undoMoves: (messageIds) => invoke("undo_moves", { messageIds }),
   saveAttachment: (attachmentId) => invoke("save_attachment", { attachmentId }),
   openAttachment: (attachmentId) => invoke("open_attachment", { attachmentId }),
   openLink: (url) => invoke("open_link", { url }),

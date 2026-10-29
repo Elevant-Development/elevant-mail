@@ -216,6 +216,41 @@ export const de = {
   "reader.unflag": "Stern entfernen",
   "reader.archive": "Archivieren",
   "reader.delete": "Löschen",
+  "reader.deleteForever": "Endgültig löschen",
+  "reader.move": "Verschieben",
+
+  "selection.count": "{count} Mails ausgewählt",
+  "selection.hint":
+    "Mit Strg-Klick wählst du einzelne Mails dazu, mit Umschalt-Klick einen Bereich.",
+  "selection.clear": "Auswahl aufheben",
+  "selection.markRead": "Als gelesen markieren",
+  "selection.markUnread": "Als ungelesen markieren",
+  "selection.flag": "Markieren",
+  "selection.unflag": "Markierung entfernen",
+
+  "undo.action": "Rückgängig",
+  "undo.archived.one": "Mail archiviert",
+  "undo.archived.other": "{count} Mails archiviert",
+  "undo.trashed.one": "Mail in den Papierkorb gelegt",
+  "undo.trashed.other": "{count} Mails in den Papierkorb gelegt",
+  "undo.moved.one": "Mail nach „{folder}“ verschoben",
+  "undo.moved.other": "{count} Mails nach „{folder}“ verschoben",
+  "undo.deleted.one": "Mail endgültig gelöscht",
+  "undo.deleted.other": "{count} Mails endgültig gelöscht",
+  "undo.tooLate": "Das ist schon auf dem Server und lässt sich nicht mehr zurücknehmen.",
+
+  "move.title": "Verschieben nach",
+  "move.search": "Ordner suchen",
+  "move.empty": "Kein passender Ordner",
+  "move.mixedAccounts":
+    "Mails aus verschiedenen Konten lassen sich nicht zusammen verschieben. Wähle Mails aus einem Konto.",
+
+  "deleteForever.title.one": "Mail endgültig löschen?",
+  "deleteForever.title.other": "{count} Mails endgültig löschen?",
+  "deleteForever.description.one":
+    "Sie liegt schon im Papierkorb, oder das Konto hat keinen. Das lässt sich nicht rückgängig machen, auch nicht auf dem Server.",
+  "deleteForever.description.other":
+    "Sie liegen schon im Papierkorb, oder das Konto hat keinen. Das lässt sich nicht rückgängig machen, auch nicht auf dem Server.",
   "reader.noBody": "Diese Mail hat keinen Textinhalt.",
   "reader.error": "Diese Mail konnte nicht geladen werden",
   "reader.loadingBody": "Inhalt wird vom Server geladen …",

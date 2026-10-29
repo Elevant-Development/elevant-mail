@@ -1,4 +1,5 @@
-//! A tiny IMAP server for tests: greeting, STARTTLS, LOGIN, LIST, EXAMINE, UID SEARCH, UID FETCH
+//! A tiny IMAP server for tests: greeting, STARTTLS, LOGIN, LIST, CREATE, EXAMINE, UID SEARCH,
+//! UID FETCH, UID STORE, UID MOVE and COPY, EXPUNGE
 //! and LOGOUT on one INBOX, with a throwaway certificate for "localhost". Tests change the
 //! mailbox between syncs and can read the commands the client sent.
 
@@ -29,6 +30,7 @@ pub struct TestMessage {
     pub uid: u32,
     pub seen: bool,
     pub flagged: bool,
+    pub deleted: bool,
     pub raw: Vec<u8>,
 }
 
@@ -44,6 +46,7 @@ impl TestMessage {
             uid,
             seen: false,
             flagged: false,
+            deleted: false,
             raw: raw.into_bytes(),
         }
     }
@@ -57,6 +60,12 @@ pub struct Mailbox {
     pub commands: Vec<String>,
     /// Answer STORE with NO, like a server that does not allow the change.
     pub refuse_store: bool,
+    /// Answer MOVE and COPY with NO.
+    pub refuse_move: bool,
+    /// An older server: neither MOVE nor UIDPLUS.
+    pub without_move: bool,
+    /// Folders made with CREATE; LIST shows them. Messages moved there are simply gone.
+    pub created: Vec<String>,
 }
 
 impl Mailbox {
@@ -66,6 +75,9 @@ impl Mailbox {
             messages: (1..=count).map(TestMessage::new).collect(),
             commands: Vec::new(),
             refuse_store: false,
+            refuse_move: false,
+            without_move: false,
+            created: Vec::new(),
         }
     }
 }
@@ -188,7 +200,13 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
         }
         let reply: Vec<u8> = match command.as_str() {
             "CAPABILITY" => {
-                format!("* CAPABILITY IMAP4rev1 SPECIAL-USE\r\n{tag} OK done\r\n").into_bytes()
+                let extensions = if mailbox.lock().unwrap().without_move {
+                    ""
+                } else {
+                    " MOVE UIDPLUS"
+                };
+                format!("* CAPABILITY IMAP4rev1 SPECIAL-USE{extensions}\r\n{tag} OK done\r\n")
+                    .into_bytes()
             }
             "LOGIN" if arguments.contains(&format!("\"{PASSWORD}\"")) => {
                 format!("{tag} OK logged in\r\n").into_bytes()
@@ -216,14 +234,32 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
                     format!("{tag} NO AUTHENTICATE failed\r\n").into_bytes()
                 }
             }
-            "LIST" => format!(
-                "* LIST (\\HasNoChildren) \"/\" INBOX\r\n\
-                 * LIST (\\HasNoChildren \\Sent) \"/\" Sent\r\n\
-                 * LIST (\\HasNoChildren) \"/\" \"Entw&APw-rfe\"\r\n\
-                 * LIST (\\Noselect \\HasChildren) \"/\" Shared\r\n\
-                 {tag} OK done\r\n"
-            )
-            .into_bytes(),
+            "LIST" => {
+                let created: String = mailbox
+                    .lock()
+                    .unwrap()
+                    .created
+                    .iter()
+                    .map(|name| format!("* LIST (\\HasNoChildren) \"/\" \"{name}\"\r\n"))
+                    .collect();
+                format!(
+                    "* LIST (\\HasNoChildren) \"/\" INBOX\r\n\
+                     * LIST (\\HasNoChildren \\Sent) \"/\" Sent\r\n\
+                     * LIST (\\HasNoChildren) \"/\" \"Entw&APw-rfe\"\r\n\
+                     * LIST (\\Noselect \\HasChildren) \"/\" Shared\r\n\
+                     {created}{tag} OK done\r\n"
+                )
+                .into_bytes()
+            }
+            "CREATE" => {
+                let name = arguments.trim_matches('"').to_owned();
+                mailbox.lock().unwrap().created.push(name);
+                format!("{tag} OK created\r\n").into_bytes()
+            }
+            "EXPUNGE" => {
+                mailbox.lock().unwrap().messages.retain(|m| !m.deleted);
+                format!("{tag} OK expunged\r\n").into_bytes()
+            }
             "EXAMINE" | "SELECT" => {
                 let access = if command == "SELECT" {
                     "READ-WRITE"
@@ -366,8 +402,29 @@ fn uid_command(tag: &str, arguments: &str, mailbox: &mut Mailbox) -> Vec<u8> {
                 if change.contains("\\FLAGGED") {
                     message.flagged = add;
                 }
+                if change.contains("\\DELETED") {
+                    message.deleted = add;
+                }
             }
             format!("{tag} OK done\r\n").into_bytes()
+        }
+        "MOVE" | "COPY" if mailbox.refuse_move => format!("{tag} NO not allowed\r\n").into_bytes(),
+        "MOVE" if mailbox.without_move => format!("{tag} BAD unknown UID command\r\n").into_bytes(),
+        "MOVE" => {
+            let set = parts.next().unwrap_or_default().to_owned();
+            mailbox.messages.retain(|m| !in_set(&set, m.uid));
+            format!("{tag} OK moved\r\n").into_bytes()
+        }
+        "COPY" => format!("{tag} OK copied\r\n").into_bytes(),
+        "EXPUNGE" if mailbox.without_move => {
+            format!("{tag} BAD unknown UID command\r\n").into_bytes()
+        }
+        "EXPUNGE" => {
+            let set = parts.next().unwrap_or_default().to_owned();
+            mailbox
+                .messages
+                .retain(|m| !(m.deleted && in_set(&set, m.uid)));
+            format!("{tag} OK expunged\r\n").into_bytes()
         }
         _ => format!("{tag} BAD unknown UID command\r\n").into_bytes(),
     }

@@ -13,6 +13,7 @@ import type {
   FolderRole,
   Message,
   MessageSummary,
+  MoveOutcome,
   SuggestedSettings,
 } from "./tauri";
 import { language, locale } from "./i18n";
@@ -581,6 +582,51 @@ function setMockFlag(messageIds: string[], flag: "isRead" | "isFlagged", value: 
   return [...accountIds];
 }
 
+/** Where moved sample mail came from, for undo; sample mail deleted for good. */
+const movedFrom = new Map<string, string>();
+const deletedForGood = new Set<string>();
+
+const isListed = (message: Message) => !deletedForGood.has(message.id);
+
+/** Role folders count their sample mail; the plain folders keep their made-up numbers. */
+function recount() {
+  folders = folders.map((f) => {
+    if (!f.role) return f;
+    const inFolder = messages.filter((m) => m.folderId === f.id && isListed(m));
+    return {
+      ...f,
+      unreadCount: inFolder.filter((m) => !m.isRead).length,
+      totalCount: inFolder.length,
+    };
+  });
+}
+
+/** Sample mail moves at once; `target` says where to, null for deleting it for good. */
+function mockMove(
+  messageIds: string[],
+  target: (message: Message) => string | null | undefined,
+): MoveOutcome {
+  const outcome: MoveOutcome = { moved: [], deleted: [], accounts: [] };
+  for (const id of messageIds) {
+    const index = messages.findIndex((m) => m.id === id);
+    const message = messages[index];
+    if (!message || !isListed(message)) continue;
+    const to = target(message);
+    if (to === undefined || to === message.folderId) continue;
+    if (to === null) {
+      deletedForGood.add(id);
+      outcome.deleted.push(id);
+    } else {
+      movedFrom.set(id, message.folderId);
+      messages[index] = { ...message, folderId: to };
+      outcome.moved.push(id);
+    }
+    if (!outcome.accounts.includes(message.accountId)) outcome.accounts.push(message.accountId);
+  }
+  recount();
+  return outcome;
+}
+
 let cancelMockSignIn: () => void = () => undefined;
 
 /** Pretends the user signs in within two seconds; cancelSignIn ends the wait. */
@@ -686,10 +732,11 @@ export const mockBackend: Backend = {
   },
   listFolders: async () => folders,
   listMessages: async (mailboxId) => {
-    const inMailbox =
+    const inMailbox = (
       mailboxId === UNIFIED_INBOX
         ? messages.filter((m) => m.folderId.endsWith(":inbox"))
-        : messages.filter((m) => m.folderId === mailboxId);
+        : messages.filter((m) => m.folderId === mailboxId)
+    ).filter(isListed);
     return inMailbox.map(toSummary).sort((a, b) => b.dateSent - a.dateSent);
   },
   getMessage: async (messageId, remoteImages) => {
@@ -706,6 +753,7 @@ export const mockBackend: Backend = {
     const words = query.toLocaleLowerCase(locale).split(/\s+/).filter(Boolean);
     if (words.length === 0) return [];
     return messages
+      .filter(isListed)
       .filter((m) => {
         const text = [m.subject, m.from.name, m.from.address, m.bodyText]
           .join(" ")
@@ -719,6 +767,29 @@ export const mockBackend: Backend = {
   setRead: async (messageIds, read) => setMockFlag(messageIds, "isRead", read),
   setFlagged: async (messageIds, flagged) => setMockFlag(messageIds, "isFlagged", flagged),
   pushActions: async () => 0,
+  moveMessages: async (messageIds, folderId) => {
+    const accountId = folders.find((f) => f.id === folderId)?.accountId;
+    return mockMove(messageIds, (m) => (m.accountId === accountId ? folderId : undefined));
+  },
+  archiveMessages: async (messageIds) =>
+    mockMove(messageIds, (m) => folderId(m.accountId, "archive")),
+  deleteMessages: async (messageIds) =>
+    mockMove(messageIds, (m) =>
+      m.folderId === folderId(m.accountId, "trash") ? null : folderId(m.accountId, "trash"),
+    ),
+  undoMoves: async (messageIds) => {
+    const restored = messageIds.filter((id) => {
+      const from = movedFrom.get(id);
+      const index = messages.findIndex((m) => m.id === id);
+      const message = messages[index];
+      if (!from || !message) return false;
+      messages[index] = { ...message, folderId: from };
+      movedFrom.delete(id);
+      return true;
+    });
+    recount();
+    return restored;
+  },
   saveAttachment: async (attachmentId) => {
     await wait(500);
     console.info("save attachment", attachmentId);

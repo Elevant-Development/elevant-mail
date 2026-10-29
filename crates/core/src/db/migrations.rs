@@ -9,6 +9,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0001_initial.sql"),
     include_str!("migrations/0002_mail_html.sql"),
     include_str!("migrations/0003_attachments.sql"),
+    include_str!("migrations/0004_moves.sql"),
 ];
 
 /// Schema version after all migrations of this build have run.

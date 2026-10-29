@@ -631,6 +631,24 @@ fn cached_flags(conn: &Connection, folder_id: &str) -> Result<BTreeMap<u32, (boo
     Ok(flags)
 }
 
+/// Brings a folder that has been synced before up to date within an open session, e.g. once mail
+/// was moved there. A folder never opened is left to its first sync, which fetches the newest
+/// mail and with it what just arrived.
+pub(crate) async fn refresh_folder_in(
+    db: &Database,
+    session: &mut ImapSession,
+    folder_id: &str,
+) -> Result<()> {
+    let Some(folder) = folder_state(&db.conn(), folder_id)? else {
+        return Ok(());
+    };
+    if folder.uid_validity.is_none() {
+        return Ok(());
+    }
+    sync_folder_in(db, session, &folder, Mode::Newest, &|_| {}).await?;
+    Ok(())
+}
+
 fn folder_state(conn: &Connection, folder_id: &str) -> Result<Option<FolderState>> {
     Ok(conn
         .query_row(
@@ -1125,6 +1143,193 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n"
         assert_eq!(setup.cached_state(1), (true, false));
         assert_eq!(setup.server_state(1), (true, false));
         assert_eq!(setup.queued(), 0);
+    }
+
+    impl Setup {
+        /// An archive folder next to the inbox, as SPECIAL-USE would report it.
+        fn add_archive(&self) -> String {
+            self.db
+                .conn()
+                .execute(
+                    "INSERT INTO folders (id, account_id, path, name, role)
+                     VALUES ('archive', ?1, 'Archive', 'Archive', 'archive')",
+                    [&self.account_id],
+                )
+                .unwrap();
+            "archive".into()
+        }
+
+        async fn push(&self) -> Result<u32> {
+            crate::mail::push::push_with_connector(
+                &self.db,
+                &self.secrets,
+                &self.account_id,
+                &self.server.connector,
+            )
+            .await
+        }
+
+        /// As if the undo window had passed.
+        fn make_due(&self) {
+            self.db
+                .conn()
+                .execute("UPDATE pending_actions SET due_at = 0", [])
+                .unwrap();
+        }
+
+        fn server_uids(&self) -> Vec<u32> {
+            let mailbox = self.server.mailbox.lock().unwrap();
+            mailbox.messages.iter().map(|m| m.uid).collect()
+        }
+
+        /// Cached and listed: a message on its way out is cached but not listed.
+        fn listed_uids(&self) -> Vec<u32> {
+            let listed: Vec<String> = list_messages(&self.db.conn(), &self.inbox_id)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.id)
+                .collect();
+            self.cached_uids()
+                .into_iter()
+                .filter(|uid| listed.contains(&self.id_of(*uid)))
+                .collect()
+        }
+
+        fn commands(&self) -> Vec<String> {
+            self.server.mailbox.lock().unwrap().commands.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_move_waits_for_the_undo_window_then_moves_on_the_server() {
+        let setup = setup(3).await;
+        setup.sync().await;
+        let archive = setup.add_archive();
+        crate::moves::move_messages(&setup.db, &[setup.id_of(1)], &archive).unwrap();
+        assert_eq!(setup.listed_uids(), [2, 3]);
+
+        // Not due yet: still on the server, still undoable.
+        assert_eq!(setup.push().await.unwrap(), 0);
+        assert_eq!(setup.server_uids(), [1, 2, 3]);
+
+        setup.make_due();
+        assert_eq!(setup.push().await.unwrap(), 1);
+        assert_eq!(setup.server_uids(), [2, 3]);
+        assert!(
+            setup
+                .commands()
+                .iter()
+                .any(|c| c == "UID MOVE 1 \"Archive\"")
+        );
+        assert_eq!(setup.cached_uids(), [2, 3]);
+        assert_eq!(setup.queued(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_target_folder_is_fetched_once_the_mail_is_there() {
+        let setup = setup(2).await;
+        setup.sync().await;
+        let archive = setup.add_archive();
+        // Opened before: the move brings it up to date at once.
+        setup
+            .db
+            .conn()
+            .execute(
+                "UPDATE folders SET uid_validity = 1 WHERE id = ?1",
+                [&archive],
+            )
+            .unwrap();
+        crate::moves::move_messages(&setup.db, &[setup.id_of(1)], &archive).unwrap();
+        setup.make_due();
+
+        setup.push().await.unwrap();
+
+        let commands = setup.commands();
+        let moved = commands.iter().position(|c| c == "UID MOVE 1 \"Archive\"");
+        let fetched = commands.iter().position(|c| c == "EXAMINE \"Archive\"");
+        assert!(moved.is_some() && fetched > moved, "{commands:?}");
+    }
+
+    #[tokio::test]
+    async fn without_move_it_copies_and_expunges() {
+        let setup = setup(2).await;
+        setup.server.mailbox.lock().unwrap().without_move = true;
+        setup.sync().await;
+        let archive = setup.add_archive();
+        crate::moves::move_messages(&setup.db, &[setup.id_of(2)], &archive).unwrap();
+        setup.make_due();
+
+        assert_eq!(setup.push().await.unwrap(), 1);
+
+        assert_eq!(setup.server_uids(), [1]);
+        let commands = setup.commands();
+        for expected in [
+            "UID COPY 2 \"Archive\"",
+            "UID STORE 2 +FLAGS.SILENT (\\Deleted)",
+            "EXPUNGE ",
+        ] {
+            assert!(
+                commands.iter().any(|c| c == expected),
+                "{expected}: {commands:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_for_good_goes_out_at_once() {
+        let setup = setup(2).await;
+        setup.sync().await;
+        // This account has no trash: deleting is for good.
+        let outcome = crate::moves::delete_messages(&setup.db, &[setup.id_of(2)]).unwrap();
+        assert_eq!(outcome.deleted.len(), 1);
+
+        assert_eq!(setup.push().await.unwrap(), 1);
+
+        assert_eq!(setup.server_uids(), [1]);
+        assert!(setup.commands().iter().any(|c| c == "UID EXPUNGE 2"));
+        assert_eq!(setup.cached_uids(), [1]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_move_shows_the_message_again() {
+        let setup = setup(2).await;
+        setup.server.mailbox.lock().unwrap().refuse_move = true;
+        setup.sync().await;
+        let archive = setup.add_archive();
+        crate::moves::move_messages(&setup.db, &[setup.id_of(1)], &archive).unwrap();
+        setup.make_due();
+
+        assert!(matches!(setup.push().await, Err(Error::ActionRefused)));
+
+        assert_eq!(setup.listed_uids(), [1, 2]);
+        assert_eq!(setup.server_uids(), [1, 2]);
+        assert_eq!(setup.queued(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_account_without_archive_gets_one() {
+        let setup = setup(2).await;
+        setup.sync().await;
+        let connector = setup.server.connector.clone();
+
+        let outcome = crate::moves::archive_with(
+            &setup.db,
+            &setup.secrets,
+            &[setup.id_of(1)],
+            "Archiv",
+            || Ok(connector),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.moved, [setup.id_of(1)]);
+        assert!(setup.commands().iter().any(|c| c == "CREATE \"Archiv\""));
+        let archive = list_folders(&setup.db.conn())
+            .unwrap()
+            .into_iter()
+            .find(|folder| folder.role == Some(FolderRole::Archive))
+            .unwrap();
+        assert_eq!(archive.path, "Archiv");
     }
 
     #[tokio::test]

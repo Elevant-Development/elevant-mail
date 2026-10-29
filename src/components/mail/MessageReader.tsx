@@ -10,8 +10,10 @@ import { describeError } from "@/lib/errors";
 import { displayName, formatFullDate } from "@/lib/formatting";
 import { locale, t } from "@/lib/i18n";
 import { isDeceptiveLink } from "@/lib/links";
+import { canArchive, deletesForGood } from "@/lib/moves";
 import { type Address, api } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+import { useFolders } from "@/queries/folders";
 import { useFullBody, useMessage } from "@/queries/messages";
 import { useUiStore } from "@/stores/ui";
 
@@ -20,6 +22,7 @@ import { EmptyState } from "./EmptyState";
 import { LinkAddress } from "./LinkAddress";
 import { type DeceptiveLink, LinkWarningDialog } from "./LinkWarningDialog";
 import { type MailLook, SafeHtmlMail } from "./SafeHtmlMail";
+import { SelectionPanel } from "./SelectionPanel";
 
 interface MessageReaderProps {
   className?: string;
@@ -96,17 +99,20 @@ function RemoteImagesBar({ count, onLoad }: { count: number; onLoad: () => void 
  */
 export function MessageReader({ className, onBack }: MessageReaderProps) {
   const selectedMessageId = useUiStore((s) => s.selectedMessageId);
+  const several = useUiStore((s) => s.selectedIds.length > 1);
+  const openMoveDialog = useUiStore((s) => s.openMoveDialog);
   const { data: message, isPending, isError } = useMessage(selectedMessageId);
+  const { data: folders = [] } = useFolders();
   const fullBody = useFullBody(message);
   const imagesAllowed = useUiStore((s) =>
     selectedMessageId ? (s.remoteImagesAllowed[selectedMessageId] ?? false) : false,
   );
   const allowRemoteImages = useUiStore((s) => s.allowRemoteImages);
-  const { setRead, setFlagged } = useMessageActions();
+  const { setRead, setFlagged, archive, trash } = useMessageActions();
 
   // Opening marks as read after a moment, so moving through the list with j/k does not. Once
   // per opening: marking it unread again (u) keeps it unread.
-  const unreadId = message && !message.isRead ? message.id : null;
+  const unreadId = message && !message.isRead && !several ? message.id : null;
   const autoMarked = useRef<string | null>(null);
   const markRead = useEffectEvent((messageId: string) => {
     autoMarked.current = messageId;
@@ -147,6 +153,8 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
     if (text !== null && isDeceptiveLink(url, text)) setDeceptiveLink({ url, text });
     else openLink(url);
   };
+
+  if (several) return <SelectionPanel className={className} onBack={onBack} />;
 
   if (!selectedMessageId) {
     return (
@@ -265,8 +273,24 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
               }
               onClick={() => void setFlagged([message.id], !message.isFlagged)}
             />
-            <IconButton label={t("reader.archive")} icon={<Icon name="archive" />} disabled />
-            <IconButton label={t("reader.delete")} icon={<Icon name="trash" />} disabled />
+            <IconButton
+              label={t("reader.move")}
+              icon={<Icon name="move" />}
+              onClick={() => openMoveDialog([message.id])}
+            />
+            <IconButton
+              label={t("reader.archive")}
+              icon={<Icon name="archive" />}
+              disabled={!canArchive(message, folders)}
+              onClick={() => void archive([message.id])}
+            />
+            <IconButton
+              label={
+                deletesForGood(message, folders) ? t("reader.deleteForever") : t("reader.delete")
+              }
+              icon={<Icon name="trash" />}
+              onClick={() => void trash([message.id])}
+            />
           </div>
         )}
       </div>

@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { type ReactNode, useEffect, useEffectEvent, useRef } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useEffectEvent, useRef } from "react";
 
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
@@ -62,8 +62,12 @@ interface MessageRowsProps {
 
 /** Only the rows in view are rendered, so a folder with thousands of mails scrolls smoothly. */
 function MessageRows({ messages, now, accountColor, footer }: MessageRowsProps) {
-  const selectedMessageId = useUiStore((s) => s.selectedMessageId);
+  const selectedIds = useUiStore((s) => s.selectedIds);
+  // The end that moves with Shift+j/k; otherwise the open message.
+  const focusedId = useUiStore((s) => s.selectionEnd ?? s.selectedMessageId);
   const selectMessage = useUiStore((s) => s.selectMessage);
+  const toggleSelected = useUiStore((s) => s.toggleSelected);
+  const selectRange = useUiStore((s) => s.selectRange);
   const compact = useUiStore((s) => s.density === "compact");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -86,17 +90,28 @@ function MessageRows({ messages, now, accountColor, footer }: MessageRowsProps) 
 
   // A selection made with the keyboard may be out of view, and the focus follows it.
   const revealSelection = useEffectEvent(() => {
-    if (selectedMessageId === null) return;
-    const index = messages.findIndex((m) => m.id === selectedMessageId);
+    if (focusedId === null) return;
+    const index = messages.findIndex((m) => m.id === focusedId);
     if (index === -1) return;
     virtualizer.scrollToIndex(index, { align: "auto" });
     if (!scrollRef.current?.contains(document.activeElement)) return;
-    const frame = requestAnimationFrame(() =>
-      focusListItem(selectedMessageId, { preventScroll: true }),
-    );
+    const frame = requestAnimationFrame(() => focusListItem(focusedId, { preventScroll: true }));
     return () => cancelAnimationFrame(frame);
   });
-  useEffect(() => revealSelection(), [selectedMessageId]);
+  useEffect(() => revealSelection(), [focusedId]);
+
+  const select = (messageId: string, event: MouseEvent) => {
+    if (event.shiftKey) {
+      selectRange(
+        messages.map((m) => m.id),
+        messageId,
+      );
+    } else if (event.ctrlKey || event.metaKey) {
+      toggleSelected(messageId);
+    } else {
+      selectMessage(messageId);
+    }
+  };
 
   return (
     <div
@@ -121,10 +136,10 @@ function MessageRows({ messages, now, accountColor, footer }: MessageRowsProps) 
             >
               <MessageListItem
                 message={message}
-                selected={message.id === selectedMessageId}
+                selected={selectedIds.includes(message.id)}
                 now={now}
                 accountColor={accountColor(message.accountId)}
-                onSelect={() => selectMessage(message.id)}
+                onSelect={(event) => select(message.id, event)}
               />
             </li>
           );

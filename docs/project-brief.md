@@ -99,7 +99,7 @@ It follows that:
 
 - The app starts without a network and shows the cache.
 - Switching folders and the unified inbox are database queries, no waiting for the network.
-- Actions (read, flagged, later moving) take effect locally at once and go into a queue
+- Actions (read, flagged, archiving, deleting, moving) take effect locally at once and go into a queue
   (`pending_actions`) that is sent to the server (`crates/core/src/actions.rs`,
   `mail/push.rs`). Per message and flag only the latest wish counts. The queue is sent right after
   the action and before every sync, so changes made offline go out with the next connection; for
@@ -209,9 +209,9 @@ it does not understand.
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `accounts`        | Accounts with IMAP and (from phase 4) SMTP settings, sign-in method, colour. No passwords.                                                                 |
 | `folders`         | Folders per account with SPECIAL-USE role, `uid_validity`, `uid_next`, `highest_modseq`, counts                                                           |
-| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to` and `references_header` for threads; unique per folder and UID |
+| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to` and `references_header` for threads, `leaving` while a move is on its way; unique per folder and UID |
 | `attachments`     | Attachments per message with the MIME part to fetch them; small inline images with their bytes                                                           |
-| `pending_actions` | Local changes that still have to reach the server                                                                                                        |
+| `pending_actions` | Local changes that still have to reach the server; `due_at` holds a move back while it can be undone                                                       |
 | `messages_fts`    | Full-text index (FTS5) over subject, sender and text                                                                                                      |
 
 Rules:
@@ -250,12 +250,12 @@ checks that they are current.
 | Folders     | `list_folders`                                                                                                                            |
 | Mail        | `list_messages` (folder or unified inbox), `get_message` (with `remote_images` to allow a mail's external images), `load_message_body`, `search_messages` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
+| Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
 | Links       | `open_link`                                                                                                                               |
 | Attachments | `save_attachment` (the system's save dialog via `tauri-plugin-dialog`, called from Rust only; the frontend gets no dialog or file permissions), `open_attachment` |
 | Sync        | `sync_account`, `sync_folder`, `load_older`                                                                                               |
 
-Planned: `update_account`, `test_connection` for existing accounts, signing in again when a
-Microsoft refresh token has expired.
+Planned: `test_connection` for existing accounts.
 
 `set_read` and `set_flagged` set a target value instead of toggling, which stays correct on
 double clicks and repeats. They only change the cache and return the affected accounts;
@@ -328,8 +328,12 @@ Elevant Mail should feel modern and calm, not like Thunderbird, Outlook 2010 or 
   the first message or moves into the reader, `Esc` goes back one level (reader → list → no
   selection), `u` read/unread, `s` star, `/` search (in the search field `Enter` or `↓` goes to the
   first result, `Esc` clears, a second `Esc` leaves the field; in the list `Esc` without a
-  selection clears the search); from phase 3 `e` archives. Shortcuts pause while a dialog or menu
+  selection clears the search). With `Shift` the moving keys widen the selection, `Ctrl+A` selects
+  the list; on the selection `e` archives, `#` and `Del` delete, `v` moves (folder picker), and
+  `z` takes the last archiving, deleting or moving back. Shortcuts pause while a dialog or menu
   is open or while typing in a field.
+- Several messages: `Ctrl`-click adds or removes one, `Shift`-click selects a range. The reader
+  then shows what can be done with all of them.
 - No animations that slow things down; only small, meaningful transitions
 - Performance targets: the list stays smooth with 50,000 messages in a folder, switching folders
   from the cache shows no waiting, cold start to a visible list under one second.
@@ -408,7 +412,11 @@ can consent without an admin, paging in `list_messages` beyond 5,000 cached mess
   account settings fix get a button to them. — done
 - IMAP IDLE for the inbox, polling for other folders
 - Desktop notifications for new mail, optionally keep running in the tray
-- Archive, delete, move
+- Archive, delete, move, also for several messages at once — done. Local at once, the server
+  after a 10-second undo window (`crates/core/src/moves.rs`): `UID MOVE`, without MOVE `UID COPY`
+  plus `\Deleted` and `UID EXPUNGE` (plain `EXPUNGE` without UIDPLUS). Archiving goes to the
+  archive folder, Gmail's "All Mail", or a folder "Archiv" made on the server; deleting goes to
+  the trash and asks before deleting from there for good. A refused move shows the mail again.
 - Server-side search (IMAP `SEARCH`) for mail outside the cache
 - Filters: unread, flagged, sender, with attachment
 - Keyboard focus management
@@ -549,4 +557,7 @@ Phase 3:
 13. **Account settings:** settings window, rename, colour, server settings and password with a login
     check, sign in again with Microsoft — done
 
-Next: archive, delete and move.
+14. **Archive, delete, move:** with undo, several messages at once, `e` / `#` / `Del` / `v` / `z`
+    — done
+
+Next: IMAP IDLE and desktop notifications.

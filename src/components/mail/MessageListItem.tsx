@@ -2,6 +2,8 @@ import { Avatar } from "@/components/common/Avatar";
 import { Icon } from "@/components/common/Icon";
 import { displayName, formatListDate } from "@/lib/formatting";
 import { locale, t } from "@/lib/i18n";
+import type { MouseEvent } from "react";
+
 import type { MessageSummary } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/stores/ui";
@@ -12,7 +14,8 @@ interface MessageListItemProps {
   now: number;
   /** Set in the unified inbox: a stripe on the card's edge tells accounts apart. */
   accountColor?: string;
-  onSelect: () => void;
+  /** With the click, so Ctrl and Shift can add to the selection. */
+  onSelect: (event: MouseEvent) => void;
 }
 
 /** One message as a card; unread mail gets a dot on the avatar. */
