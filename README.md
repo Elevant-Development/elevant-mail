@@ -54,7 +54,13 @@ layout and styling; everything that needs the backend is checked in the Tauri wi
 ```bash
 pnpm check        # typecheck, ESLint, Prettier, rustfmt, clippy, tests
 pnpm format       # Prettier and rustfmt
+cargo deny check  # licences and known vulnerabilities (cargo install cargo-deny)
 ```
+
+CI (`.github/workflows/ci.yml`) runs the same on Linux and Windows for every push and pull
+request, checks that the generated TypeScript types are current and that the build loads nothing
+from the web. Tags like `v0.3.0` build installers into a draft release
+(`.github/workflows/release.yml`).
 
 ## Build installers
 

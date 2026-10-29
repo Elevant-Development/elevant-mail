@@ -1,0 +1,37 @@
+# cargo-deny: licences compatible with GPL-3.0-or-later, known vulnerabilities, trusted sources.
+# Run locally with `cargo deny check`.
+
+[advisories]
+version = 2
+# Vulnerabilities fail everywhere. "Unmaintained" only for our direct dependencies: the ones
+# deep in Tauri's and the keyring's trees (gtk-rs macros, zbus) are theirs to replace.
+unmaintained = "workspace"
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "GPL-3.0-or-later",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# The workspace crates refer to each other by path.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
