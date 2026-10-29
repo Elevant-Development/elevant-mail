@@ -4,6 +4,7 @@ import { AccountList } from "@/components/accounts/AccountList";
 import { RemoveAccountDialog } from "@/components/accounts/RemoveAccountDialog";
 import { Icon } from "@/components/common/Icon";
 import { Button } from "@/components/ui/button";
+import { useSyncActions } from "@/hooks/use-sync";
 import { t } from "@/lib/i18n";
 import { type Account, UNIFIED_INBOX } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,14 @@ export function Sidebar({ className }: SidebarProps) {
   const selectMailbox = useUiStore((s) => s.selectMailbox);
   const setAccountDialogOpen = useUiStore((s) => s.setAccountDialogOpen);
   const [accountToRemove, setAccountToRemove] = useState<Account | null>(null);
+  const { syncFolder } = useSyncActions();
+
+  // Opening a folder other than the inbox fetches its mail (the inbox syncs in the background).
+  const openMailbox = (mailboxId: string) => {
+    selectMailbox(mailboxId);
+    const folder = folders.find((f) => f.id === mailboxId);
+    if (folder && folder.role !== "inbox") void syncFolder(folder);
+  };
 
   const unifiedUnread = folders
     .filter((f) => f.role === "inbox")
@@ -45,7 +54,7 @@ export function Sidebar({ className }: SidebarProps) {
           accounts={accounts}
           folders={folders}
           selectedMailboxId={selectedMailboxId}
-          onSelectMailbox={selectMailbox}
+          onSelectMailbox={openMailbox}
           onRemoveAccount={setAccountToRemove}
         />
       </div>

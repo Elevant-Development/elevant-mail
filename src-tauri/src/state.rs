@@ -1,7 +1,11 @@
 //! Shared state of the running app, created once at startup.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
+
 use elevant_mail_core::Database;
 use elevant_mail_core::secrets::{KeyringStore, SecretStore};
+use tauri::async_runtime::Mutex as AsyncMutex;
 use tauri::{AppHandle, Manager};
 
 pub struct AppState {
@@ -9,6 +13,8 @@ pub struct AppState {
     pub secrets: Box<dyn SecretStore>,
     /// Checked once at startup. Without a keyring, accounts cannot store their passwords.
     pub keyring_available: bool,
+    /// One mail server operation per account at a time; further requests wait their turn.
+    account_locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
 }
 
 impl AppState {
@@ -35,6 +41,16 @@ impl AppState {
             db,
             secrets,
             keyring_available,
+            account_locks: Mutex::default(),
         })
+    }
+
+    pub fn account_lock(&self, account_id: &str) -> Arc<AsyncMutex<()>> {
+        self.account_locks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(account_id.to_owned())
+            .or_default()
+            .clone()
     }
 }

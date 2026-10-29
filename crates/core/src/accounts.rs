@@ -125,7 +125,11 @@ fn insert(conn: &Connection, id: &str, new: &NewAccount) -> Result<Account> {
 }
 
 /// Inserts new folders and updates known ones; folders that hold no mail are skipped.
-fn store_folders(conn: &Connection, account_id: &str, folders: &[RemoteFolder]) -> Result<()> {
+pub(crate) fn store_folders(
+    conn: &Connection,
+    account_id: &str,
+    folders: &[RemoteFolder],
+) -> Result<()> {
     let mut statement = conn.prepare(
         "INSERT INTO folders (id, account_id, name, path, delimiter, role)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)

@@ -21,9 +21,9 @@ use crate::secrets::Secret;
 use crate::{Error, Result};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
-type ImapSession = Session<TlsStream<TcpStream>>;
+pub(crate) type ImapSession = Session<TlsStream<TcpStream>>;
 
 /// What a successful login found out.
 #[derive(Debug)]
@@ -41,26 +41,33 @@ pub(crate) async fn check_login_with(
     password: &Secret,
     connector: &TlsConnector,
 ) -> Result<ConnectionReport> {
+    let mut session = open_session(settings, password, connector).await?;
+    let folders = with_timeout(COMMAND_TIMEOUT, list_folders(&mut session)).await??;
+    // Best effort: the check succeeded even if the goodbye gets lost.
+    let _ = with_timeout(COMMAND_TIMEOUT, session.logout()).await;
+    tracing::info!(host = %settings.host, folders = folders.len(), "IMAP login check passed");
+    Ok(ConnectionReport { folders })
+}
+
+/// Connects and logs in; the caller logs out.
+pub(crate) async fn open_session(
+    settings: &ImapSettings,
+    password: &Secret,
+    connector: &TlsConnector,
+) -> Result<ImapSession> {
     let provider = Provider::from_imap_host(&settings.host);
     if provider.is_some_and(Provider::needs_oauth) {
         return Err(Error::OAuthRequired {
             provider: Provider::Microsoft,
         });
     }
-
     let client = with_timeout(CONNECT_TIMEOUT, connect(settings, connector)).await??;
-    let mut session = with_timeout(
+    with_timeout(
         COMMAND_TIMEOUT,
         client.login(&settings.username, password.expose()),
     )
     .await?
-    .map_err(|(error, _client)| login_error(error, provider))?;
-
-    let folders = with_timeout(COMMAND_TIMEOUT, list_folders(&mut session)).await??;
-    // Best effort: the check succeeded even if the goodbye gets lost.
-    let _ = with_timeout(COMMAND_TIMEOUT, session.logout()).await;
-    tracing::info!(host = %settings.host, folders = folders.len(), "IMAP login check passed");
-    Ok(ConnectionReport { folders })
+    .map_err(|(error, _client)| login_error(error, provider))
 }
 
 /// TLS with the operating system's trust store and checks (revocation, enterprise CAs).
@@ -137,7 +144,7 @@ where
     }
 }
 
-async fn list_folders(session: &mut ImapSession) -> Result<Vec<RemoteFolder>> {
+pub(crate) async fn list_folders(session: &mut ImapSession) -> Result<Vec<RemoteFolder>> {
     let names: Vec<_> = session
         .list(Some(""), Some("*"))
         .await
@@ -148,7 +155,7 @@ async fn list_folders(session: &mut ImapSession) -> Result<Vec<RemoteFolder>> {
     Ok(names.iter().map(RemoteFolder::from_name).collect())
 }
 
-async fn with_timeout<F: Future>(duration: Duration, future: F) -> Result<F::Output> {
+pub(crate) async fn with_timeout<F: Future>(duration: Duration, future: F) -> Result<F::Output> {
     tokio::time::timeout(duration, future)
         .await
         .map_err(|_| Error::Timeout)
@@ -181,7 +188,7 @@ fn login_error(error: async_imap::error::Error, provider: Option<Provider>) -> E
     }
 }
 
-fn protocol_error(error: async_imap::error::Error) -> Error {
+pub(crate) fn protocol_error(error: async_imap::error::Error) -> Error {
     Error::Protocol(error.to_string())
 }
 

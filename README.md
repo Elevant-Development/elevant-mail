@@ -25,7 +25,7 @@ app's own files.
 
 |         | Linux (Ubuntu/Debian)                                  | Windows 10/11                                                                                                                                                  |
 | ------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rust    | stable via [rustup](https://rustup.rs) (1.90 or newer) | stable via rustup, MSVC toolchain                                                                                                                              |
+| Rust    | stable via [rustup](https://rustup.rs) (1.98 or newer) | stable via rustup, MSVC toolchain                                                                                                                              |
 | Node.js | 22 or newer                                            | 22 or newer                                                                                                                                                    |
 | pnpm    | 12 (`npm install -g pnpm`)                             | 12 (`npm install -g pnpm`)                                                                                                                                     |
 | System  | packages below                                         | [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++"; WebView2 is part of Windows 10/11 |

@@ -12,6 +12,7 @@ async-imap.workspace = true
 futures.workspace = true
 hickory-resolver.workspace = true
 keyring.workspace = true
+mail-parser.workspace = true
 rusqlite.workspace = true
 rustls.workspace = true
 rustls-platform-verifier.workspace = true

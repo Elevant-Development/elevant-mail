@@ -1,7 +1,8 @@
-//! A tiny IMAP server for tests: just enough protocol for greeting, STARTTLS, LOGIN, LIST and
-//! LOGOUT, with a throwaway certificate for "localhost".
+//! A tiny IMAP server for tests: greeting, STARTTLS, LOGIN, LIST, EXAMINE, UID SEARCH, UID FETCH
+//! and LOGOUT on one INBOX, with a throwaway certificate for "localhost". Tests change the
+//! mailbox between syncs and can read the commands the client sent.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
@@ -21,13 +22,63 @@ pub enum Mode {
     NoStartTls,
 }
 
+#[derive(Debug, Clone)]
+pub struct TestMessage {
+    pub uid: u32,
+    pub seen: bool,
+    pub flagged: bool,
+    pub raw: Vec<u8>,
+}
+
+impl TestMessage {
+    /// A small plain-text message whose subject and body carry the UID.
+    pub fn new(uid: u32) -> Self {
+        let raw = format!(
+            "From: Lena Fischer <lena@example.org>\r\nTo: alex@example.org\r\n\
+             Subject: Message {uid}\r\nDate: Wed, 28 Oct 2026 10:00:00 +0000\r\n\
+             Message-ID: <{uid}@example.org>\r\n\r\nBody of message {uid}\r\n"
+        );
+        Self {
+            uid,
+            seen: false,
+            flagged: false,
+            raw: raw.into_bytes(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Mailbox {
+    pub uid_validity: u32,
+    pub messages: Vec<TestMessage>,
+    /// Every command after login, for assertions (LOGIN itself is not recorded).
+    pub commands: Vec<String>,
+}
+
+impl Mailbox {
+    pub fn with_messages(count: u32) -> Self {
+        Self {
+            uid_validity: 1,
+            messages: (1..=count).map(TestMessage::new).collect(),
+            commands: Vec::new(),
+        }
+    }
+}
+
+pub type SharedMailbox = Arc<Mutex<Mailbox>>;
+
 pub struct TestServer {
     pub port: u16,
     /// Trusts exactly the server's throwaway certificate.
     pub connector: TlsConnector,
+    pub mailbox: SharedMailbox,
 }
 
 pub async fn start(mode: Mode) -> TestServer {
+    start_with(mode, Mailbox::with_messages(0)).await
+}
+
+pub async fn start_with(mode: Mode, mailbox: Mailbox) -> TestServer {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
     let cert = CertificateDer::from(generated.cert.der().to_vec());
@@ -51,13 +102,16 @@ pub async fn start(mode: Mode) -> TestServer {
         .with_root_certificates(roots)
         .with_no_client_auth();
 
+    let mailbox: SharedMailbox = Arc::new(Mutex::new(mailbox));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
+    let shared = mailbox.clone();
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             let acceptor = acceptor.clone();
+            let mailbox = shared.clone();
             tokio::spawn(async move {
-                let _ = serve(stream, acceptor, mode).await;
+                let _ = serve(stream, acceptor, mode, mailbox).await;
             });
         }
     });
@@ -65,16 +119,22 @@ pub async fn start(mode: Mode) -> TestServer {
     TestServer {
         port,
         connector: TlsConnector::from(Arc::new(client_config)),
+        mailbox,
     }
 }
 
-async fn serve(mut stream: TcpStream, acceptor: TlsAcceptor, mode: Mode) -> std::io::Result<()> {
+async fn serve(
+    mut stream: TcpStream,
+    acceptor: TlsAcceptor,
+    mode: Mode,
+    mailbox: SharedMailbox,
+) -> std::io::Result<()> {
     match mode {
         Mode::Tls => {
             let mut tls = acceptor.accept(stream).await?;
             tls.write_all(b"* OK IMAP4rev1 test server ready\r\n")
                 .await?;
-            session(tls).await
+            session(tls, mailbox).await
         }
         Mode::StartTls | Mode::NoStartTls => {
             stream
@@ -94,12 +154,15 @@ async fn serve(mut stream: TcpStream, acceptor: TlsAcceptor, mode: Mode) -> std:
             stream
                 .write_all(format!("{tag} OK begin TLS now\r\n").as_bytes())
                 .await?;
-            session(acceptor.accept(stream).await?).await
+            session(acceptor.accept(stream).await?, mailbox).await
         }
     }
 }
 
-async fn session<S: AsyncRead + AsyncWrite + Unpin>(stream: S) -> std::io::Result<()> {
+async fn session<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: S,
+    mailbox: SharedMailbox,
+) -> std::io::Result<()> {
     let mut stream = BufReader::new(stream);
     let mut line = String::new();
     loop {
@@ -110,28 +173,154 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(stream: S) -> std::io::Resul
         let mut parts = line.trim_end().splitn(3, ' ');
         let tag = parts.next().unwrap_or("*").to_owned();
         let command = parts.next().unwrap_or_default().to_ascii_uppercase();
-        let arguments = parts.next().unwrap_or_default();
-        let reply = match command.as_str() {
-            "CAPABILITY" => format!("* CAPABILITY IMAP4rev1 SPECIAL-USE\r\n{tag} OK done\r\n"),
-            "LOGIN" if arguments.contains(&format!("\"{PASSWORD}\"")) => {
-                format!("{tag} OK logged in\r\n")
+        let arguments = parts.next().unwrap_or_default().to_owned();
+        if command != "LOGIN" {
+            mailbox
+                .lock()
+                .unwrap()
+                .commands
+                .push(format!("{command} {arguments}"));
+        }
+        let reply: Vec<u8> = match command.as_str() {
+            "CAPABILITY" => {
+                format!("* CAPABILITY IMAP4rev1 SPECIAL-USE\r\n{tag} OK done\r\n").into_bytes()
             }
-            "LOGIN" => format!("{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n"),
+            "LOGIN" if arguments.contains(&format!("\"{PASSWORD}\"")) => {
+                format!("{tag} OK logged in\r\n").into_bytes()
+            }
+            "LOGIN" => {
+                format!("{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n").into_bytes()
+            }
             "LIST" => format!(
                 "* LIST (\\HasNoChildren) \"/\" INBOX\r\n\
                  * LIST (\\HasNoChildren \\Sent) \"/\" Sent\r\n\
                  * LIST (\\HasNoChildren) \"/\" \"Entw&APw-rfe\"\r\n\
                  * LIST (\\Noselect \\HasChildren) \"/\" Shared\r\n\
                  {tag} OK done\r\n"
-            ),
+            )
+            .into_bytes(),
+            "EXAMINE" | "SELECT" => {
+                let mailbox = mailbox.lock().unwrap();
+                let next = mailbox.messages.iter().map(|m| m.uid).max().unwrap_or(0) + 1;
+                format!(
+                    "* {} EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY {}] ok\r\n* OK [UIDNEXT {next}] ok\r\n\
+                     * FLAGS (\\Seen \\Flagged)\r\n{tag} OK [READ-ONLY] done\r\n",
+                    mailbox.messages.len(),
+                    mailbox.uid_validity
+                )
+                .into_bytes()
+            }
+            "UID" => uid_command(&tag, &arguments, &mailbox.lock().unwrap()),
             "LOGOUT" => {
                 stream
                     .write_all(format!("* BYE\r\n{tag} OK bye\r\n").as_bytes())
                     .await?;
                 return Ok(());
             }
-            _ => format!("{tag} BAD unknown command\r\n"),
+            _ => format!("{tag} BAD unknown command\r\n").into_bytes(),
         };
-        stream.write_all(reply.as_bytes()).await?;
+        stream.write_all(&reply).await?;
     }
+}
+
+fn uid_command(tag: &str, arguments: &str, mailbox: &Mailbox) -> Vec<u8> {
+    let mut parts = arguments.splitn(3, ' ');
+    let sub = parts.next().unwrap_or_default().to_ascii_uppercase();
+    match sub.as_str() {
+        "SEARCH" => {
+            let criteria = parts.next().unwrap_or_default().to_ascii_uppercase();
+            let uids: Vec<String> = mailbox
+                .messages
+                .iter()
+                .filter(|m| criteria != "UNSEEN" || !m.seen)
+                .map(|m| m.uid.to_string())
+                .collect();
+            let space = if uids.is_empty() { "" } else { " " };
+            format!("* SEARCH{space}{}\r\n{tag} OK done\r\n", uids.join(" ")).into_bytes()
+        }
+        "FETCH" => {
+            let set = parts.next().unwrap_or_default();
+            let items = parts.next().unwrap_or_default().to_ascii_uppercase();
+            let mut out = Vec::new();
+            for (index, message) in mailbox.messages.iter().enumerate() {
+                if !in_set(set, message.uid) {
+                    continue;
+                }
+                let seq = index + 1;
+                let flags = [(message.seen, "\\Seen"), (message.flagged, "\\Flagged")]
+                    .iter()
+                    .filter(|(on, _)| *on)
+                    .map(|(_, flag)| *flag)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if items.contains("BODY.PEEK[HEADER]") {
+                    let end = message
+                        .raw
+                        .windows(4)
+                        .position(|w| w == b"\r\n\r\n")
+                        .map_or(message.raw.len(), |p| p + 4);
+                    let header = &message.raw[..end];
+                    out.extend(
+                        format!(
+                            "* {seq} FETCH (UID {} BODY[HEADER] {{{}}}\r\n",
+                            message.uid,
+                            header.len()
+                        )
+                        .as_bytes(),
+                    );
+                    out.extend(header);
+                    if items.contains("BODY.PEEK[TEXT]<0.") {
+                        let text = &message.raw[end..];
+                        let text = &text[..text.len().min(64 * 1024)];
+                        out.extend(format!(" BODY[TEXT]<0> {{{}}}\r\n", text.len()).as_bytes());
+                        out.extend(text);
+                    }
+                    out.extend(b")\r\n");
+                } else if items.contains("BODY.PEEK[]") {
+                    out.extend(
+                        format!(
+                            "* {seq} FETCH (UID {} BODY[] {{{}}}\r\n",
+                            message.uid,
+                            message.raw.len()
+                        )
+                        .as_bytes(),
+                    );
+                    out.extend(&message.raw);
+                    out.extend(b")\r\n");
+                } else if items.contains("RFC822.SIZE") {
+                    out.extend(
+                        format!(
+                            "* {seq} FETCH (UID {} FLAGS ({flags}) INTERNALDATE \"28-Oct-2026 10:00:00 +0000\" RFC822.SIZE {})\r\n",
+                            message.uid,
+                            message.raw.len()
+                        )
+                        .as_bytes(),
+                    );
+                } else {
+                    out.extend(
+                        format!("* {seq} FETCH (UID {} FLAGS ({flags}))\r\n", message.uid)
+                            .as_bytes(),
+                    );
+                }
+            }
+            out.extend(format!("{tag} OK done\r\n").as_bytes());
+            out
+        }
+        _ => format!("{tag} BAD unknown UID command\r\n").into_bytes(),
+    }
+}
+
+fn in_set(set: &str, uid: u32) -> bool {
+    set.split(',').any(|part| match part.split_once(':') {
+        Some((start, end)) => {
+            let start: u32 = start.parse().unwrap_or(u32::MAX);
+            let end: u32 = if end == "*" {
+                u32::MAX
+            } else {
+                end.parse().unwrap_or(0)
+            };
+            (start.min(end)..=start.max(end)).contains(&uid)
+        }
+        None => part.parse() == Ok(uid),
+    })
 }

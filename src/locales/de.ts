@@ -129,6 +129,15 @@ export const de = {
   "list.error": "Die Mails konnten nicht geladen werden",
   "list.unread": "{count} ungelesen",
 
+  "sync.refresh": "Aktualisieren",
+  "sync.loading": "Lade Mails…",
+  "sync.stage.connecting": "Verbinde…",
+  "sync.stage.checking": "Suche nach neuen Mails…",
+  "sync.stage.fetching": "Lade Mails… {done} von {total}",
+  "sync.loadOlder": "Ältere Mails laden",
+  "sync.retry": "Erneut versuchen",
+  "sync.failed": "Abruf fehlgeschlagen",
+
   "message.noSubject": "(Kein Betreff)",
   "message.unread": "Ungelesen",
   "message.flagged": "Mit Stern",

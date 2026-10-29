@@ -6,7 +6,7 @@ members = ["crates/core", "src-tauri"]
 version = "0.1.0"
 license = "GPL-3.0-or-later"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
@@ -15,6 +15,7 @@ elevant-mail-core = { path = "crates/core" }
 futures = "0.3"
 hickory-resolver = "0.26"
 keyring = "4.2"
+mail-parser = "1"
 rcgen = "0.14"
 rusqlite = { version = "0.41", features = ["bundled"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

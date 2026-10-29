@@ -2,6 +2,7 @@ import { Icon, type IconName } from "@/components/common/Icon";
 import { SidebarItem } from "@/components/layout/SidebarItem";
 import { folderLabel, sortFolders } from "@/lib/folders";
 import { t } from "@/lib/i18n";
+import { useSyncStore } from "@/stores/sync";
 import type { Account, Folder, FolderRole } from "@/lib/tauri";
 
 const roleIcons: Record<FolderRole, IconName> = {
@@ -30,6 +31,9 @@ export function AccountList({
   onSelectMailbox,
   onRemoveAccount,
 }: AccountListProps) {
+  const progress = useSyncStore((s) => s.progress);
+  const errors = useSyncStore((s) => s.errors);
+
   return (
     <div className="flex flex-col gap-4">
       {accounts.map((account) => (
@@ -46,6 +50,19 @@ export function AccountList({
                 style={{ backgroundColor: account.color }}
               />
               <span className="truncate">{account.displayName}</span>
+              {progress[account.id] && (
+                <Icon name="spinner" className="size-3 shrink-0 animate-spin" />
+              )}
+              {!progress[account.id] && errors[account.id] && (
+                <span
+                  title={[t("sync.failed"), errors[account.id]?.message, errors[account.id]?.action]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  className="flex text-destructive"
+                >
+                  <Icon name="alert" className="size-3 shrink-0" />
+                </span>
+              )}
             </h3>
             <button
               type="button"

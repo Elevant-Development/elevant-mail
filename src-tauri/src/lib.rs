@@ -26,6 +26,9 @@ pub fn run() {
             commands::mailbox::list_folders,
             commands::mailbox::list_messages,
             commands::mailbox::get_message,
+            commands::sync::sync_account,
+            commands::sync::sync_folder,
+            commands::sync::load_older,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Elevant Mail");

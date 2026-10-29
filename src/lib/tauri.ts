@@ -6,6 +6,7 @@
  * interface can be worked on without a mail server.
  */
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import type { Account } from "./bindings/Account";
 import type { Folder } from "./bindings/Folder";
@@ -13,6 +14,8 @@ import type { Message } from "./bindings/Message";
 import type { MessageSummary } from "./bindings/MessageSummary";
 import type { NewAccount } from "./bindings/NewAccount";
 import type { SuggestedSettings } from "./bindings/SuggestedSettings";
+import type { SyncProgress } from "./bindings/SyncProgress";
+import type { SyncReport } from "./bindings/SyncReport";
 import { mockBackend } from "./mock";
 
 export type { Account } from "./bindings/Account";
@@ -29,6 +32,9 @@ export type { Provider } from "./bindings/Provider";
 export type { Security } from "./bindings/Security";
 export type { SuggestedSettings } from "./bindings/SuggestedSettings";
 export type { SuggestionSource } from "./bindings/SuggestionSource";
+export type { SyncProgress } from "./bindings/SyncProgress";
+export type { SyncReport } from "./bindings/SyncReport";
+export type { SyncStage } from "./bindings/SyncStage";
 
 /** Mailbox id that shows the inboxes of all accounts together (same value in Rust). */
 export const UNIFIED_INBOX = "unified-inbox";
@@ -43,6 +49,13 @@ export interface Backend {
   /** `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first. */
   listMessages(mailboxId: string): Promise<MessageSummary[]>;
   getMessage(messageId: string): Promise<Message | null>;
+  /** New, changed and deleted mail in the account's inbox. */
+  syncAccount(accountId: string): Promise<SyncReport>;
+  syncFolder(folderId: string): Promise<SyncReport>;
+  /** The next 100 messages older than the oldest cached one. */
+  loadOlder(folderId: string): Promise<SyncReport>;
+  /** Progress of running syncs; returns a function that stops listening. */
+  onSyncProgress(handler: (progress: SyncProgress) => void): Promise<() => void>;
 }
 
 const tauriBackend: Backend = {
@@ -53,6 +66,11 @@ const tauriBackend: Backend = {
   listFolders: () => invoke("list_folders"),
   listMessages: (mailboxId) => invoke("list_messages", { mailboxId }),
   getMessage: (messageId) => invoke("get_message", { messageId }),
+  syncAccount: (accountId) => invoke("sync_account", { accountId }),
+  syncFolder: (folderId) => invoke("sync_folder", { folderId }),
+  loadOlder: (folderId) => invoke("load_older", { folderId }),
+  onSyncProgress: (handler) =>
+    listen<SyncProgress>("sync-progress", (event) => handler(event.payload)),
 };
 
 export const usesMockData = !isTauri();

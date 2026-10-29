@@ -358,4 +358,9 @@ export const mockBackend: Backend = {
     return inMailbox.map(toSummary).sort((a, b) => b.dateSent - a.dateSent);
   },
   getMessage: async (messageId) => messages.find((m) => m.id === messageId) ?? null,
+  // Sample data is always "in sync".
+  syncAccount: async () => ({ added: 0, updated: 0, removed: 0 }),
+  syncFolder: async () => ({ added: 0, updated: 0, removed: 0 }),
+  loadOlder: async () => ({ added: 0, updated: 0, removed: 0 }),
+  onSyncProgress: async () => () => undefined,
 };
