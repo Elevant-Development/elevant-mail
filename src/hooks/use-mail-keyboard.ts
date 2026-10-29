@@ -4,12 +4,14 @@ import {
   adjacentMessageId,
   focusListItem,
   focusReader,
+  focusSearch,
   hasOpenOverlay,
   isTypingTarget,
   LIST_ATTRIBUTE,
   READER_ATTRIBUTE,
 } from "@/lib/keyboard";
-import { useMessages } from "@/queries/messages";
+import { useMessageActions } from "@/hooks/use-message-actions";
+import { useVisibleMessages } from "@/queries/messages";
 import { useUiStore } from "@/stores/ui";
 
 interface MailKeyboardOptions {
@@ -21,11 +23,12 @@ interface MailKeyboardOptions {
 
 /**
  * Shortcuts of the mail view: j/k (and the arrow keys outside the reader) move through the list,
- * Enter opens the first mail or moves the focus into the reader, Escape goes back one level.
+ * Enter opens the first mail or moves the focus into the reader, Escape goes back one level
+ * (and finally clears a search), u toggles read, s the star, / jumps to the search field.
  */
 export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
-  const mailboxId = useUiStore((s) => s.selectedMailboxId);
-  const { data: messages = [] } = useMessages(mailboxId);
+  const { data: messages = [] } = useVisibleMessages();
+  const { setRead, setFlagged } = useMessageActions();
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (!enabled || event.defaultPrevented) return;
@@ -47,7 +50,20 @@ export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
       event.preventDefault();
     };
 
+    const selected = messages.find((m) => m.id === selectedMessageId);
+
     switch (event.key) {
+      case "/":
+        event.preventDefault();
+        return focusSearch();
+      case "u":
+        if (!selected) return;
+        event.preventDefault();
+        return void setRead([selected.id], !selected.isRead);
+      case "s":
+        if (!selected) return;
+        event.preventDefault();
+        return void setFlagged([selected.id], !selected.isFlagged);
       case "j":
         return move(1);
       case "k":
@@ -70,7 +86,11 @@ export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
         return;
       }
       case "Escape":
-        if (selectedMessageId === null) return;
+        if (selectedMessageId === null) {
+          const { searchQuery, setSearchQuery } = useUiStore.getState();
+          if (searchQuery) setSearchQuery("");
+          return;
+        }
         event.preventDefault();
         if (isWide && inReader && focusListItem(selectedMessageId)) return;
         selectMessage(null);

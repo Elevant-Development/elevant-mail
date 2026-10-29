@@ -60,6 +60,16 @@ export interface Backend {
   syncFolder(folderId: string): Promise<SyncReport>;
   /** The next 100 messages older than the oldest cached one. */
   loadOlder(folderId: string): Promise<SyncReport>;
+  /** Full-text search over all cached mail, newest first. */
+  searchMessages(query: string): Promise<MessageSummary[]>;
+  /**
+   * Set (not toggle) read or flagged state. The cache changes at once; returns the accounts
+   * whose changes still have to go to the server ({@link Backend.pushActions}).
+   */
+  setRead(messageIds: string[], read: boolean): Promise<string[]>;
+  setFlagged(messageIds: string[], flagged: boolean): Promise<string[]>;
+  /** Sends the account's queued changes to the server; returns how many arrived. */
+  pushActions(accountId: string): Promise<number>;
   /** Opens a web or mail link from a mail in the system browser or mail program. */
   openLink(url: string): Promise<void>;
   /** Links clicked in a mail frame (see SafeHtmlMail); returns a function that stops listening. */
@@ -80,6 +90,10 @@ const tauriBackend: Backend = {
   syncAccount: (accountId) => invoke("sync_account", { accountId }),
   syncFolder: (folderId) => invoke("sync_folder", { folderId }),
   loadOlder: (folderId) => invoke("load_older", { folderId }),
+  searchMessages: (query) => invoke("search_messages", { query }),
+  setRead: (messageIds, read) => invoke("set_read", { messageIds, read }),
+  setFlagged: (messageIds, flagged) => invoke("set_flagged", { messageIds, flagged }),
+  pushActions: (accountId) => invoke("push_actions", { accountId }),
   openLink: (url) => invoke("open_link", { url }),
   onMailLink: (handler) => listen<string>("mail-link", (event) => handler(event.payload)),
   onSyncProgress: (handler) =>

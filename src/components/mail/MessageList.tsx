@@ -13,7 +13,7 @@ import { type MessageSummary, type SyncProgress, UNIFIED_INBOX } from "@/lib/tau
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
 import { useFolders } from "@/queries/folders";
-import { useMessages } from "@/queries/messages";
+import { useVisibleMessages } from "@/queries/messages";
 import { useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
 
@@ -138,7 +138,8 @@ export function MessageList({ className }: MessageListProps) {
   const mailboxId = useUiStore((s) => s.selectedMailboxId);
   const { data: accounts = [] } = useAccounts();
   const { data: folders = [] } = useFolders();
-  const { data: messages = [], isPending, isError } = useMessages(mailboxId);
+  const { data: messages = [], isPending, isError, searching } = useVisibleMessages();
+  const searchQuery = useUiStore((s) => s.searchQuery.trim());
   const now = useNow();
   const { syncAccount, syncFolder, loadOlder } = useSyncActions();
 
@@ -153,11 +154,12 @@ export function MessageList({ className }: MessageListProps) {
     .map((id) => [id, errorsById[id]] as const)
     .find(([, error]) => error !== undefined);
 
-  const title = mailboxTitle(mailboxId, folders, accounts);
+  const title = searching ? t("search.title") : mailboxTitle(mailboxId, folders, accounts);
   const unreadCount = messages.filter((m) => !m.isRead).length;
   const accountColors = new Map(accounts.map((a) => [a.id, a.color]));
-  const showAccountColor = mailboxId === UNIFIED_INBOX && accounts.length > 1;
-  const hasOlder = folder !== undefined && folder.totalCount > messages.length;
+  // Search results span all accounts, like the unified inbox.
+  const showAccountColor = (searching || mailboxId === UNIFIED_INBOX) && accounts.length > 1;
+  const hasOlder = !searching && folder !== undefined && folder.totalCount > messages.length;
 
   const refresh = () => {
     if (folder && folder.role !== "inbox") {
@@ -174,6 +176,15 @@ export function MessageList({ className }: MessageListProps) {
     content = (
       <EmptyState icon={<Icon name="alert" />} title={t("list.error")} className="flex-1" />
     );
+  } else if (messages.length === 0 && searching) {
+    content = (
+      <EmptyState
+        icon={<Icon name="search" />}
+        title={t("search.empty")}
+        hint={t("search.emptyHint")}
+        className="flex-1"
+      />
+    );
   } else if (messages.length === 0) {
     content = progress ? (
       <EmptyState
@@ -187,8 +198,8 @@ export function MessageList({ className }: MessageListProps) {
   } else {
     content = (
       <MessageRows
-        // A new mailbox starts at the top.
-        key={mailboxId}
+        // A new mailbox or search starts at the top.
+        key={searching ? `search:${searchQuery}` : mailboxId}
         messages={messages}
         now={now}
         accountColor={(accountId) => (showAccountColor ? accountColors.get(accountId) : undefined)}
@@ -220,7 +231,9 @@ export function MessageList({ className }: MessageListProps) {
           aria-live="polite"
           className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground tabular-nums"
         >
-          {progress ? (
+          {searching ? (
+            !isPending && t("search.results", { count: messages.length })
+          ) : progress ? (
             <>
               <Icon name="spinner" className="size-3.5 animate-spin" />
               {progressLabel(progress)}
@@ -229,7 +242,7 @@ export function MessageList({ className }: MessageListProps) {
             unreadCount > 0 && t("list.unread", { count: unreadCount })
           )}
         </span>
-        {!progress && (
+        {!progress && !searching && (
           <IconButton label={t("sync.refresh")} icon={<Icon name="refresh" />} onClick={refresh} />
         )}
       </header>

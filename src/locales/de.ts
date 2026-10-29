@@ -64,6 +64,8 @@ export const de = {
   "error.kind.serverError": "Der Server hat unerwartet geantwortet.",
   "error.kind.accountExists": "Dieses Konto ist schon eingerichtet.",
   "error.kind.notFound": "Das Konto gibt es nicht mehr.",
+  "error.kind.actionRefused":
+    "Der Server hat die Änderung nicht übernommen. Sie wurde zurückgenommen.",
   "error.kind.internal": "Etwas ist schiefgelaufen.",
   "error.hint.checkDiskSpace": "Prüfe, ob auf dem Rechner genug Speicherplatz frei ist.",
   "error.hint.updateApp": "Aktualisiere Elevant Mail auf die neueste Version.",
@@ -113,6 +115,11 @@ export const de = {
   "theme.mono": "Mono",
 
   "search.placeholder": "Suchen",
+  "search.title": "Suche",
+  "search.results": "{count} Treffer",
+  "search.empty": "Keine Mails gefunden",
+  "search.emptyHint": "Gesucht wird in allen Mails, die schon auf diesem Gerät liegen.",
+  "search.clear": "Suche leeren",
 
   "sidebar.unifiedInbox": "Alle Posteingänge",
   "sidebar.addAccount": "Konto hinzufügen",

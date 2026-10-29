@@ -53,6 +53,8 @@ pub struct Mailbox {
     pub messages: Vec<TestMessage>,
     /// Every command after login, for assertions (LOGIN itself is not recorded).
     pub commands: Vec<String>,
+    /// Answer STORE with NO, like a server that does not allow the change.
+    pub refuse_store: bool,
 }
 
 impl Mailbox {
@@ -61,6 +63,7 @@ impl Mailbox {
             uid_validity: 1,
             messages: (1..=count).map(TestMessage::new).collect(),
             commands: Vec::new(),
+            refuse_store: false,
         }
     }
 }
@@ -200,17 +203,22 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
             )
             .into_bytes(),
             "EXAMINE" | "SELECT" => {
+                let access = if command == "SELECT" {
+                    "READ-WRITE"
+                } else {
+                    "READ-ONLY"
+                };
                 let mailbox = mailbox.lock().unwrap();
                 let next = mailbox.messages.iter().map(|m| m.uid).max().unwrap_or(0) + 1;
                 format!(
                     "* {} EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY {}] ok\r\n* OK [UIDNEXT {next}] ok\r\n\
-                     * FLAGS (\\Seen \\Flagged)\r\n{tag} OK [READ-ONLY] done\r\n",
+                     * FLAGS (\\Seen \\Flagged)\r\n{tag} OK [{access}] done\r\n",
                     mailbox.messages.len(),
                     mailbox.uid_validity
                 )
                 .into_bytes()
             }
-            "UID" => uid_command(&tag, &arguments, &mailbox.lock().unwrap()),
+            "UID" => uid_command(&tag, &arguments, &mut mailbox.lock().unwrap()),
             "LOGOUT" => {
                 stream
                     .write_all(format!("* BYE\r\n{tag} OK bye\r\n").as_bytes())
@@ -223,7 +231,7 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
     }
 }
 
-fn uid_command(tag: &str, arguments: &str, mailbox: &Mailbox) -> Vec<u8> {
+fn uid_command(tag: &str, arguments: &str, mailbox: &mut Mailbox) -> Vec<u8> {
     let mut parts = arguments.splitn(3, ' ');
     let sub = parts.next().unwrap_or_default().to_ascii_uppercase();
     match sub.as_str() {
@@ -305,6 +313,24 @@ fn uid_command(tag: &str, arguments: &str, mailbox: &Mailbox) -> Vec<u8> {
             }
             out.extend(format!("{tag} OK done\r\n").as_bytes());
             out
+        }
+        "STORE" if mailbox.refuse_store => format!("{tag} NO not allowed\r\n").into_bytes(),
+        "STORE" => {
+            let set = parts.next().unwrap_or_default().to_owned();
+            let change = parts.next().unwrap_or_default().to_ascii_uppercase();
+            let add = change.starts_with('+');
+            for message in &mut mailbox.messages {
+                if !in_set(&set, message.uid) {
+                    continue;
+                }
+                if change.contains("\\SEEN") {
+                    message.seen = add;
+                }
+                if change.contains("\\FLAGGED") {
+                    message.flagged = add;
+                }
+            }
+            format!("{tag} OK done\r\n").into_bytes()
         }
         _ => format!("{tag} BAD unknown UID command\r\n").into_bytes(),
     }

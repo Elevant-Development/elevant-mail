@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { Avatar } from "@/components/common/Avatar";
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
 import { Button } from "@/components/ui/button";
+import { useMessageActions } from "@/hooks/use-message-actions";
 import { useResolvedMode } from "@/hooks/use-resolved-mode";
 import { describeError } from "@/lib/errors";
 import { displayName, formatFullDate } from "@/lib/formatting";
@@ -73,6 +74,9 @@ function BodyError({ error, onRetry }: { error: unknown; onRetry: () => void }) 
   );
 }
 
+/** How long a mail has to stay open before it counts as read. */
+const MARK_READ_DELAY_MS = 1000;
+
 function RemoteImagesBar({ count, onLoad }: { count: number; onLoad: () => void }) {
   return (
     <div className="mb-4 flex items-center gap-3 rounded-xl border bg-muted/40 px-3 py-2 font-sans text-xs text-muted-foreground">
@@ -97,6 +101,24 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
     selectedMessageId ? (s.remoteImagesAllowed[selectedMessageId] ?? false) : false,
   );
   const allowRemoteImages = useUiStore((s) => s.allowRemoteImages);
+  const { setRead, setFlagged } = useMessageActions();
+
+  // Opening marks as read after a moment, so moving through the list with j/k does not. Once
+  // per opening: marking it unread again (u) keeps it unread.
+  const unreadId = message && !message.isRead ? message.id : null;
+  const autoMarked = useRef<string | null>(null);
+  const markRead = useEffectEvent((messageId: string) => {
+    autoMarked.current = messageId;
+    void setRead([messageId], true);
+  });
+  useEffect(() => {
+    if (autoMarked.current !== selectedMessageId) autoMarked.current = null;
+  }, [selectedMessageId]);
+  useEffect(() => {
+    if (unreadId === null || autoMarked.current === unreadId) return;
+    const timer = window.setTimeout(() => markRead(unreadId), MARK_READ_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [unreadId]);
   const dark = useResolvedMode() === "dark";
   // Per mail and session: the other look than the default, light for adapted mail and dark
   // for designed mail.
@@ -227,7 +249,7 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
             <IconButton
               label={message.isRead ? t("reader.markUnread") : t("reader.markRead")}
               icon={<Icon name={message.isRead ? "mail" : "mailOpen"} />}
-              disabled
+              onClick={() => void setRead([message.id], !message.isRead)}
             />
             <IconButton
               label={message.isFlagged ? t("reader.unflag") : t("reader.flag")}
@@ -238,7 +260,7 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
                   className={cn(message.isFlagged && "text-amber-400")}
                 />
               }
-              disabled
+              onClick={() => void setFlagged([message.id], !message.isFlagged)}
             />
             <IconButton label={t("reader.archive")} icon={<Icon name="archive" />} disabled />
             <IconButton label={t("reader.delete")} icon={<Icon name="trash" />} disabled />

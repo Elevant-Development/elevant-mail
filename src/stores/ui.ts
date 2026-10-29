@@ -29,6 +29,8 @@ interface UiState {
   /** Only used in the narrow layout, where the sidebar is an overlay. */
   sidebarOpen: boolean;
   accountDialogOpen: boolean;
+  /** Text in the search field; while it is not empty, the list shows search results. */
+  searchQuery: string;
   /** Mails whose external images the user allowed in this session. */
   remoteImagesAllowed: Record<string, boolean | undefined>;
 
@@ -43,6 +45,7 @@ interface UiState {
   setSidebarOpen: (open: boolean) => void;
   setAccountDialogOpen: (open: boolean) => void;
   allowRemoteImages: (messageId: string) => void;
+  setSearchQuery: (query: string) => void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -59,6 +62,7 @@ export const useUiStore = create<UiState>()(
       sidebarOpen: false,
       accountDialogOpen: false,
       remoteImagesAllowed: {},
+      searchQuery: "",
 
       setMode: (mode) => set({ mode }),
       setTheme: (themeId) => set({ themeId }),
@@ -67,10 +71,16 @@ export const useUiStore = create<UiState>()(
       setFont: (fontId) => set({ fontId }),
       setDensity: (density) => set({ density }),
       selectMailbox: (mailboxId) =>
-        set({ selectedMailboxId: mailboxId, selectedMessageId: null, sidebarOpen: false }),
+        set({
+          selectedMailboxId: mailboxId,
+          selectedMessageId: null,
+          sidebarOpen: false,
+          searchQuery: "",
+        }),
       selectMessage: (messageId) => set({ selectedMessageId: messageId }),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       setAccountDialogOpen: (open) => set({ accountDialogOpen: open, sidebarOpen: false }),
+      setSearchQuery: (query) => set({ searchQuery: query }),
       allowRemoteImages: (messageId) =>
         set((state) => ({
           remoteImagesAllowed: { ...state.remoteImagesAllowed, [messageId]: true },

@@ -33,6 +33,13 @@ export function hasOpenOverlay(): boolean {
 /** Marks the scrollable message list and reader body, so shortcuts know where the focus is. */
 export const LIST_ATTRIBUTE = "data-message-list";
 export const READER_ATTRIBUTE = "data-reader-body";
+export const SEARCH_ATTRIBUTE = "data-search-input";
+
+export function focusSearch() {
+  const input = document.querySelector<HTMLInputElement>(`[${SEARCH_ATTRIBUTE}]`);
+  input?.focus();
+  input?.select();
+}
 
 export function focusReader() {
   document.querySelector<HTMLElement>(`[${READER_ATTRIBUTE}]`)?.focus();

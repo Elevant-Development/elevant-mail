@@ -21,6 +21,15 @@ pub async fn list_messages(
     Ok(mailbox::list_messages(&state.db.conn(), &mailbox_id)?)
 }
 
+/// Full-text search over all cached mail, newest first.
+#[tauri::command]
+pub async fn search_messages(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<MessageSummary>, CommandError> {
+    Ok(mailbox::search_messages(&state.db.conn(), &query)?)
+}
+
 /// `remote_images`: the user allowed the external images of this mail.
 #[tauri::command]
 pub async fn get_message(

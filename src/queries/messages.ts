@@ -1,5 +1,6 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { api, type Message } from "@/lib/tauri";
 import { useUiStore } from "@/stores/ui";
 
@@ -44,4 +45,29 @@ export function useFullBody(message: Message | null | undefined) {
     enabled: message != null && !message.bodyComplete,
     retry: false,
   });
+}
+
+export function useSearch(query: string) {
+  return useQuery({
+    queryKey: ["search", query],
+    queryFn: () => api.searchMessages(query),
+    enabled: query.trim() !== "",
+    // The previous results stay while the next word is typed.
+    placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * What the list shows: search results while the search field has text, otherwise the selected
+ * mailbox. The list and the keyboard shortcuts both use this, so they always agree.
+ */
+export function useVisibleMessages() {
+  const mailboxId = useUiStore((s) => s.selectedMailboxId);
+  const query = useDebouncedValue(
+    useUiStore((s) => s.searchQuery.trim()),
+    150,
+  );
+  const mailbox = useMessages(mailboxId);
+  const search = useSearch(query);
+  return query === "" ? { ...mailbox, searching: false } : { ...search, searching: true };
 }

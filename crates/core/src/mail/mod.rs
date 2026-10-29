@@ -4,6 +4,7 @@ pub mod folders;
 pub mod imap;
 pub mod parse;
 pub mod presets;
+pub mod push;
 pub mod remote;
 pub mod sanitize;
 pub mod settings;

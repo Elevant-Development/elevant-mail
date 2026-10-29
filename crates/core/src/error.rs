@@ -86,6 +86,9 @@ pub enum Error {
     #[error("not a web or mail link")]
     InvalidLink,
 
+    #[error("the server refused a change of read or flagged state")]
+    ActionRefused,
+
     #[error("could not hand the link to the system: {0}")]
     OpenLink(std::io::Error),
 }
@@ -109,6 +112,8 @@ pub enum ErrorKind {
     ServerError,
     AccountExists,
     NotFound,
+    /// The server did not take a change; it was undone in the app.
+    ActionRefused,
     Internal,
 }
 
@@ -160,6 +165,7 @@ impl Error {
             Error::OAuthRequired { .. } => ErrorKind::OAuthRequired,
             Error::Protocol(_) => ErrorKind::ServerError,
             Error::AccountExists => ErrorKind::AccountExists,
+            Error::ActionRefused => ErrorKind::ActionRefused,
             Error::AccountNotFound | Error::FolderNotFound | Error::MessageNotFound => {
                 ErrorKind::NotFound
             }
@@ -198,6 +204,7 @@ impl Error {
             | Error::FolderNotFound
             | Error::MessageNotFound
             | Error::InvalidLink
+            | Error::ActionRefused
             | Error::OpenLink(_) => None,
         }
     }

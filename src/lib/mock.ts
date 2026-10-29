@@ -382,6 +382,25 @@ function toSummary({
   return summary;
 }
 
+function setMockFlag(messageIds: string[], flag: "isRead" | "isFlagged", value: boolean) {
+  const accountIds = new Set<string>();
+  for (const id of messageIds) {
+    const index = messages.findIndex((m) => m.id === id);
+    const message = messages[index];
+    if (!message || message[flag] === value) continue;
+    messages[index] = { ...message, [flag]: value };
+    accountIds.add(message.accountId);
+    if (flag === "isRead") {
+      folders = folders.map((f) =>
+        f.id === message.folderId
+          ? { ...f, unreadCount: Math.max(f.unreadCount + (value ? -1 : 1), 0) }
+          : f,
+      );
+    }
+  }
+  return [...accountIds];
+}
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function suggest(email: string): SuggestedSettings {
@@ -453,6 +472,23 @@ export const mockBackend: Backend = {
       bodyHtml: html && message.bodyComplete ? renderMockHtml(html, remoteImages) : null,
     };
   },
+  searchMessages: async (query) => {
+    const words = query.toLocaleLowerCase("de").split(/\s+/).filter(Boolean);
+    if (words.length === 0) return [];
+    return messages
+      .filter((m) => {
+        const text = [m.subject, m.from.name, m.from.address, m.bodyText]
+          .join(" ")
+          .toLocaleLowerCase("de");
+        return words.every((word) => text.includes(word));
+      })
+      .map(toSummary)
+      .sort((a, b) => b.dateSent - a.dateSent)
+      .slice(0, 300);
+  },
+  setRead: async (messageIds, read) => setMockFlag(messageIds, "isRead", read),
+  setFlagged: async (messageIds, flagged) => setMockFlag(messageIds, "isFlagged", flagged),
+  pushActions: async () => 0,
   openLink: async (url) => console.info("open link", url),
   onMailLink: async () => () => undefined,
   loadMessageBody: async (messageId) => {

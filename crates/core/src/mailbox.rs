@@ -95,6 +95,41 @@ pub fn list_messages(conn: &Connection, mailbox_id: &str) -> Result<Vec<MessageS
     Ok(messages)
 }
 
+/// Search results shown at most; the newest come first.
+const SEARCH_LIMIT: u32 = 300;
+
+/// Full-text search over subject, sender and text of all cached mail, newest first. Every word
+/// must match, as a word or the start of one ("rech" finds "Rechnung").
+pub fn search_messages(conn: &Connection, query: &str) -> Result<Vec<MessageSummary>> {
+    let Some(fts_query) = fts_query(query) else {
+        return Ok(Vec::new());
+    };
+    let sql = format!(
+        "SELECT {SUMMARY_COLUMNS} FROM messages_fts
+         JOIN messages m ON m.seq = messages_fts.rowid
+         WHERE messages_fts MATCH ?1
+         ORDER BY coalesce(m.date_sent, m.date_received, m.fetched_at) DESC, m.uid DESC
+         LIMIT {SEARCH_LIMIT}"
+    );
+    let messages = conn
+        .prepare(&sql)?
+        .query_map([fts_query], summary_from_row)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(messages)
+}
+
+/// User input as an FTS5 query: each word quoted (so `-`, `:` or `AND` are just text) and
+/// matched as a prefix.
+fn fts_query(input: &str) -> Option<String> {
+    let terms: Vec<String> = input
+        .split_whitespace()
+        .map(|word| word.replace('"', ""))
+        .filter(|word| word.chars().any(char::is_alphanumeric))
+        .map(|word| format!("\"{word}\"*"))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" "))
+}
+
 /// A message ready to show, plus what the asset protocol needs to serve its external images.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenedMessage {
@@ -299,5 +334,47 @@ mod tests {
         assert_eq!(mime, "image/png");
         assert_eq!(data, [0x89, b'P', b'N', b'G']);
         assert!(inline_image(&conn, &newest, "other").unwrap().is_none());
+    }
+
+    #[test]
+    fn builds_safe_search_queries() {
+        assert_eq!(
+            fts_query("  Rech  Müller "),
+            Some(r#""Rech"* "Müller"*"#.into())
+        );
+        assert_eq!(
+            fts_query(r#"a"b OR -x"#),
+            Some(r#""ab"* "OR"* "-x"*"#.into())
+        );
+        assert_eq!(fts_query(" \" - "), None);
+    }
+
+    #[test]
+    fn searches_subject_sender_and_text() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let (target, _) = seed(&conn);
+        conn.execute(
+            "UPDATE messages SET subject = 'Rechnung Oktober', body_text = 'Grüße aus Köln'
+             WHERE id = ?1",
+            [&target],
+        )
+        .unwrap();
+
+        let ids = |query: &str| -> Vec<String> {
+            search_messages(&conn, query)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.id)
+                .collect()
+        };
+        assert_eq!(ids("rech"), [target.as_str()]);
+        // Diacritics do not matter (ß is its own letter), and every word has to match.
+        assert_eq!(ids("koln grüße"), [target.as_str()]);
+        assert_eq!(ids("Köln Oktober"), [target.as_str()]);
+        assert!(ids("Oktober nirgends").is_empty());
+        assert!(ids("").is_empty());
+        // Sender addresses, newest first, across folders.
+        assert_eq!(ids("lena@example").len(), 3);
     }
 }

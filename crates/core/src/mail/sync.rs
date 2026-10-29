@@ -138,7 +138,10 @@ async fn run_on_folder(
         0,
     );
     let mut session = imap::open_session(&settings, &password, &connector).await?;
-    let result = sync_folder_in(db, &mut session, &folder, mode, progress).await;
+    let result = match push_before_sync(db, &mut session, &folder.account_id).await {
+        Ok(()) => sync_folder_in(db, &mut session, &folder, mode, progress).await,
+        Err(error) => Err(error),
+    };
     let _ = with_timeout(COMMAND_TIMEOUT, session.logout()).await;
     result
 }
@@ -149,6 +152,7 @@ pub(crate) async fn sync_inbox_in(
     account_id: &str,
     progress: ProgressFn<'_>,
 ) -> Result<SyncReport> {
+    push_before_sync(db, session, account_id).await?;
     // Bound first: in a `match` the lock guard would live through the arms and their awaits.
     let known = inbox_state(&db.conn(), account_id)?;
     let inbox = match known {
@@ -161,6 +165,19 @@ pub(crate) async fn sync_inbox_in(
         }
     };
     sync_folder_in(db, session, &inbox, Mode::Newest, progress).await
+}
+
+/// Local changes go out first, so the flag sync that follows does not undo them.
+async fn push_before_sync(
+    db: &Database,
+    session: &mut ImapSession,
+    account_id: &str,
+) -> Result<()> {
+    match crate::mail::push::push_actions_in(db, session, account_id).await {
+        // Refused changes already have the server's flags back; the sync can go on.
+        Ok(_) | Err(Error::ActionRefused) => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 async fn sync_folder_in(
@@ -376,7 +393,11 @@ pub(crate) fn uid_set(uids: &[u32]) -> String {
     parts.join(",")
 }
 
-async fn fetch_all(session: &mut ImapSession, uids: &[u32], query: &str) -> Result<Vec<Fetch>> {
+pub(crate) async fn fetch_all(
+    session: &mut ImapSession,
+    uids: &[u32],
+    query: &str,
+) -> Result<Vec<Fetch>> {
     fetch_within(session, uids, query, COMMAND_TIMEOUT * 2).await
 }
 
@@ -405,14 +426,14 @@ async fn fetch_within(
     with_timeout(timeout, fetches).await?
 }
 
-struct Meta {
-    is_read: bool,
-    is_flagged: bool,
+pub(crate) struct Meta {
+    pub(crate) is_read: bool,
+    pub(crate) is_flagged: bool,
     date_received: Option<i64>,
     size: u32,
 }
 
-fn meta_of(fetch: &Fetch) -> Meta {
+pub(crate) fn meta_of(fetch: &Fetch) -> Meta {
     let flags: Vec<Flag<'_>> = fetch.flags().collect();
     Meta {
         is_read: flags.contains(&Flag::Seen),
@@ -565,7 +586,10 @@ async fn update_flags(
     let tx = conn.transaction()?;
     for (uid, is_read, is_flagged) in &changed {
         tx.execute(
-            "UPDATE messages SET is_read = ?3, is_flagged = ?4 WHERE folder_id = ?1 AND uid = ?2",
+            // A change the user made meanwhile is still on its way to the server: it wins.
+            "UPDATE messages SET is_read = ?3, is_flagged = ?4
+             WHERE folder_id = ?1 AND uid = ?2
+               AND id NOT IN (SELECT message_id FROM pending_actions)",
             params![folder_id, uid, is_read, is_flagged],
         )?;
     }
@@ -624,7 +648,7 @@ fn inbox_state(conn: &Connection, account_id: &str) -> Result<Option<FolderState
     }
 }
 
-fn credentials(
+pub(crate) fn credentials(
     db: &Database,
     secrets: &dyn SecretStore,
     account_id: &str,
@@ -784,6 +808,32 @@ mod tests {
             )
             .await
             .unwrap()
+        }
+
+        fn id_of(&self, uid: u32) -> String {
+            self.db
+                .conn()
+                .query_row("SELECT id FROM messages WHERE uid = ?1", [uid], |row| {
+                    row.get(0)
+                })
+                .unwrap()
+        }
+
+        fn cached_state(&self, uid: u32) -> (bool, bool) {
+            cached_flags(&self.db.conn(), &self.inbox_id).unwrap()[&uid]
+        }
+
+        fn server_state(&self, uid: u32) -> (bool, bool) {
+            let mailbox = self.server.mailbox.lock().unwrap();
+            let message = mailbox.messages.iter().find(|m| m.uid == uid).unwrap();
+            (message.seen, message.flagged)
+        }
+
+        fn queued(&self) -> u32 {
+            self.db
+                .conn()
+                .query_row("SELECT count(*) FROM pending_actions", [], |row| row.get(0))
+                .unwrap()
         }
 
         fn cached_uids(&self) -> Vec<u32> {
@@ -1009,5 +1059,116 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n"
             .unwrap();
         assert_eq!(mime, "image/png");
         assert_eq!(&data[1..4], b"PNG");
+    }
+
+    #[tokio::test]
+    async fn read_and_flagged_reach_the_server() {
+        use crate::actions::{FlagAction, set_flag};
+        let setup = setup(3).await;
+        setup.sync().await;
+        set_flag(
+            &setup.db,
+            &[setup.id_of(1), setup.id_of(2)],
+            FlagAction::Read,
+            true,
+        )
+        .unwrap();
+        set_flag(&setup.db, &[setup.id_of(3)], FlagAction::Flagged, true).unwrap();
+
+        let sent = crate::mail::push::push_with_connector(
+            &setup.db,
+            &setup.secrets,
+            &setup.account_id,
+            &setup.server.connector,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(sent, 3);
+        assert_eq!(setup.server_state(1), (true, false));
+        assert_eq!(setup.server_state(2), (true, false));
+        assert_eq!(setup.server_state(3), (false, true));
+        assert_eq!(setup.queued(), 0);
+        let commands = setup.server.mailbox.lock().unwrap().commands.clone();
+        assert!(
+            commands
+                .iter()
+                .any(|c| c == "UID STORE 1:2 +FLAGS.SILENT (\\Seen)"),
+            "{commands:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_offline_change_goes_out_with_the_next_sync() {
+        use crate::actions::{FlagAction, set_flag};
+        let setup = setup(2).await;
+        setup.sync().await;
+        set_flag(&setup.db, &[setup.id_of(1)], FlagAction::Read, true).unwrap();
+
+        // The flag sync would otherwise put the server's "unread" back.
+        setup.sync().await;
+
+        assert_eq!(setup.cached_state(1), (true, false));
+        assert_eq!(setup.server_state(1), (true, false));
+        assert_eq!(setup.queued(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_refused_change_is_undone() {
+        use crate::actions::{FlagAction, set_flag};
+        let setup = setup(1).await;
+        setup.sync().await;
+        setup.server.mailbox.lock().unwrap().refuse_store = true;
+        set_flag(&setup.db, &[setup.id_of(1)], FlagAction::Flagged, true).unwrap();
+        assert_eq!(setup.cached_state(1), (false, true));
+
+        let result = crate::mail::push::push_with_connector(
+            &setup.db,
+            &setup.secrets,
+            &setup.account_id,
+            &setup.server.connector,
+        )
+        .await;
+
+        assert!(matches!(result, Err(Error::ActionRefused)), "{result:?}");
+        assert_eq!(setup.cached_state(1), (false, false));
+        assert_eq!(setup.queued(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_change_made_during_a_sync_is_kept() {
+        let setup = setup(1).await;
+        setup.sync().await;
+        let id = setup.id_of(1);
+        // As if the user marked it read while the sync was fetching flags.
+        setup
+            .db
+            .conn()
+            .execute_batch(&format!(
+                "UPDATE messages SET is_read = 1 WHERE id = '{id}';
+                 INSERT INTO pending_actions (account_id, message_id, action, payload, created_at)
+                 SELECT account_id, id, 'set_read', '{{\"value\":true}}', 0 FROM messages WHERE id = '{id}';"
+            ))
+            .unwrap();
+        let cached = cached_flags(&setup.db.conn(), &setup.inbox_id).unwrap();
+        let mut cached_before = cached.clone();
+        cached_before.insert(1, (false, false));
+        let (settings, password) =
+            credentials(&setup.db, &setup.secrets, &setup.account_id).unwrap();
+        let mut session = imap::open_session(&settings, &password, &setup.server.connector)
+            .await
+            .unwrap();
+        session.examine("INBOX").await.unwrap();
+        // The server still says unread, but the queued change wins.
+        update_flags(
+            &setup.db,
+            &mut session,
+            &setup.inbox_id,
+            &cached_before,
+            &[1],
+        )
+        .await
+        .unwrap();
+        assert_eq!(setup.cached_state(1), (true, false));
     }
 }

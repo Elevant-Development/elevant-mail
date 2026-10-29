@@ -2,6 +2,7 @@
 //! Tauri, so the desktop app, the MCP server and tests can all use it.
 
 pub mod accounts;
+pub mod actions;
 pub mod db;
 mod error;
 pub mod ids;
