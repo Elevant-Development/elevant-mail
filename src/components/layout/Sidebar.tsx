@@ -1,8 +1,11 @@
+import { useState } from "react";
+
 import { AccountList } from "@/components/accounts/AccountList";
+import { RemoveAccountDialog } from "@/components/accounts/RemoveAccountDialog";
 import { Icon } from "@/components/common/Icon";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
-import { UNIFIED_INBOX } from "@/lib/tauri";
+import { type Account, UNIFIED_INBOX } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
 import { useFolders } from "@/queries/folders";
@@ -19,6 +22,8 @@ export function Sidebar({ className }: SidebarProps) {
   const { data: folders = [] } = useFolders();
   const selectedMailboxId = useUiStore((s) => s.selectedMailboxId);
   const selectMailbox = useUiStore((s) => s.selectMailbox);
+  const setAccountDialogOpen = useUiStore((s) => s.setAccountDialogOpen);
+  const [accountToRemove, setAccountToRemove] = useState<Account | null>(null);
 
   const unifiedUnread = folders
     .filter((f) => f.role === "inbox")
@@ -41,14 +46,21 @@ export function Sidebar({ className }: SidebarProps) {
           folders={folders}
           selectedMailboxId={selectedMailboxId}
           onSelectMailbox={selectMailbox}
+          onRemoveAccount={setAccountToRemove}
         />
       </div>
       <div className="border-t border-sidebar-border p-2">
-        <Button variant="ghost" size="sm" className="w-full justify-start" disabled>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start"
+          onClick={() => setAccountDialogOpen(true)}
+        >
           <Icon name="plus" />
           {t("sidebar.addAccount")}
         </Button>
       </div>
+      <RemoveAccountDialog account={accountToRemove} onClose={() => setAccountToRemove(null)} />
     </nav>
   );
 }

@@ -1,67 +1,60 @@
 /**
  * The only place the frontend talks to the backend. Every Tauri command gets a typed wrapper
- * here, and all command types live in this file.
+ * here. The data types are generated from Rust (src/lib/bindings, written by `cargo test`).
  *
- * Until the Rust commands exist, every call is served from mock data, in the browser and in the
- * Tauri window alike. `usesMockData` lets the UI say so.
+ * Inside Tauri the real backend answers; in a plain browser (`pnpm dev`) sample data does, so the
+ * interface can be worked on without a mail server.
  */
+import { invoke, isTauri } from "@tauri-apps/api/core";
+
+import type { Account } from "./bindings/Account";
+import type { Folder } from "./bindings/Folder";
+import type { Message } from "./bindings/Message";
+import type { MessageSummary } from "./bindings/MessageSummary";
+import type { NewAccount } from "./bindings/NewAccount";
+import type { SuggestedSettings } from "./bindings/SuggestedSettings";
 import { mockBackend } from "./mock";
 
-export type FolderRole = "inbox" | "sent" | "drafts" | "archive" | "trash" | "junk";
+export type { Account } from "./bindings/Account";
+export type { Address } from "./bindings/Address";
+export type { ErrorKind } from "./bindings/ErrorKind";
+export type { Folder } from "./bindings/Folder";
+export type { FolderRole } from "./bindings/FolderRole";
+export type { Hint } from "./bindings/Hint";
+export type { ImapSettings } from "./bindings/ImapSettings";
+export type { Message } from "./bindings/Message";
+export type { MessageSummary } from "./bindings/MessageSummary";
+export type { NewAccount } from "./bindings/NewAccount";
+export type { Provider } from "./bindings/Provider";
+export type { Security } from "./bindings/Security";
+export type { SuggestedSettings } from "./bindings/SuggestedSettings";
+export type { SuggestionSource } from "./bindings/SuggestionSource";
 
-export interface Account {
-  id: string;
-  displayName: string;
-  emailAddress: string;
-  /** CSS colour used to tell accounts apart. */
-  color: string;
-}
-
-export interface Folder {
-  id: string;
-  accountId: string;
-  name: string;
-  role: FolderRole | null;
-  unreadCount: number;
-  totalCount: number;
-}
-
-export interface Address {
-  name: string | null;
-  address: string;
-}
-
-export interface MessageSummary {
-  id: string;
-  accountId: string;
-  folderId: string;
-  subject: string | null;
-  from: Address;
-  /** Unix time in milliseconds. */
-  dateSent: number;
-  snippet: string;
-  isRead: boolean;
-  isFlagged: boolean;
-  hasAttachments: boolean;
-}
-
-export interface Message extends MessageSummary {
-  to: Address[];
-  cc: Address[];
-  bodyText: string | null;
-}
-
-/** Mailbox id that shows the inboxes of all accounts together. */
+/** Mailbox id that shows the inboxes of all accounts together (same value in Rust). */
 export const UNIFIED_INBOX = "unified-inbox";
 
 export interface Backend {
   listAccounts(): Promise<Account[]>;
+  detectSettings(email: string): Promise<SuggestedSettings>;
+  /** Logs in once to check the settings, then stores the account and its password. */
+  addAccount(account: NewAccount, password: string): Promise<Account>;
+  removeAccount(accountId: string): Promise<void>;
   listFolders(): Promise<Folder[]>;
   /** `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first. */
   listMessages(mailboxId: string): Promise<MessageSummary[]>;
   getMessage(messageId: string): Promise<Message | null>;
 }
 
-export const usesMockData = true;
+const tauriBackend: Backend = {
+  listAccounts: () => invoke("list_accounts"),
+  detectSettings: (email) => invoke("detect_settings", { email }),
+  addAccount: (account, password) => invoke("add_account", { account, password }),
+  removeAccount: (accountId) => invoke("remove_account", { accountId }),
+  listFolders: () => invoke("list_folders"),
+  listMessages: (mailboxId) => invoke("list_messages", { mailboxId }),
+  getMessage: (messageId) => invoke("get_message", { messageId }),
+};
 
-export const api: Backend = mockBackend;
+export const usesMockData = !isTauri();
+
+export const api: Backend = usesMockData ? mockBackend : tauriBackend;

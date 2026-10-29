@@ -5,6 +5,82 @@ export const de = {
   "titlebar.toggleSidebar": "Seitenleiste",
   "titlebar.settings": "Einstellungen",
 
+  "dialog.close": "Schließen",
+
+  "welcome.title": "Willkommen bei Elevant Mail",
+  "welcome.text":
+    "Füge dein erstes Konto hinzu. Deine Mails bleiben auf diesem Rechner, ohne Cloud und ohne Konto bei uns.",
+
+  "account.add.title": "Konto hinzufügen",
+  "account.add.description":
+    "Elevant Mail meldet sich einmal an, um die Einstellungen zu prüfen. Das Passwort landet im Schlüsselbund deines Systems.",
+  "account.add.cancel": "Abbrechen",
+  "account.add.next": "Weiter",
+  "account.add.detecting": "Suche Einstellungen…",
+  "account.add.connect": "Verbinden und hinzufügen",
+  "account.add.connecting": "Verbinde und melde an…",
+  "account.field.email": "E-Mail-Adresse",
+  "account.field.password": "Passwort",
+  "account.field.displayName": "Name in der Seitenleiste",
+  "account.field.displayNamePlaceholder": "z. B. Privat oder Arbeit",
+  "account.field.host": "Server",
+  "account.field.port": "Port",
+  "account.field.security": "Verschlüsselung",
+  "account.field.username": "Benutzername",
+  "account.source.preset": "Bekannter Anbieter",
+  "account.source.mxRecord": "Vom Mailserver deiner Domain abgeleitet",
+  "account.source.guess": "Geschätzt, bitte prüfen",
+  "account.settings.edit": "Ändern",
+  "account.tip.gmail":
+    "Gmail braucht ein App-Passwort statt deines normalen Passworts. Du erstellst es im Google-Konto unter Sicherheit → App-Passwörter, dafür muss die Bestätigung in zwei Schritten eingeschaltet sein.",
+  "account.tip.icloud":
+    "iCloud braucht ein app-spezifisches Passwort, das du unter account.apple.com erstellst.",
+  "account.tip.yahoo":
+    "Yahoo braucht ein App-Passwort aus den Sicherheitseinstellungen deines Kontos.",
+  "account.tip.webDe":
+    "Bei web.de muss der Abruf per IMAP eingeschaltet sein: Einstellungen → POP3/IMAP Abruf.",
+  "account.tip.gmx":
+    "Bei GMX muss der Abruf per IMAP eingeschaltet sein: Einstellungen → POP3/IMAP Abruf.",
+  "account.tip.microsoft":
+    "Microsoft-Konten melden sich nur über Microsoft an, nicht mit Passwort. Das kommt mit einer der nächsten Versionen.",
+  "account.remove.action": "Konto „{name}“ entfernen",
+  "account.remove.title": "„{name}“ entfernen?",
+  "account.remove.description":
+    "Die Mails dieses Kontos werden von diesem Rechner gelöscht und das Passwort aus dem Schlüsselbund entfernt. Auf dem Server bleibt alles erhalten.",
+  "account.remove.confirm": "Entfernen",
+
+  "error.kind.storage": "Die lokale Datenbank ist nicht erreichbar.",
+  "error.kind.storageTooNew": "Diese Daten stammen von einer neueren Version von Elevant Mail.",
+  "error.kind.keyringUnavailable": "Der Schlüsselbund des Systems ist nicht erreichbar.",
+  "error.kind.credentialMissing": "Das Passwort fehlt im Schlüsselbund.",
+  "error.kind.invalidInput": "Die Eingabe ist ungültig.",
+  "error.kind.serverNotFound": "Der Server wurde nicht gefunden.",
+  "error.kind.connectionFailed": "Die Verbindung zum Server ist fehlgeschlagen.",
+  "error.kind.timeout": "Der Server antwortet nicht.",
+  "error.kind.certificateInvalid":
+    "Das Zertifikat des Servers ist nicht gültig, deshalb verbindet sich Elevant Mail nicht.",
+  "error.kind.authenticationFailed": "Die Anmeldung wurde abgelehnt.",
+  "error.kind.oAuthRequired": "Dieses Konto braucht die Anmeldung über den Anbieter.",
+  "error.kind.serverError": "Der Server hat unerwartet geantwortet.",
+  "error.kind.accountExists": "Dieses Konto ist schon eingerichtet.",
+  "error.kind.notFound": "Das Konto gibt es nicht mehr.",
+  "error.kind.internal": "Etwas ist schiefgelaufen.",
+  "error.hint.checkDiskSpace": "Prüfe, ob auf dem Rechner genug Speicherplatz frei ist.",
+  "error.hint.updateApp": "Aktualisiere Elevant Mail auf die neueste Version.",
+  "error.hint.unlockKeyring": "Entsperre den Schlüsselbund deines Systems und versuche es erneut.",
+  "error.hint.enterPasswordAgain": "Gib das Passwort noch einmal ein.",
+  "error.hint.checkEmailAddress": "Prüfe die E-Mail-Adresse.",
+  "error.hint.checkServerAddress": "Prüfe die Serveradresse.",
+  "error.hint.checkPortAndSecurity":
+    "Prüfe Port und Verschlüsselung, meist 993 mit TLS oder 143 mit STARTTLS.",
+  "error.hint.checkNetwork": "Prüfe die Internetverbindung und versuche es erneut.",
+  "error.hint.checkCredentials": "Prüfe Benutzername und Passwort.",
+  "error.hint.useAppPassword": "Verwende ein App-Passwort statt deines normalen Passworts.",
+  "error.hint.enableImapAccess":
+    "Schalte den IMAP-Abruf in den Einstellungen deines Postfachs ein.",
+  "error.hint.signInWithMicrosoft":
+    "Die Anmeldung über Microsoft kommt mit einer der nächsten Versionen.",
+
   "window.minimize": "Minimieren",
   "window.maximize": "Maximieren",
   "window.restore": "Wiederherstellen",
@@ -47,6 +123,7 @@ export const de = {
   "folder.archive": "Archiv",
   "folder.trash": "Papierkorb",
   "folder.junk": "Spam",
+  "folder.all": "Alle Nachrichten",
 
   "list.empty": "Keine Mails in diesem Ordner",
   "list.error": "Die Mails konnten nicht geladen werden",

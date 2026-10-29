@@ -17,7 +17,16 @@ pub fn run() {
             app.manage(state);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::app::app_status])
+        .invoke_handler(tauri::generate_handler![
+            commands::app::app_status,
+            commands::accounts::detect_settings,
+            commands::accounts::add_account,
+            commands::accounts::list_accounts,
+            commands::accounts::remove_account,
+            commands::mailbox::list_folders,
+            commands::mailbox::list_messages,
+            commands::mailbox::get_message,
+        ])
         .run(tauri::generate_context!())
         .expect("failed to start Elevant Mail");
 }

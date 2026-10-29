@@ -1,9 +1,13 @@
-//! Core of Elevant Mail: local cache, credentials and (later) the mail protocols. Deliberately
-//! free of Tauri, so the desktop app, the MCP server and tests can all use it.
+//! Core of Elevant Mail: local cache, credentials and the mail protocols. Deliberately free of
+//! Tauri, so the desktop app, the MCP server and tests can all use it.
 
+pub mod accounts;
 pub mod db;
 mod error;
 pub mod ids;
+pub mod mail;
+pub mod mailbox;
+pub mod model;
 pub mod redact;
 pub mod secrets;
 

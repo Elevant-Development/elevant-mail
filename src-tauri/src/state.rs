@@ -1,11 +1,12 @@
 //! Shared state of the running app, created once at startup.
 
 use elevant_mail_core::Database;
-use elevant_mail_core::secrets::KeyringStore;
+use elevant_mail_core::secrets::{KeyringStore, SecretStore};
 use tauri::{AppHandle, Manager};
 
 pub struct AppState {
     pub db: Database,
+    pub secrets: Box<dyn SecretStore>,
     /// Checked once at startup. Without a keyring, accounts cannot store their passwords.
     pub keyring_available: bool,
 }
@@ -27,9 +28,12 @@ impl AppState {
                 false
             }
         };
+        // Keyring entries are grouped under the app identifier, e.g. "dev.elevant.mail".
+        let secrets = Box::new(KeyringStore::new(app.config().identifier.clone()));
 
         Ok(Self {
             db,
+            secrets,
             keyring_available,
         })
     }

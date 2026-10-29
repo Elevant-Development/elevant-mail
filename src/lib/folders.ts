@@ -2,7 +2,7 @@ import { locale, t } from "./i18n";
 import type { Account, Folder, FolderRole } from "./tauri";
 import { UNIFIED_INBOX } from "./tauri";
 
-const roleOrder: FolderRole[] = ["inbox", "drafts", "sent", "archive", "junk", "trash"];
+const roleOrder: FolderRole[] = ["inbox", "drafts", "sent", "archive", "all", "junk", "trash"];
 
 /** Translated name for special folders, the server's name for all others. */
 export function folderLabel(folder: Folder): string {

@@ -2,6 +2,9 @@
 //! the user can do about it. Messages and sources are for logs only and never contain secrets.
 
 use serde::Serialize;
+use ts_rs::TS;
+
+use crate::mail::settings::Provider;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -31,22 +34,76 @@ pub enum Error {
 
     #[error("keyring error")]
     Keyring(#[source] keyring::Error),
+
+    #[error("not a valid email address")]
+    InvalidEmail,
+
+    #[error("not a valid server address")]
+    InvalidHost,
+
+    #[error("the server name could not be resolved")]
+    HostNotFound,
+
+    #[error("could not connect to the server")]
+    ConnectionFailed(#[source] std::io::Error),
+
+    #[error("the server did not answer in time")]
+    Timeout,
+
+    #[error("the server's certificate is not valid")]
+    CertificateInvalid(#[source] std::io::Error),
+
+    #[error("TLS handshake failed")]
+    TlsFailed(#[source] std::io::Error),
+
+    #[error("TLS could not be set up")]
+    TlsSetup(#[source] rustls::Error),
+
+    #[error("the server does not offer STARTTLS")]
+    StartTlsUnsupported,
+
+    #[error("the server rejected the login")]
+    AuthenticationFailed { provider: Option<Provider> },
+
+    #[error("this provider needs a sign-in via OAuth")]
+    OAuthRequired { provider: Provider },
+
+    #[error("unexpected reply from the mail server: {0}")]
+    Protocol(String),
+
+    #[error("this account has already been added")]
+    AccountExists,
+
+    #[error("account not found")]
+    AccountNotFound,
 }
 
 /// What went wrong, in categories the UI can translate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum ErrorKind {
     Storage,
     StorageTooNew,
     KeyringUnavailable,
     CredentialMissing,
+    InvalidInput,
+    ServerNotFound,
+    ConnectionFailed,
+    Timeout,
+    CertificateInvalid,
+    AuthenticationFailed,
+    OAuthRequired,
+    ServerError,
+    AccountExists,
+    NotFound,
     Internal,
 }
 
 /// A concrete next step for the user, translated in the UI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum Hint {
     /// The app data folder is not writable or the disk is full.
     CheckDiskSpace,
@@ -56,6 +113,19 @@ pub enum Hint {
     UnlockKeyring,
     /// The password is gone from the keyring; entering it again fixes it.
     EnterPasswordAgain,
+    CheckEmailAddress,
+    /// Typo in the host, or a certificate issued for a different name.
+    CheckServerAddress,
+    /// E.g. 993 with TLS, 143 with STARTTLS.
+    CheckPortAndSecurity,
+    CheckNetwork,
+    CheckCredentials,
+    /// Gmail, iCloud and Yahoo need an app password instead of the account password.
+    UseAppPassword,
+    /// web.de and GMX switch IMAP off until it is enabled in their web mail settings.
+    EnableImapAccess,
+    /// Microsoft accounts need the sign-in with Microsoft (OAuth), coming in a later version.
+    SignInWithMicrosoft,
 }
 
 impl Error {
@@ -65,7 +135,19 @@ impl Error {
             Error::SchemaTooNew { .. } => ErrorKind::StorageTooNew,
             Error::KeyringUnavailable(_) => ErrorKind::KeyringUnavailable,
             Error::SecretNotFound => ErrorKind::CredentialMissing,
-            Error::Keyring(_) => ErrorKind::Internal,
+            Error::InvalidEmail | Error::InvalidHost => ErrorKind::InvalidInput,
+            Error::HostNotFound => ErrorKind::ServerNotFound,
+            Error::ConnectionFailed(_) | Error::TlsFailed(_) | Error::StartTlsUnsupported => {
+                ErrorKind::ConnectionFailed
+            }
+            Error::Timeout => ErrorKind::Timeout,
+            Error::CertificateInvalid(_) => ErrorKind::CertificateInvalid,
+            Error::AuthenticationFailed { .. } => ErrorKind::AuthenticationFailed,
+            Error::OAuthRequired { .. } => ErrorKind::OAuthRequired,
+            Error::Protocol(_) => ErrorKind::ServerError,
+            Error::AccountExists => ErrorKind::AccountExists,
+            Error::AccountNotFound => ErrorKind::NotFound,
+            Error::Keyring(_) | Error::TlsSetup(_) => ErrorKind::Internal,
         }
     }
 
@@ -75,7 +157,28 @@ impl Error {
             Error::SchemaTooNew { .. } => Some(Hint::UpdateApp),
             Error::KeyringUnavailable(_) => Some(Hint::UnlockKeyring),
             Error::SecretNotFound => Some(Hint::EnterPasswordAgain),
-            Error::Database(_) | Error::Migration { .. } | Error::Keyring(_) => None,
+            Error::InvalidEmail => Some(Hint::CheckEmailAddress),
+            Error::InvalidHost | Error::HostNotFound | Error::CertificateInvalid(_) => {
+                Some(Hint::CheckServerAddress)
+            }
+            Error::ConnectionFailed(_) | Error::TlsFailed(_) | Error::StartTlsUnsupported => {
+                Some(Hint::CheckPortAndSecurity)
+            }
+            Error::Timeout => Some(Hint::CheckNetwork),
+            Error::AuthenticationFailed { provider } => Some(match provider {
+                Some(Provider::Gmail | Provider::Icloud | Provider::Yahoo) => Hint::UseAppPassword,
+                Some(Provider::WebDe | Provider::Gmx) => Hint::EnableImapAccess,
+                Some(Provider::Microsoft) => Hint::SignInWithMicrosoft,
+                None => Hint::CheckCredentials,
+            }),
+            Error::OAuthRequired { .. } => Some(Hint::SignInWithMicrosoft),
+            Error::Database(_)
+            | Error::Migration { .. }
+            | Error::Keyring(_)
+            | Error::TlsSetup(_)
+            | Error::Protocol(_)
+            | Error::AccountExists
+            | Error::AccountNotFound => None,
         }
     }
 }
@@ -101,5 +204,13 @@ mod tests {
         let error = Error::SecretNotFound;
         assert_eq!(error.kind(), ErrorKind::CredentialMissing);
         assert_eq!(error.hint(), Some(Hint::EnterPasswordAgain));
+    }
+
+    #[test]
+    fn failed_logins_get_provider_specific_hints() {
+        let hint = |provider| Error::AuthenticationFailed { provider }.hint();
+        assert_eq!(hint(Some(Provider::Gmail)), Some(Hint::UseAppPassword));
+        assert_eq!(hint(Some(Provider::WebDe)), Some(Hint::EnableImapAccess));
+        assert_eq!(hint(None), Some(Hint::CheckCredentials));
     }
 }

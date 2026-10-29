@@ -1,9 +1,12 @@
 import { useEffect } from "react";
 
+import { AccountDialog } from "@/components/accounts/AccountDialog";
+import { WelcomeScreen } from "@/components/accounts/WelcomeScreen";
 import { MessageList } from "@/components/mail/MessageList";
 import { MessageReader } from "@/components/mail/MessageReader";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
+import { useAccounts } from "@/queries/accounts";
 import { useUiStore } from "@/stores/ui";
 
 import { listWidth, sidebarWidth } from "./columns";
@@ -19,6 +22,8 @@ const panel = "overflow-hidden rounded-2xl border bg-card shadow-[0_1px_3px_var(
  */
 export function AppShell() {
   const isWide = useMediaQuery("(min-width: 1024px)");
+  const { data: accounts } = useAccounts();
+  const firstStart = accounts !== undefined && accounts.length === 0;
   const selectedMessageId = useUiStore((s) => s.selectedMessageId);
   const selectMessage = useUiStore((s) => s.selectMessage);
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
@@ -39,7 +44,9 @@ export function AppShell() {
     <div className="flex h-full flex-col bg-canvas">
       <TitleBar isWide={isWide} />
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
-        {isWide ? (
+        {firstStart ? (
+          <WelcomeScreen />
+        ) : isWide ? (
           <>
             <Sidebar className={cn("shrink-0", sidebarWidth)} />
             <MessageList className={cn("shrink-0", listWidth, panel)} />
@@ -62,6 +69,7 @@ export function AppShell() {
           <Sidebar className="relative w-72 max-w-[85vw] border-r border-sidebar-border shadow-xl" />
         </div>
       )}
+      <AccountDialog />
     </div>
   );
 }

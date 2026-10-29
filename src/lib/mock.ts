@@ -1,6 +1,7 @@
 /**
- * Sample data for the UI until the Rust backend exists, and for working on the UI in a plain
- * browser. All people, companies and addresses are made up; domains are reserved example domains.
+ * Sample data for working on the UI in a plain browser (`pnpm dev`). All people, companies and
+ * addresses are made up; domains are reserved example domains. Adding an account is simulated:
+ * the password "falsch" fails the login, anything else succeeds.
  */
 import type {
   Account,
@@ -10,6 +11,7 @@ import type {
   FolderRole,
   Message,
   MessageSummary,
+  SuggestedSettings,
 } from "./tauri";
 import { UNIFIED_INBOX } from "./tauri";
 
@@ -17,7 +19,7 @@ const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-const accounts: Account[] = [
+let accounts: Account[] = [
   {
     id: "acc-private",
     displayName: "Privat",
@@ -288,14 +290,65 @@ function buildFolders(): Folder[] {
   );
 }
 
-const folders = buildFolders();
+let folders = buildFolders();
 
 function toSummary({ to: _to, cc: _cc, bodyText: _body, ...summary }: Message): MessageSummary {
   return summary;
 }
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function suggest(email: string): SuggestedSettings {
+  const domain = email.split("@")[1]?.toLowerCase() ?? "";
+  const known = domain === "gmail.com";
+  return {
+    imap: {
+      host: known ? "imap.gmail.com" : `imap.${domain}`,
+      port: 993,
+      security: "tls",
+      username: email,
+    },
+    source: known ? "preset" : "guess",
+    provider: known ? "gmail" : null,
+    needsOauth: false,
+  };
+}
+
 export const mockBackend: Backend = {
   listAccounts: async () => accounts,
+  detectSettings: async (email) => {
+    await wait(400);
+    return suggest(email.trim());
+  },
+  addAccount: async (account, password) => {
+    await wait(900);
+    if (password === "falsch") {
+      throw { kind: "authenticationFailed", hint: "checkCredentials" };
+    }
+    const added: Account = {
+      id: `acc-${accounts.length + 1}-${Date.now()}`,
+      displayName: account.displayName || account.emailAddress,
+      emailAddress: account.emailAddress,
+      color: "oklch(0.72 0.14 150)",
+    };
+    accounts = [...accounts, added];
+    folders = [
+      ...folders,
+      ...folderRoles.map(({ role, name }) => ({
+        id: folderId(added.id, role),
+        accountId: added.id,
+        name,
+        role,
+        unreadCount: 0,
+        totalCount: 0,
+      })),
+    ];
+    return added;
+  },
+  removeAccount: async (accountId) => {
+    accounts = accounts.filter((a) => a.id !== accountId);
+    folders = folders.filter((f) => f.accountId !== accountId);
+  },
   listFolders: async () => folders,
   listMessages: async (mailboxId) => {
     const inMailbox =

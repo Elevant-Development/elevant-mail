@@ -5,3 +5,4 @@ target
 src-tauri/gen
 src-tauri/icons
 docs
+src/lib/bindings
