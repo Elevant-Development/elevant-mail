@@ -4,12 +4,13 @@ import { displayName, formatListDate } from "@/lib/formatting";
 import { locale, t } from "@/lib/i18n";
 import type { MessageSummary } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+import { useUiStore } from "@/stores/ui";
 
 interface MessageListItemProps {
   message: MessageSummary;
   selected: boolean;
   now: number;
-  /** Set in the unified inbox to tell accounts apart. */
+  /** Set in the unified inbox: a stripe on the card's edge tells accounts apart. */
   accountColor?: string;
   onSelect: () => void;
 }
@@ -22,6 +23,7 @@ export function MessageListItem({
   accountColor,
   onSelect,
 }: MessageListItemProps) {
+  const compact = useUiStore((s) => s.density === "compact");
   const unread = !message.isRead;
 
   return (
@@ -30,24 +32,29 @@ export function MessageListItem({
       onClick={onSelect}
       aria-current={selected || undefined}
       className={cn(
-        "relative flex w-full gap-3 rounded-xl border border-transparent bg-row px-3 py-3 text-left",
+        "relative flex w-full rounded-xl border border-transparent bg-row px-3 text-left",
         "transition-colors select-none hover:bg-row-hover focus-visible:-outline-offset-2",
+        compact ? "items-center gap-2.5 py-2" : "gap-3 py-3",
         selected && "border-selection-border bg-selection hover:bg-selection",
       )}
     >
-      <Avatar address={message.from} badge={unread} className="mt-0.5 size-10" />
+      {accountColor && (
+        <span
+          aria-hidden
+          className="absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-r-full"
+          style={{ backgroundColor: accountColor }}
+        />
+      )}
+      <Avatar
+        address={message.from}
+        badge={unread}
+        className={compact ? "size-8 text-[11px]" : "mt-0.5 size-10"}
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className={cn("truncate", unread ? "font-semibold" : "text-foreground/85")}>
             {displayName(message.from)}
           </span>
-          {accountColor && (
-            <span
-              aria-hidden
-              className="size-1.5 shrink-0 rounded-full"
-              style={{ backgroundColor: accountColor }}
-            />
-          )}
           <span
             className={cn(
               "ml-auto shrink-0 text-xs tabular-nums",
@@ -66,9 +73,11 @@ export function MessageListItem({
             {message.isFlagged && <Icon name="star" filled className="size-3.5 text-amber-400" />}
           </span>
         </div>
-        <p className="mt-0.5 truncate text-xs leading-relaxed text-muted-foreground">
-          {message.snippet}
-        </p>
+        {!compact && (
+          <p className="mt-0.5 truncate text-xs leading-relaxed text-muted-foreground">
+            {message.snippet}
+          </p>
+        )}
       </div>
       <span className="sr-only">
         {[

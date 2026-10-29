@@ -5,6 +5,11 @@ export const de = {
   "titlebar.toggleSidebar": "Seitenleiste",
   "titlebar.settings": "Einstellungen",
 
+  "window.minimize": "Minimieren",
+  "window.maximize": "Maximieren",
+  "window.restore": "Wiederherstellen",
+  "window.close": "Schließen",
+
   "appearance.open": "Darstellung",
   "appearance.mode": "Modus",
   "appearance.mode.dark": "Dunkel",
@@ -16,6 +21,9 @@ export const de = {
   "appearance.style.tinted": "Getönt",
   "appearance.font": "Schrift",
   "appearance.fontSample": "Hallo zusammen, bis morgen!",
+  "appearance.density": "Dichte",
+  "appearance.density.comfortable": "Komfortabel",
+  "appearance.density.compact": "Kompakt",
   "appearance.contrast": "Kontrast",
   "appearance.contrast.soft": "Weich",
   "appearance.contrast.clear": "Klar",

@@ -16,13 +16,15 @@ import { fonts } from "@/design/fonts";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import { type Mode, useUiStore } from "@/stores/ui";
+import { type Density, type Mode, useUiStore } from "@/stores/ui";
 
 const modes: { value: Mode; icon: IconName }[] = [
   { value: "dark", icon: "moon" },
   { value: "light", icon: "sun" },
   { value: "system", icon: "monitor" },
 ];
+
+const densities: Density[] = ["comfortable", "compact"];
 
 interface SegmentedProps<T extends string> {
   label: string;
@@ -100,6 +102,8 @@ export function AppearanceMenu() {
   const setContrast = useUiStore((s) => s.setContrast);
   const setTheme = useUiStore((s) => s.setTheme);
   const setFont = useUiStore((s) => s.setFont);
+  const density = useUiStore((s) => s.density);
+  const setDensity = useUiStore((s) => s.setDensity);
   const systemDark = useMediaQuery("(prefers-color-scheme: dark)");
   const resolvedMode = mode === "dark" || (mode === "system" && systemDark) ? "dark" : "light";
 
@@ -213,6 +217,12 @@ export function AppearanceMenu() {
             })}
           </div>
         </div>
+        <Segmented
+          label={t("appearance.density")}
+          value={density}
+          options={densities.map((d) => ({ value: d, label: t(`appearance.density.${d}`) }))}
+          onChange={setDensity}
+        />
       </PopoverContent>
     </Popover>
   );

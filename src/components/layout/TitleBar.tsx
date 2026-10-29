@@ -1,3 +1,5 @@
+import { isTauri } from "@tauri-apps/api/core";
+
 import { ElevantMark } from "@/components/common/ElevantMark";
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
@@ -9,6 +11,7 @@ import { useUiStore } from "@/stores/ui";
 
 import { AppearanceMenu } from "./AppearanceMenu";
 import { listWidth, sidebarWidth } from "./columns";
+import { WindowControls } from "./WindowControls";
 
 interface TitleBarProps {
   /** Wide layout shows the app name above the sidebar, narrow layout a sidebar toggle. */
@@ -22,9 +25,16 @@ export function TitleBar({ isWide }: TitleBarProps) {
   return (
     // px-2 and the sidebar column mirror AppShell: the mark starts where the sidebar icons start
     // (8px outer, 8px sidebar, 8px item padding), the search field where the list starts.
-    <header className="flex h-12 shrink-0 items-center gap-2 bg-canvas px-2">
+    // The bar is also the window's title bar: empty areas drag the window, double-click maximises.
+    <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-2 bg-canvas px-2">
       {isWide ? (
-        <div className={cn("flex shrink-0 items-center gap-2.5 px-4 select-none", sidebarWidth)}>
+        <div
+          data-tauri-drag-region
+          className={cn(
+            "flex shrink-0 items-center gap-2.5 px-4 select-none *:pointer-events-none",
+            sidebarWidth,
+          )}
+        >
           <ElevantMark className="size-6 text-primary" />
           <span className="text-[15px] font-semibold tracking-tight">Elevant Mail</span>
         </div>
@@ -37,7 +47,7 @@ export function TitleBar({ isWide }: TitleBarProps) {
         />
       )}
       <SearchInput className={isWide ? cn("shrink-0", listWidth) : "min-w-0 flex-1"} />
-      <div className="ml-auto flex items-center gap-1">
+      <div data-tauri-drag-region className="ml-auto flex items-center gap-1">
         {usesMockData && (
           <span
             title={t("app.mockDataHint")}
@@ -48,6 +58,7 @@ export function TitleBar({ isWide }: TitleBarProps) {
         )}
         <AppearanceMenu />
         <IconButton label={t("titlebar.settings")} icon={<Icon name="settings" />} disabled />
+        {isTauri() && <WindowControls />}
       </div>
     </header>
   );

@@ -39,6 +39,7 @@ export function MessageList({ className }: MessageListProps) {
   const { data: folders = [] } = useFolders();
   const { data: messages = [], isPending, isError } = useMessages(mailboxId);
   const now = useNow();
+  const compact = useUiStore((s) => s.density === "compact");
 
   const title = mailboxTitle(mailboxId, folders, accounts);
   const unreadCount = messages.filter((m) => !m.isRead).length;
@@ -58,7 +59,12 @@ export function MessageList({ className }: MessageListProps) {
     );
   } else {
     content = (
-      <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-2">
+      <ul
+        className={cn(
+          "flex min-h-0 flex-1 flex-col overflow-y-auto p-2",
+          compact ? "gap-1" : "gap-1.5",
+        )}
+      >
         {messages.map((message) => (
           <li key={message.id}>
             <MessageListItem
