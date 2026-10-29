@@ -10,6 +10,7 @@
 //! syncing never marks anything as read.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use async_imap::types::{Fetch, Flag};
 use futures::TryStreamExt;
@@ -269,6 +270,69 @@ async fn sync_folder_in(
     Ok(result)
 }
 
+/// Fetches the full body of a message that was cached with headers only (large mail).
+pub async fn load_body(db: &Database, secrets: &dyn SecretStore, message_id: &str) -> Result<()> {
+    let target = body_target(&db.conn(), message_id)?.ok_or(Error::MessageNotFound)?;
+    if target.complete {
+        return Ok(());
+    }
+    let (settings, password) = credentials(db, secrets, &target.account_id)?;
+    let connector = imap::platform_connector()?;
+    let mut session = imap::open_session(&settings, &password, &connector).await?;
+    let result = load_body_in(db, &mut session, message_id, &target).await;
+    let _ = with_timeout(COMMAND_TIMEOUT, session.logout()).await;
+    result
+}
+
+struct BodyTarget {
+    account_id: String,
+    folder_path: String,
+    uid: u32,
+    complete: bool,
+}
+
+fn body_target(conn: &Connection, message_id: &str) -> Result<Option<BodyTarget>> {
+    Ok(conn
+        .query_row(
+            "SELECT m.account_id, f.path, m.uid, m.body_state = 'full'
+             FROM messages m JOIN folders f ON f.id = m.folder_id WHERE m.id = ?1",
+            [message_id],
+            |row| {
+                Ok(BodyTarget {
+                    account_id: row.get(0)?,
+                    folder_path: row.get(1)?,
+                    uid: row.get(2)?,
+                    complete: row.get(3)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+async fn load_body_in(
+    db: &Database,
+    session: &mut ImapSession,
+    message_id: &str,
+    target: &BodyTarget,
+) -> Result<()> {
+    with_timeout(COMMAND_TIMEOUT, session.examine(&target.folder_path))
+        .await?
+        .map_err(protocol_error)?;
+    let fetches = fetch_within(session, &[target.uid], "(UID BODY.PEEK[])", BODY_TIMEOUT).await?;
+    // Gone on the server since the last sync: the next sync removes it from the cache.
+    let raw = fetches
+        .iter()
+        .find_map(Fetch::body)
+        .ok_or(Error::MessageNotFound)?;
+    let message = parse_message(raw);
+    db.conn().execute(
+        "UPDATE messages SET body_text = ?2, snippet = ?3, has_attachments = ?4, body_state = 'full'
+         WHERE id = ?1",
+        params![message_id, message.body_text, message.snippet, message.has_attachments],
+    )?;
+    Ok(())
+}
+
 /// The newest batch of UIDs, below `before` if given.
 fn newest(uids: &BTreeSet<u32>, before: Option<u32>) -> Vec<u32> {
     let candidates = match before {
@@ -302,6 +366,18 @@ pub(crate) fn uid_set(uids: &[u32]) -> String {
 }
 
 async fn fetch_all(session: &mut ImapSession, uids: &[u32], query: &str) -> Result<Vec<Fetch>> {
+    fetch_within(session, uids, query, COMMAND_TIMEOUT * 2).await
+}
+
+/// A large message with attachments can take minutes on a slow connection.
+const BODY_TIMEOUT: Duration = Duration::from_secs(300);
+
+async fn fetch_within(
+    session: &mut ImapSession,
+    uids: &[u32],
+    query: &str,
+    timeout: Duration,
+) -> Result<Vec<Fetch>> {
     if uids.is_empty() {
         return Ok(Vec::new());
     }
@@ -315,7 +391,7 @@ async fn fetch_all(session: &mut ImapSession, uids: &[u32], query: &str) -> Resu
             .await
             .map_err(protocol_error)
     };
-    with_timeout(COMMAND_TIMEOUT * 2, fetches).await?
+    with_timeout(timeout, fetches).await?
 }
 
 struct Meta {
@@ -580,6 +656,21 @@ pub(crate) async fn load_older_with_connector(
 }
 
 #[cfg(test)]
+pub(crate) async fn load_body_with_connector(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    message_id: &str,
+    connector: &TlsConnector,
+) -> Result<()> {
+    let target = body_target(&db.conn(), message_id)?.ok_or(Error::MessageNotFound)?;
+    let (settings, password) = credentials(db, secrets, &target.account_id)?;
+    let mut session = imap::open_session(&settings, &password, connector).await?;
+    let result = load_body_in(db, &mut session, message_id, &target).await;
+    let _ = session.logout().await;
+    result
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::accounts::{NewAccount, save};
@@ -774,6 +865,44 @@ mod tests {
         assert_eq!((state.0.as_str(), state.1), ("none", None));
         // The preview still comes from the first part of the body.
         assert!(state.2.starts_with("Body of message 1"), "{}", state.2);
+    }
+
+    #[tokio::test]
+    async fn a_large_body_is_loaded_when_opened() {
+        let setup = setup(0).await;
+        {
+            let mut big = TestMessage::new(1);
+            big.raw.extend(std::iter::repeat_n(b'x', 600 * 1024));
+            setup.server.mailbox.lock().unwrap().messages.push(big);
+        }
+        setup.sync().await;
+        let id: String = setup
+            .db
+            .conn()
+            .query_row("SELECT id FROM messages", [], |row| row.get(0))
+            .unwrap();
+        assert!(
+            !crate::mailbox::get_message(&setup.db.conn(), &id)
+                .unwrap()
+                .unwrap()
+                .body_complete
+        );
+
+        load_body_with_connector(&setup.db, &setup.secrets, &id, &setup.server.connector)
+            .await
+            .unwrap();
+
+        let message = crate::mailbox::get_message(&setup.db.conn(), &id)
+            .unwrap()
+            .unwrap();
+        assert!(message.body_complete);
+        assert!(message.body_text.unwrap().starts_with("Body of message 1"));
+        let commands = setup.server.mailbox.lock().unwrap().commands.clone();
+        assert!(
+            !commands
+                .iter()
+                .any(|c| c.starts_with("SELECT") || c.contains("STORE"))
+        );
     }
 
     #[test]

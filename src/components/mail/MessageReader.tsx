@@ -1,11 +1,13 @@
 import { Avatar } from "@/components/common/Avatar";
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
+import { Button } from "@/components/ui/button";
+import { describeError } from "@/lib/errors";
 import { displayName, formatFullDate } from "@/lib/formatting";
 import { locale, t } from "@/lib/i18n";
 import type { Address } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
-import { useMessage } from "@/queries/messages";
+import { useFullBody, useMessage } from "@/queries/messages";
 import { useUiStore } from "@/stores/ui";
 
 import { EmptyState } from "./EmptyState";
@@ -35,6 +37,35 @@ function ReaderSkeleton() {
   );
 }
 
+function BodySkeleton() {
+  return (
+    <div role="status" className="flex animate-pulse flex-col gap-3">
+      <span className="sr-only">{t("reader.loadingBody")}</span>
+      <div aria-hidden className="h-3 w-full rounded bg-muted/70" />
+      <div aria-hidden className="h-3 w-11/12 rounded bg-muted/70" />
+      <div aria-hidden className="h-3 w-4/5 rounded bg-muted/70" />
+      <div aria-hidden className="h-3 w-2/3 rounded bg-muted/70" />
+    </div>
+  );
+}
+
+function BodyError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const { message, action } = describeError(error);
+  return (
+    <div role="alert" className="flex flex-col items-start gap-1 font-sans text-sm">
+      <p className="font-medium">{t("reader.bodyError")}</p>
+      <p className="text-muted-foreground">
+        {message}
+        {action && ` ${action}`}
+      </p>
+      <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>
+        <Icon name="refresh" />
+        {t("sync.retry")}
+      </Button>
+    </div>
+  );
+}
+
 /**
  * Shows the selected message as plain text. HTML mails get their sandboxed renderer
  * (SafeHtmlMail) later; until then nothing from a mail body reaches the DOM as markup.
@@ -42,6 +73,7 @@ function ReaderSkeleton() {
 export function MessageReader({ className, onBack }: MessageReaderProps) {
   const selectedMessageId = useUiStore((s) => s.selectedMessageId);
   const { data: message, isPending, isError } = useMessage(selectedMessageId);
+  const fullBody = useFullBody(message);
 
   if (!selectedMessageId) {
     return (
@@ -91,7 +123,13 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
         </div>
 
         <div className="mt-6 max-w-[68ch] border-t pt-6 font-reading text-(length:--reading-size) leading-relaxed break-words whitespace-pre-wrap select-text">
-          {message.bodyText ?? t("reader.noBody")}
+          {message.bodyComplete ? (
+            (message.bodyText ?? t("reader.noBody"))
+          ) : fullBody.isError ? (
+            <BodyError error={fullBody.error} onRetry={() => void fullBody.refetch()} />
+          ) : (
+            <BodySkeleton />
+          )}
         </div>
       </div>
     );
@@ -126,7 +164,16 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
           </div>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>
+      {/* READER_ATTRIBUTE: lets the shortcuts tell when the focus is in the reader. Focusable,
+          so Enter can move there and the keyboard scrolls the mail. */}
+      <div
+        data-reader-body=""
+        tabIndex={0}
+        aria-label={t("reader.content")}
+        className="min-h-0 flex-1 overflow-y-auto focus-visible:-outline-offset-2"
+      >
+        {body}
+      </div>
     </article>
   );
 }

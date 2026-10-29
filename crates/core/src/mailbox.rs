@@ -8,8 +8,8 @@ use crate::model::{Address, Folder, FolderRole, Message, MessageSummary};
 /// Mailbox id that shows the inboxes of all accounts together (same value as in the frontend).
 pub const UNIFIED_INBOX: &str = "unified-inbox";
 
-/// Newest first; more than this is paged in later.
-const LIST_LIMIT: u32 = 500;
+/// Newest first. The list is virtualized, so a few thousand rows stay cheap; paging comes later.
+const LIST_LIMIT: u32 = 5000;
 
 /// The account a folder belongs to.
 pub fn folder_account(conn: &Connection, folder_id: &str) -> Result<Option<String>> {
@@ -17,6 +17,16 @@ pub fn folder_account(conn: &Connection, folder_id: &str) -> Result<Option<Strin
         .query_row(
             "SELECT account_id FROM folders WHERE id = ?1",
             [folder_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+pub fn message_account(conn: &Connection, message_id: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT account_id FROM messages WHERE id = ?1",
+            [message_id],
             |row| row.get(0),
         )
         .optional()?)
@@ -86,7 +96,7 @@ pub fn list_messages(conn: &Connection, mailbox_id: &str) -> Result<Vec<MessageS
 
 pub fn get_message(conn: &Connection, message_id: &str) -> Result<Option<Message>> {
     let sql = format!(
-        "SELECT {SUMMARY_COLUMNS}, m.to_addresses, m.cc_addresses, m.body_text
+        "SELECT {SUMMARY_COLUMNS}, m.to_addresses, m.cc_addresses, m.body_text, m.body_state
          FROM messages m WHERE m.id = ?1"
     );
     let message = conn
@@ -102,6 +112,7 @@ pub fn get_message(conn: &Connection, message_id: &str) -> Result<Option<Message
                 to: addresses(11)?,
                 cc: addresses(12)?,
                 body_text: row.get(13)?,
+                body_complete: row.get::<_, String>(14)? == "full",
             })
         })
         .optional()?;

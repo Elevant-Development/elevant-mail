@@ -49,6 +49,8 @@ export interface Backend {
   /** `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first. */
   listMessages(mailboxId: string): Promise<MessageSummary[]>;
   getMessage(messageId: string): Promise<Message | null>;
+  /** Fetches the full body of a large message that was cached with headers only. */
+  loadMessageBody(messageId: string): Promise<void>;
   /** New, changed and deleted mail in the account's inbox. */
   syncAccount(accountId: string): Promise<SyncReport>;
   syncFolder(folderId: string): Promise<SyncReport>;
@@ -66,6 +68,7 @@ const tauriBackend: Backend = {
   listFolders: () => invoke("list_folders"),
   listMessages: (mailboxId) => invoke("list_messages", { mailboxId }),
   getMessage: (messageId) => invoke("get_message", { messageId }),
+  loadMessageBody: (messageId) => invoke("load_message_body", { messageId }),
   syncAccount: (accountId) => invoke("sync_account", { accountId }),
   syncFolder: (folderId) => invoke("sync_folder", { folderId }),
   loadOlder: (folderId) => invoke("load_older", { folderId }),

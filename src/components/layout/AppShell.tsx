@@ -4,6 +4,7 @@ import { AccountDialog } from "@/components/accounts/AccountDialog";
 import { WelcomeScreen } from "@/components/accounts/WelcomeScreen";
 import { MessageList } from "@/components/mail/MessageList";
 import { MessageReader } from "@/components/mail/MessageReader";
+import { useMailKeyboard } from "@/hooks/use-mail-keyboard";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
@@ -30,6 +31,7 @@ export function AppShell() {
   const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
 
   const showOverlay = !isWide && sidebarOpen;
+  useMailKeyboard({ enabled: !firstStart && !showOverlay, isWide });
 
   useEffect(() => {
     if (!showOverlay) return;

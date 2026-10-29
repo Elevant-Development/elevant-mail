@@ -104,4 +104,6 @@ pub struct Message {
     pub to: Vec<Address>,
     pub cc: Vec<Address>,
     pub body_text: Option<String>,
+    /// False for large mail fetched with headers only; the body is loaded when opened.
+    pub body_complete: bool,
 }

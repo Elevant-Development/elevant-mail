@@ -56,6 +56,8 @@ interface MockMessage {
   read?: boolean;
   flagged?: boolean;
   attachments?: boolean;
+  /** Cached with headers only, like large mail from the server. */
+  large?: boolean;
   body: string;
 }
 
@@ -97,6 +99,7 @@ const mockMessages: MockMessage[] = [
     subject: "Protokoll Sprint-Review",
     ago: 4 * HOUR,
     attachments: true,
+    large: true,
     body: "Hallo,\n\nanbei das Protokoll vom heutigen Sprint-Review. Die offenen Punkte sind im Board eingetragen.\n\nDanke an alle für die Demo!\n\nDas Projektteam",
   },
   {
@@ -252,9 +255,31 @@ const mockMessages: MockMessage[] = [
   },
 ];
 
+/** Years of old project mail in one folder, so the virtualized list has something to scroll. */
+function archiveFiller(count: number): MockMessage[] {
+  const senders: Address[] = [
+    { name: "Martin Schulz", address: "m.schulz@example.com" },
+    { name: "Projektteam", address: "team@example.com" },
+    { name: "Buchhaltung", address: "buchhaltung@example.com" },
+    { name: "Jana Wolf", address: "jana.wolf@example.com" },
+  ];
+  const topics = ["Wochenbericht", "Rückfrage zum Angebot", "Abstimmung Termine", "Rechnung"];
+  return Array.from({ length: count }, (_, index) => ({
+    account: "acc-work",
+    role: "archive",
+    from: senders[index % senders.length]!,
+    subject: `${topics[index % topics.length]} #${count - index}`,
+    ago: 61 * DAY + index * 9 * HOUR,
+    read: true,
+    body: "Archivierte Nachricht aus einem abgeschlossenen Projekt.",
+  }));
+}
+
+const allMockMessages = [...mockMessages, ...archiveFiller(1500)];
+
 function buildMessages(): Message[] {
   const now = Date.now();
-  return mockMessages.map((m, index) => ({
+  return allMockMessages.map((m, index) => ({
     id: `msg-${index + 1}`,
     accountId: m.account,
     folderId: folderId(m.account, m.role),
@@ -267,7 +292,9 @@ function buildMessages(): Message[] {
     isRead: m.read ?? false,
     isFlagged: m.flagged ?? false,
     hasAttachments: m.attachments ?? false,
-    bodyText: m.body,
+    // Large mail arrives without its body; the reader loads it when opened.
+    bodyText: m.large ? null : m.body,
+    bodyComplete: !m.large,
   }));
 }
 
@@ -292,7 +319,13 @@ function buildFolders(): Folder[] {
 
 let folders = buildFolders();
 
-function toSummary({ to: _to, cc: _cc, bodyText: _body, ...summary }: Message): MessageSummary {
+function toSummary({
+  to: _to,
+  cc: _cc,
+  bodyText: _body,
+  bodyComplete: _complete,
+  ...summary
+}: Message): MessageSummary {
   return summary;
 }
 
@@ -358,6 +391,14 @@ export const mockBackend: Backend = {
     return inMailbox.map(toSummary).sort((a, b) => b.dateSent - a.dateSent);
   },
   getMessage: async (messageId) => messages.find((m) => m.id === messageId) ?? null,
+  loadMessageBody: async (messageId) => {
+    await wait(900);
+    const index = messages.findIndex((m) => m.id === messageId);
+    const current = messages[index];
+    const sample = mockMessages[index];
+    if (!current || !sample) throw { kind: "notFound", hint: null };
+    messages[index] = { ...current, bodyText: sample.body, bodyComplete: true };
+  },
   // Sample data is always "in sync".
   syncAccount: async () => ({ added: 0, updated: 0, removed: 0 }),
   syncFolder: async () => ({ added: 0, updated: 0, removed: 0 }),

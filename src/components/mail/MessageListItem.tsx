@@ -29,6 +29,7 @@ export function MessageListItem({
   return (
     <button
       type="button"
+      data-message-id={message.id}
       onClick={onSelect}
       aria-current={selected || undefined}
       className={cn(

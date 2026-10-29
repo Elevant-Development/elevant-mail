@@ -46,6 +46,19 @@ pub async fn sync_folder(
     Ok(sync::sync_folder(&state.db, state.secrets.as_ref(), &folder_id, &emit).await?)
 }
 
+/// Full body of a large message that was cached with headers only.
+#[tauri::command]
+pub async fn load_message_body(
+    state: State<'_, AppState>,
+    message_id: String,
+) -> Result<(), CommandError> {
+    let account_id =
+        mailbox::message_account(&state.db.conn(), &message_id)?.ok_or(Error::MessageNotFound)?;
+    let lock = state.account_lock(&account_id);
+    let _turn = lock.lock().await;
+    Ok(sync::load_body(&state.db, state.secrets.as_ref(), &message_id).await?)
+}
+
 /// The next 100 messages older than the oldest cached one.
 #[tauri::command]
 pub async fn load_older(

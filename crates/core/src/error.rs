@@ -79,6 +79,9 @@ pub enum Error {
 
     #[error("folder not found")]
     FolderNotFound,
+
+    #[error("message not found")]
+    MessageNotFound,
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -149,7 +152,9 @@ impl Error {
             Error::OAuthRequired { .. } => ErrorKind::OAuthRequired,
             Error::Protocol(_) => ErrorKind::ServerError,
             Error::AccountExists => ErrorKind::AccountExists,
-            Error::AccountNotFound | Error::FolderNotFound => ErrorKind::NotFound,
+            Error::AccountNotFound | Error::FolderNotFound | Error::MessageNotFound => {
+                ErrorKind::NotFound
+            }
             Error::Keyring(_) | Error::TlsSetup(_) => ErrorKind::Internal,
         }
     }
@@ -182,7 +187,8 @@ impl Error {
             | Error::Protocol(_)
             | Error::AccountExists
             | Error::AccountNotFound
-            | Error::FolderNotFound => None,
+            | Error::FolderNotFound
+            | Error::MessageNotFound => None,
         }
     }
 }

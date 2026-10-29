@@ -1,3 +1,6 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { type ReactNode, useEffect, useEffectEvent, useRef } from "react";
+
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
 import { Button } from "@/components/ui/button";
@@ -5,7 +8,8 @@ import { useNow } from "@/hooks/use-now";
 import { useSyncActions } from "@/hooks/use-sync";
 import { mailboxTitle } from "@/lib/folders";
 import { t } from "@/lib/i18n";
-import { type SyncProgress, UNIFIED_INBOX } from "@/lib/tauri";
+import { focusListItem } from "@/lib/keyboard";
+import { type MessageSummary, type SyncProgress, UNIFIED_INBOX } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
 import { useFolders } from "@/queries/folders";
@@ -47,12 +51,91 @@ function progressLabel(progress: SyncProgress): string {
   }
 }
 
-/** Plain list for now; it becomes virtualized together with the real cache. */
-export function MessageList({ className }: MessageListProps) {
-  const mailboxId = useUiStore((s) => s.selectedMailboxId);
+interface MessageRowsProps {
+  messages: MessageSummary[];
+  now: number;
+  accountColor: (accountId: string) => string | undefined;
+  /** Below the last message, e.g. the button for older mail. */
+  footer: ReactNode;
+}
+
+/** Only the rows in view are rendered, so a folder with thousands of mails scrolls smoothly. */
+function MessageRows({ messages, now, accountColor, footer }: MessageRowsProps) {
   const selectedMessageId = useUiStore((s) => s.selectedMessageId);
   const selectMessage = useUiStore((s) => s.selectMessage);
   const compact = useUiStore((s) => s.density === "compact");
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // The React Compiler is not in use; it would skip this component anyway.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollRef.current,
+    // Rows are measured once rendered; the estimate only sizes the scrollbar before that.
+    estimateSize: () => (compact ? 58 : 88),
+    getItemKey: (index) => messages[index]?.id ?? index,
+    gap: compact ? 4 : 6,
+    paddingStart: 8,
+    paddingEnd: 8,
+    overscan: 6,
+  });
+
+  // Measured heights belong to the old density.
+  useEffect(() => virtualizer.measure(), [compact, virtualizer]);
+
+  // A selection made with the keyboard may be out of view, and the focus follows it.
+  const revealSelection = useEffectEvent(() => {
+    if (selectedMessageId === null) return;
+    const index = messages.findIndex((m) => m.id === selectedMessageId);
+    if (index === -1) return;
+    virtualizer.scrollToIndex(index, { align: "auto" });
+    if (!scrollRef.current?.contains(document.activeElement)) return;
+    const frame = requestAnimationFrame(() =>
+      focusListItem(selectedMessageId, { preventScroll: true }),
+    );
+    return () => cancelAnimationFrame(frame);
+  });
+  useEffect(() => revealSelection(), [selectedMessageId]);
+
+  return (
+    <div
+      ref={scrollRef}
+      // LIST_ATTRIBUTE: lets the shortcuts tell when the focus is in the list.
+      data-message-list=""
+      className="min-h-0 flex-1 overflow-y-auto"
+    >
+      <ul className="relative" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((row) => {
+          const message = messages[row.index];
+          if (!message) return null;
+          return (
+            <li
+              key={row.key}
+              ref={virtualizer.measureElement}
+              data-index={row.index}
+              aria-setsize={messages.length}
+              aria-posinset={row.index + 1}
+              className="absolute inset-x-2 top-0"
+              style={{ transform: `translateY(${row.start}px)` }}
+            >
+              <MessageListItem
+                message={message}
+                selected={message.id === selectedMessageId}
+                now={now}
+                accountColor={accountColor(message.accountId)}
+                onSelect={() => selectMessage(message.id)}
+              />
+            </li>
+          );
+        })}
+      </ul>
+      {footer}
+    </div>
+  );
+}
+
+export function MessageList({ className }: MessageListProps) {
+  const mailboxId = useUiStore((s) => s.selectedMailboxId);
   const { data: accounts = [] } = useAccounts();
   const { data: folders = [] } = useFolders();
   const { data: messages = [], isPending, isError } = useMessages(mailboxId);
@@ -103,38 +186,29 @@ export function MessageList({ className }: MessageListProps) {
     );
   } else {
     content = (
-      <ul
-        className={cn(
-          "flex min-h-0 flex-1 flex-col overflow-y-auto p-2",
-          compact ? "gap-1" : "gap-1.5",
-        )}
-      >
-        {messages.map((message) => (
-          <li key={message.id}>
-            <MessageListItem
-              message={message}
-              selected={message.id === selectedMessageId}
-              now={now}
-              accountColor={showAccountColor ? accountColors.get(message.accountId) : undefined}
-              onSelect={() => selectMessage(message.id)}
-            />
-          </li>
-        ))}
-        {hasOlder && (
-          <li className="py-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full"
-              disabled={loadingOlder}
-              onClick={() => void loadOlder(folder)}
-            >
-              {loadingOlder && <Icon name="spinner" className="animate-spin" />}
-              {t("sync.loadOlder")}
-            </Button>
-          </li>
-        )}
-      </ul>
+      <MessageRows
+        // A new mailbox starts at the top.
+        key={mailboxId}
+        messages={messages}
+        now={now}
+        accountColor={(accountId) => (showAccountColor ? accountColors.get(accountId) : undefined)}
+        footer={
+          hasOlder && (
+            <div className="px-2 pb-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full"
+                disabled={loadingOlder}
+                onClick={() => void loadOlder(folder)}
+              >
+                {loadingOlder && <Icon name="spinner" className="animate-spin" />}
+                {t("sync.loadOlder")}
+              </Button>
+            </div>
+          )
+        }
+      />
     );
   }
 

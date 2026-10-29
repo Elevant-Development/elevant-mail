@@ -156,4 +156,7 @@ export const de = {
   "reader.delete": "Löschen",
   "reader.noBody": "Diese Mail hat keinen Textinhalt.",
   "reader.error": "Diese Mail konnte nicht geladen werden",
+  "reader.loadingBody": "Inhalt wird vom Server geladen …",
+  "reader.bodyError": "Der Inhalt dieser Mail konnte nicht geladen werden.",
+  "reader.content": "Inhalt der Mail",
 } as const;
