@@ -4,6 +4,7 @@
 import {
   Archive,
   ArrowLeft,
+  ArrowRightLeft,
   Bell,
   Bold,
   Check,
@@ -58,6 +59,7 @@ import {
   Sun,
   Trash2,
   Underline,
+  Upload,
   UserSearch,
   X,
 } from "lucide-react";
@@ -118,8 +120,10 @@ const icons = {
   spinner: LoaderCircle,
   star: Star,
   sun: Sun,
+  transfer: ArrowRightLeft,
   trash: Trash2,
   underline: Underline,
+  upload: Upload,
   unified: Mails,
   userSearch: UserSearch,
 } satisfies Record<string, LucideIcon>;

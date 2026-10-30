@@ -139,6 +139,12 @@ pub enum Error {
 
     #[error("the attachments are too large for one mail")]
     AttachmentsTooLarge,
+
+    #[error("not a file of exported accounts")]
+    NotAnExport,
+
+    #[error("the passphrase does not open the file")]
+    WrongPassphrase,
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -176,6 +182,10 @@ pub enum ErrorKind {
     RecipientRejected,
     /// The outgoing server did not take the mail (too large, taken for spam, …).
     MessageRejected,
+    /// The file chosen for importing accounts is not one.
+    NotAnExport,
+    /// The passphrase does not open the exported sign-ins.
+    WrongPassphrase,
     Internal,
 }
 
@@ -219,6 +229,10 @@ pub enum Hint {
     AddRecipient,
     /// Together at most about 18 MB; larger files go better by a link.
     AttachmentLimit,
+    /// The passphrase given when the accounts were exported.
+    CheckPassphrase,
+    /// A file made with "Export accounts".
+    ChooseExport,
 }
 
 impl Error {
@@ -237,6 +251,8 @@ impl Error {
             | Error::NoRecipients
             | Error::InvalidRecipient(_)
             | Error::AttachmentsTooLarge => ErrorKind::InvalidInput,
+            Error::NotAnExport => ErrorKind::NotAnExport,
+            Error::WrongPassphrase => ErrorKind::WrongPassphrase,
             Error::HostNotFound => ErrorKind::ServerNotFound,
             Error::ConnectionFailed(_) | Error::TlsFailed(_) | Error::StartTlsUnsupported => {
                 ErrorKind::ConnectionFailed
@@ -294,6 +310,8 @@ impl Error {
             }),
             Error::NoRecipients => Some(Hint::AddRecipient),
             Error::AttachmentsTooLarge => Some(Hint::AttachmentLimit),
+            Error::WrongPassphrase => Some(Hint::CheckPassphrase),
+            Error::NotAnExport => Some(Hint::ChooseExport),
             Error::InvalidRecipient(_) | Error::RecipientRejected(_) => Some(Hint::CheckRecipients),
             Error::OAuthRequired { .. } => Some(Hint::SignInWithMicrosoft),
             Error::ConsentRequired => Some(Hint::AskAdminForConsent),

@@ -30,7 +30,8 @@ export type SettingsPage =
   | { section: "accounts"; accountId: string | null }
   | { section: "appearance" }
   | { section: "notifications" }
-  | { section: "reading" };
+  | { section: "reading" }
+  | { section: "transfer" };
 
 interface UiState {
   mode: Mode;

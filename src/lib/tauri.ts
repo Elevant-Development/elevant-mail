@@ -18,6 +18,7 @@ import type { Folder } from "./bindings/Folder";
 import type { Draft } from "./bindings/Draft";
 import type { DraftAttachment } from "./bindings/DraftAttachment";
 import type { ImapSettings } from "./bindings/ImapSettings";
+import type { ImportPreview } from "./bindings/ImportPreview";
 import type { ListCursor } from "./bindings/ListCursor";
 import type { ListFilter } from "./bindings/ListFilter";
 import type { ListPage } from "./bindings/ListPage";
@@ -65,6 +66,8 @@ export type { SuggestionSource } from "./bindings/SuggestionSource";
 export type { SyncProgress } from "./bindings/SyncProgress";
 export type { SyncReport } from "./bindings/SyncReport";
 export type { Update } from "./bindings/Update";
+export type { ImportedAccount } from "./bindings/ImportedAccount";
+export type { ImportPreview } from "./bindings/ImportPreview";
 export type { SyncStage } from "./bindings/SyncStage";
 
 /** Mailbox id that shows the inboxes of all accounts together (same value in Rust). */
@@ -225,6 +228,22 @@ export interface Backend {
   openLink(url: string): Promise<void>;
   /** A newer published version, if there is one (one request to GitHub's API). */
   checkForUpdate(): Promise<Update | null>;
+  /**
+   * Asks where to save, then writes all accounts there; with a passphrase their passwords and
+   * sign-ins too, encrypted. False when the dialog was cancelled.
+   */
+  exportAccounts(passphrase: string | null): Promise<boolean>;
+  /** Asks for a file of exported accounts and keeps it for the import; null when cancelled. */
+  openAccountFile(): Promise<ImportPreview | null>;
+  /** Opens the sign-ins in the file with the passphrase. */
+  unlockAccountFile(passphrase: string): Promise<ImportPreview>;
+  /**
+   * Adds one account from the file, with the sign-in that came along, the password given, or
+   * Microsoft's sign-in in the browser; then its settings from the file.
+   */
+  importAccount(email: string, password: string | null): Promise<Account>;
+  /** Done with the file: its sign-ins leave the backend's memory. */
+  closeAccountFile(): Promise<void>;
   /** Links clicked in a mail frame (see SafeHtmlMail); returns a function that stops listening. */
   onMailLink(handler: (url: string) => void): Promise<() => void>;
   /** Progress of running syncs; returns a function that stops listening. */
@@ -281,6 +300,11 @@ const tauriBackend: Backend = {
   openAttachment: (attachmentId) => invoke("open_attachment", { attachmentId }),
   openLink: (url) => invoke("open_link", { url }),
   checkForUpdate: () => invoke("check_for_update"),
+  exportAccounts: (passphrase) => invoke("export_accounts", { passphrase }),
+  openAccountFile: () => invoke("open_account_file"),
+  unlockAccountFile: (passphrase) => invoke("unlock_account_file", { passphrase }),
+  importAccount: (email, password) => invoke("import_account", { email, password }),
+  closeAccountFile: () => invoke("close_account_file"),
   onMailLink: (handler) => listen<string>("mail-link", (event) => handler(event.payload)),
   onSyncProgress: (handler) =>
     listen<SyncProgress>("sync-progress", (event) => handler(event.payload)),

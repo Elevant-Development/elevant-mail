@@ -3,4 +3,4 @@
 /**
  * A concrete next step for the user, translated in the UI.
  */
-export type Hint = "checkDiskSpace" | "updateApp" | "unlockKeyring" | "enterPasswordAgain" | "checkEmailAddress" | "checkServerAddress" | "checkPortAndSecurity" | "checkNetwork" | "checkCredentials" | "useAppPassword" | "enableImapAccess" | "signInWithMicrosoft" | "askAdminForConsent" | "signInAgain" | "signInAsAccount" | "enableImapMicrosoft" | "enableSmtpMicrosoft" | "checkRecipients" | "addRecipient" | "attachmentLimit";
+export type Hint = "checkDiskSpace" | "updateApp" | "unlockKeyring" | "enterPasswordAgain" | "checkEmailAddress" | "checkServerAddress" | "checkPortAndSecurity" | "checkNetwork" | "checkCredentials" | "useAppPassword" | "enableImapAccess" | "signInWithMicrosoft" | "askAdminForConsent" | "signInAgain" | "signInAsAccount" | "enableImapMicrosoft" | "enableSmtpMicrosoft" | "checkRecipients" | "addRecipient" | "attachmentLimit" | "checkPassphrase" | "chooseExport";

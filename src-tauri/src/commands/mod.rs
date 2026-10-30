@@ -8,3 +8,4 @@ pub mod compose;
 pub mod links;
 pub mod mailbox;
 pub mod sync;
+pub mod transfer;

@@ -17,6 +17,7 @@ pub mod query;
 pub mod redact;
 pub mod secrets;
 mod threads;
+pub mod transfer;
 pub mod updates;
 
 pub use db::Database;

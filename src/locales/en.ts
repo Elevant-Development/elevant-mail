@@ -418,4 +418,37 @@ export const en: Record<MessageKey, string> = {
   "settings.notifications.updates": "Look for new versions",
   "settings.notifications.updatesHint":
     "One request to GitHub a day, with nothing about you. A new version shows at the top next to the settings.",
+  "settings.transfer": "Move accounts",
+  "settings.transfer.export": "Export",
+  "settings.transfer.exportHint":
+    "Saves all accounts with their servers, colours, signatures and sender names to a file, for a USB stick for example. Mail is not included; the other computer fetches it from the server.",
+  "settings.transfer.withPasswords": "Include passwords",
+  "settings.transfer.withPasswordsHint":
+    "Encrypted with a passphrase you enter when importing. Without, the other computer asks for each password once.",
+  "settings.transfer.passphrase": "Passphrase",
+  "settings.transfer.passphraseRepeat": "Repeat passphrase",
+  "settings.transfer.passphraseHint":
+    "At least {count} characters. The file cannot be opened without it, and it is not stored anywhere.",
+  "settings.transfer.passphraseMismatch": "The two entries do not match.",
+  "settings.transfer.exportButton": "Export accounts …",
+  "settings.transfer.exported": "The accounts are saved. Delete the file once it is moved.",
+  "settings.transfer.import": "Import",
+  "settings.transfer.importHint":
+    "Adds accounts from a file exported on another computer. Existing accounts stay as they are.",
+  "settings.transfer.openFile": "Open file …",
+  "settings.transfer.unlock": "Unlock",
+  "settings.transfer.unlockHint":
+    "The file contains encrypted passwords. Without the passphrase the app asks for each password.",
+  "settings.transfer.add": "Add",
+  "settings.transfer.addAll": "Add all {count}",
+  "settings.transfer.signIn": "Sign in",
+  "settings.transfer.added": "Added",
+  "settings.transfer.exists": "Already set up",
+  "settings.transfer.password": "Password",
+  "settings.transfer.passwordFor": "Password for {email}",
+  "settings.transfer.microsoftHint": "Microsoft's sign-in opens in the browser.",
+  "error.hint.checkPassphrase": "Enter the passphrase chosen when exporting.",
+  "error.hint.chooseExport": "Choose a file saved with “Export accounts”.",
+  "error.kind.notAnExport": "The file contains no exported accounts.",
+  "error.kind.wrongPassphrase": "The passphrase does not match.",
 };

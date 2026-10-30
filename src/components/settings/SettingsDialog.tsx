@@ -12,6 +12,7 @@ import { useAccounts } from "@/queries/accounts";
 import { useUiStore } from "@/stores/ui";
 
 import { AccountSettingsPanel } from "./AccountSettingsPanel";
+import { AccountTransfer } from "./AccountTransfer";
 import { NotificationSettings } from "./NotificationSettings";
 import { ReadingSettings } from "./ReadingSettings";
 
@@ -100,6 +101,13 @@ export function SettingsDialog() {
               <Icon name="plus" />
               <span className="truncate">{t("sidebar.addAccount")}</span>
             </NavItem>
+            <NavItem
+              selected={page?.section === "transfer"}
+              onSelect={() => openSettings({ section: "transfer" })}
+            >
+              <Icon name="transfer" />
+              <span className="truncate">{t("settings.transfer")}</span>
+            </NavItem>
           </NavGroup>
           <NavGroup label={t("settings.general")}>
             <NavItem
@@ -136,6 +144,11 @@ export function SettingsDialog() {
             <div className="grid max-w-md gap-6">
               <h2 className="text-base font-medium">{t("settings.reading")}</h2>
               <ReadingSettings />
+            </div>
+          ) : page?.section === "transfer" ? (
+            <div className="grid max-w-md gap-6">
+              <h2 className="text-base font-medium">{t("settings.transfer")}</h2>
+              <AccountTransfer />
             </div>
           ) : page?.section === "notifications" ? (
             <div className="grid max-w-md gap-6">

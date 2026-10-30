@@ -8,6 +8,7 @@ use elevant_mail_core::Database;
 use elevant_mail_core::mail::remote::RemoteImages;
 use elevant_mail_core::model::Attachment;
 use elevant_mail_core::secrets::{KeyringStore, SecretStore};
+use elevant_mail_core::transfer::Import;
 use tauri::async_runtime::Mutex as AsyncMutex;
 use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
@@ -34,6 +35,8 @@ pub struct AppState {
     /// The files last dropped onto the window: the only paths the frontend may attach, so it
     /// never names files on its own.
     dropped_files: Mutex<Vec<PathBuf>>,
+    /// The file of accounts being imported, with its sign-ins once the passphrase opened them.
+    pending_import: Mutex<Option<Import>>,
 }
 
 impl AppState {
@@ -70,6 +73,7 @@ impl AppState {
             attachment_files: Mutex::default(),
             sign_in_cancel: Mutex::default(),
             dropped_files: Mutex::default(),
+            pending_import: Mutex::default(),
             watchers: Watchers::default(),
         })
     }
@@ -138,6 +142,28 @@ impl AppState {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(attachment.id.clone(), path.clone());
         Ok(path)
+    }
+
+    pub fn set_pending_import(&self, import: Option<Import>) {
+        *self
+            .pending_import
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = import;
+    }
+
+    /// Works on the file being imported; an error when none was opened.
+    pub fn with_pending_import<T>(
+        &self,
+        work: impl FnOnce(&mut Import) -> elevant_mail_core::Result<T>,
+    ) -> Result<T, crate::error::CommandError> {
+        let mut pending = self
+            .pending_import
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let import = pending
+            .as_mut()
+            .ok_or(elevant_mail_core::Error::NotAnExport)?;
+        Ok(work(import)?)
     }
 
     pub fn set_dropped_files(&self, paths: Vec<PathBuf>) {

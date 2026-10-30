@@ -13,6 +13,7 @@ import type {
   Draft,
   DraftAttachment,
   Folder,
+  ImportPreview,
   FolderRole,
   Message,
   MessageSummary,
@@ -45,6 +46,40 @@ let accounts: Account[] = [
     inUnifiedInbox: true,
   },
 ];
+
+let mockImport = { unlocked: false };
+
+function mockImportPreview(): ImportPreview {
+  const here = accounts.map((a) => a.emailAddress);
+  const file = [
+    {
+      displayName: accounts[0]?.displayName ?? "Privat",
+      emailAddress: accounts[0]?.emailAddress ?? "",
+      color: accounts[0]?.color ?? "oklch(0.7 0.15 250)",
+      signIn: "password" as const,
+    },
+    {
+      displayName: "Verein",
+      emailAddress: "kasse@verein.example.net",
+      color: "oklch(0.72 0.14 40)",
+      signIn: "password" as const,
+    },
+    {
+      displayName: "Büro",
+      emailAddress: "m.berger@kanzlei.example.com",
+      color: "oklch(0.7 0.13 300)",
+      signIn: "microsoft" as const,
+    },
+  ];
+  return {
+    sealed: true,
+    accounts: file.map((a) => ({
+      ...a,
+      exists: here.includes(a.emailAddress),
+      hasAccess: mockImport.unlocked,
+    })),
+  };
+}
 
 const accountSettings: Record<string, AccountSettings> = {
   "acc-private": {
@@ -1352,5 +1387,38 @@ export const mockBackend: Backend = {
   onCacheChanged: async (handler) => {
     changeHandlers.add(handler);
     return () => changeHandlers.delete(handler);
+  },
+  exportAccounts: async () => {
+    await wait(400);
+    return true;
+  },
+  // A file from "another computer": one account that is here already, two new ones, passwords
+  // sealed; any passphrase but "falsch" opens it.
+  openAccountFile: async () => {
+    await wait(300);
+    mockImport = { unlocked: false };
+    return mockImportPreview();
+  },
+  unlockAccountFile: async (passphrase) => {
+    await wait(600);
+    if (passphrase === "falsch") throw { kind: "wrongPassphrase", hint: "checkPassphrase" };
+    mockImport = { unlocked: true };
+    return mockImportPreview();
+  },
+  importAccount: async (email, password) => {
+    const found = mockImportPreview().accounts.find((a) => a.emailAddress === email);
+    if (!found) throw { kind: "notAnExport", hint: "chooseExport" };
+    const account = {
+      displayName: found.displayName,
+      emailAddress: email,
+      imap: { host: "imap.example.org", port: 993, security: "tls" as const, username: email },
+    };
+    if (found.signIn === "microsoft" && !found.hasAccess) {
+      return mockBackend.addMicrosoftAccount(account);
+    }
+    return mockBackend.addAccount(account, found.hasAccess ? "" : (password ?? ""));
+  },
+  closeAccountFile: async () => {
+    mockImport = { unlocked: false };
   },
 };

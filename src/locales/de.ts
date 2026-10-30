@@ -424,4 +424,38 @@ export const de = {
   "settings.notifications.updates": "Nach neuen Versionen suchen",
   "settings.notifications.updatesHint":
     "Einmal am Tag eine Anfrage an GitHub, ohne Angaben über dich. Eine neue Version erscheint oben neben den Einstellungen.",
+  "settings.transfer": "Konten übertragen",
+  "settings.transfer.export": "Exportieren",
+  "settings.transfer.exportHint":
+    "Speichert alle Konten mit Servern, Farben, Signaturen und Absendernamen in eine Datei, etwa für einen USB-Stick. Mails gehören nicht dazu, der andere Rechner lädt sie vom Server.",
+  "settings.transfer.withPasswords": "Passwörter mitnehmen",
+  "settings.transfer.withPasswordsHint":
+    "Verschlüsselt mit einer Passphrase, die du beim Importieren eingibst. Ohne fragt der andere Rechner einmal nach jedem Passwort.",
+  "settings.transfer.passphrase": "Passphrase",
+  "settings.transfer.passphraseRepeat": "Passphrase wiederholen",
+  "settings.transfer.passphraseHint":
+    "Mindestens {count} Zeichen. Ohne sie lässt sich die Datei nicht öffnen, sie wird nirgends gespeichert.",
+  "settings.transfer.passphraseMismatch": "Die beiden Eingaben stimmen nicht überein.",
+  "settings.transfer.exportButton": "Konten exportieren …",
+  "settings.transfer.exported":
+    "Die Konten sind gespeichert. Lösche die Datei, sobald sie übertragen ist.",
+  "settings.transfer.import": "Importieren",
+  "settings.transfer.importHint":
+    "Fügt Konten aus einer Datei hinzu, die auf einem anderen Rechner exportiert wurde. Vorhandene Konten bleiben, wie sie sind.",
+  "settings.transfer.openFile": "Datei öffnen …",
+  "settings.transfer.unlock": "Entsperren",
+  "settings.transfer.unlockHint":
+    "Die Datei enthält verschlüsselte Passwörter. Ohne Passphrase fragt die App nach jedem Passwort einzeln.",
+  "settings.transfer.add": "Hinzufügen",
+  "settings.transfer.addAll": "Alle {count} hinzufügen",
+  "settings.transfer.signIn": "Anmelden",
+  "settings.transfer.added": "Hinzugefügt",
+  "settings.transfer.exists": "Schon eingerichtet",
+  "settings.transfer.password": "Passwort",
+  "settings.transfer.passwordFor": "Passwort für {email}",
+  "settings.transfer.microsoftHint": "Die Anmeldung bei Microsoft öffnet sich im Browser.",
+  "error.hint.checkPassphrase": "Gib die Passphrase ein, die beim Exportieren gewählt wurde.",
+  "error.hint.chooseExport": "Wähle eine Datei, die mit „Konten exportieren“ gespeichert wurde.",
+  "error.kind.notAnExport": "Die Datei enthält keine exportierten Konten.",
+  "error.kind.wrongPassphrase": "Die Passphrase passt nicht.",
 } as const;
