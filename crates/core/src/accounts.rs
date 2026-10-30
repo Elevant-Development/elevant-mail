@@ -61,6 +61,10 @@ pub struct AccountSettings {
     /// The name mail goes out under: as set ([`set_sender_name`]), otherwise the one on the
     /// account's own mail in Sent; empty if there is none.
     pub sender_name: String,
+    /// HTML from the editor, put below new mail and above quotes; empty: none.
+    pub signature: String,
+    /// Pasted as HTML and cleaned ([`set_signature`]): shown as it is, not edited in the editor.
+    pub signature_html: bool,
     /// How many days back the cache keeps mail; `None` keeps everything ([`set_keep_days`]).
     pub keep_days: Option<u32>,
 }
@@ -330,7 +334,8 @@ pub fn settings(conn: &Connection, account_id: &str) -> Result<AccountSettings> 
     let row = conn
         .query_row(
             "SELECT imap_host, imap_port, imap_security, imap_username, auth_method, keep_days,
-               email_address, smtp_host, smtp_port, smtp_security, smtp_username, sender_name
+               email_address, smtp_host, smtp_port, smtp_security, smtp_username, sender_name,
+               signature, signature_html
              FROM accounts WHERE id = ?1",
             [account_id],
             |row| {
@@ -366,6 +371,8 @@ pub fn settings(conn: &Connection, account_id: &str) -> Result<AccountSettings> 
                     imap,
                     smtp,
                     sender_name: row.get::<_, Option<String>>(11)?.unwrap_or_default(),
+                    signature: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
+                    signature_html: row.get(13)?,
                     keep_days: row.get(5)?,
                 };
                 Ok((settings, email))
@@ -446,6 +453,26 @@ pub(crate) async fn change_smtp_with(
     )?;
     if let Some(password) = &password {
         secrets.set(account_id, SecretKind::SmtpPassword, password)?;
+    }
+    Ok(())
+}
+
+/// The signature: HTML from the editor, or `pasted` HTML, which is cleaned of scripts and the like
+/// first. Empty removes it.
+pub fn set_signature(conn: &Connection, account_id: &str, html: &str, pasted: bool) -> Result<()> {
+    let html = if pasted {
+        crate::mail::sanitize::clean_signature(html)
+    } else {
+        html.trim().to_owned()
+    };
+    // The editor's empty document is no signature.
+    let empty = html.is_empty() || html == "<p></p>";
+    let updated = conn.execute(
+        "UPDATE accounts SET signature = ?2, signature_html = ?3 WHERE id = ?1",
+        params![account_id, (!empty).then_some(html), pasted && !empty],
+    )?;
+    if updated == 0 {
+        return Err(Error::AccountNotFound);
     }
     Ok(())
 }
@@ -885,6 +912,8 @@ mod tests {
                     username: "alex@example.org".into(),
                 },
                 sender_name: String::new(),
+                signature: String::new(),
+                signature_html: false,
                 keep_days: Some(90),
             }
         );
@@ -907,6 +936,29 @@ mod tests {
         assert_eq!(sender(), "A. Berger");
         set_sender_name(&db.conn(), &password.id, "").unwrap();
         assert_eq!(sender(), "Alex Berger");
+
+        let signature = || settings(&db.conn(), &password.id).unwrap().signature;
+        set_signature(
+            &db.conn(),
+            &password.id,
+            "<p>Viele Grüße<br>Alex</p>",
+            false,
+        )
+        .unwrap();
+        assert_eq!(signature(), "<p>Viele Grüße<br>Alex</p>");
+        set_signature(&db.conn(), &password.id, "<p></p>", false).unwrap();
+        assert_eq!(signature(), "");
+        // Pasted HTML is cleaned and marked as such.
+        set_signature(
+            &db.conn(),
+            &password.id,
+            "<table><tr><td onclick=\"x()\">Alex</td></tr></table>",
+            true,
+        )
+        .unwrap();
+        let saved = settings(&db.conn(), &password.id).unwrap();
+        assert!(saved.signature_html);
+        assert!(saved.signature.contains("<td>Alex</td>"));
         set_keep_days(&db.conn(), &password.id, None).unwrap();
         assert_eq!(settings(&db.conn(), &password.id).unwrap().keep_days, None);
         set_keep_days(&db.conn(), &password.id, Some(0)).unwrap();

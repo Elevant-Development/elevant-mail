@@ -69,6 +69,22 @@ pub async fn set_keep_days(
     )?)
 }
 
+/// The signature: HTML from the editor, or `pasted` HTML, cleaned first. Empty removes it.
+#[tauri::command]
+pub async fn set_signature(
+    state: State<'_, AppState>,
+    account_id: String,
+    html: String,
+    pasted: bool,
+) -> Result<(), CommandError> {
+    Ok(accounts::set_signature(
+        &state.db.conn(),
+        &account_id,
+        &html,
+        pasted,
+    )?)
+}
+
 /// The name mail goes out under; empty takes the one from Sent again.
 #[tauri::command]
 pub async fn set_sender_name(

@@ -110,6 +110,11 @@ export interface Backend {
   /** The name mail goes out under; empty takes the one from Sent again. */
   setSenderName(accountId: string, name: string): Promise<void>;
   /**
+   * The signature: HTML from the editor, or `pasted` HTML, which the backend cleans of scripts and
+   * the like. Empty removes it.
+   */
+  setSignature(accountId: string, html: string, pasted: boolean): Promise<void>;
+  /**
    * Hands the mail to the account's outgoing server; resolves once the server took it. The
    * draft it was written in (`draftKey`) goes. Filing in Sent follows
    * ({@link Backend.onCacheChanged}).
@@ -278,6 +283,7 @@ const tauriBackend: Backend = {
   onCacheChanged: (handler) => listen<string>("cache-changed", (event) => handler(event.payload)),
   changeSmtp: (accountId, smtp, password) => invoke("change_smtp", { accountId, smtp, password }),
   setSenderName: (accountId, name) => invoke("set_sender_name", { accountId, name }),
+  setSignature: (accountId, html, pasted) => invoke("set_signature", { accountId, html, pasted }),
   sendMessage: (mail, draftKey) => invoke("send_message", { mail, draftKey }),
   saveDraft: (draft) => invoke("save_draft", { draft }),
   listDrafts: () => invoke("list_drafts"),

@@ -52,6 +52,8 @@ const accountSettings: Record<string, AccountSettings> = {
     imap: { host: "imap.example.org", port: 993, security: "tls", username: "alex@example.org" },
     smtp: { host: "smtp.example.org", port: 465, security: "tls", username: "alex@example.org" },
     senderName: "Alex Berger",
+    signature: "<p>Viele Grüße<br>Alex</p>",
+    signatureHtml: false,
     keepDays: 90,
   },
   "acc-work": {
@@ -69,6 +71,8 @@ const accountSettings: Record<string, AccountSettings> = {
       username: "alex.berger@example.com",
     },
     senderName: "Alex Berger",
+    signature: "<p>Beste Grüße<br>Alex Berger<br>Projektleitung</p>",
+    signatureHtml: false,
     keepDays: 365,
   },
 };
@@ -947,6 +951,8 @@ export const mockBackend: Backend = {
       imap: account.imap,
       smtp: { ...account.imap, host: account.imap.host.replace(/^imap\./, "smtp."), port: 465 },
       senderName: "",
+      signature: "",
+      signatureHtml: false,
       keepDays: 90,
     };
     folders = [
@@ -963,6 +969,8 @@ export const mockBackend: Backend = {
       imap: account.imap,
       smtp: { ...account.imap, host: "smtp.office365.com", port: 587, security: "startTls" },
       senderName: "",
+      signature: "",
+      signatureHtml: false,
       keepDays: 90,
     };
     return added;
@@ -1016,6 +1024,19 @@ export const mockBackend: Backend = {
     const current = accountSettings[accountId];
     if (!current) throw { kind: "notFound", hint: null };
     accountSettings[accountId] = { ...current, smtp };
+  },
+  setSignature: async (accountId, html, pasted) => {
+    const current = accountSettings[accountId];
+    if (!current) throw { kind: "notFound", hint: null };
+    // Like the backend's cleaning, roughly: no scripts or event handlers.
+    const cleaned = pasted
+      ? html
+          .replace(/<script[\s\S]*?<\/script>/gi, "")
+          .replace(/\son\w+="[^"]*"/gi, "")
+          .trim()
+      : html;
+    const signature = cleaned === "<p></p>" ? "" : cleaned;
+    accountSettings[accountId] = { ...current, signature, signatureHtml: pasted && !!signature };
   },
   setSenderName: async (accountId, name) => {
     const current = accountSettings[accountId];

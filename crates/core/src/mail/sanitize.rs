@@ -55,6 +55,35 @@ const LAYOUT_ATTRIBUTES: [&str; 17] = [
     "role",
 ];
 
+/// A signature pasted as HTML: tables, images, links and inline styles stay; scripts, event
+/// handlers, forms and style sheets go. Images keep their address (web, `data:` or `cid:`); the
+/// app's CSP keeps web images from loading in the app itself.
+pub fn clean_signature(html: &str) -> String {
+    ammonia::Builder::default()
+        .add_tags(["font"])
+        .add_clean_content_tags(DROP_WITH_CONTENT)
+        .add_generic_attributes(LAYOUT_ATTRIBUTES)
+        .add_tag_attributes("img", ["src", "alt", "width", "height"])
+        .url_schemes(["http", "https", "mailto", "cid", "data"].into())
+        .url_relative(UrlRelative::Deny)
+        .link_rel(Some("noopener noreferrer"))
+        .attribute_filter(|element, attribute, value| match (element, attribute) {
+            ("a", "href") => is_link(value).then_some(Cow::Borrowed(value)),
+            ("img", "src") => {
+                let image = value.starts_with("data:image/")
+                    || value.starts_with("https://")
+                    || value.starts_with("http://")
+                    || value.starts_with("cid:");
+                image.then_some(Cow::Borrowed(value))
+            }
+            _ => Some(Cow::Borrowed(value)),
+        })
+        .clean(html)
+        .to_string()
+        .trim()
+        .to_owned()
+}
+
 pub fn sanitize(html: &str, message_id: &str, view: HtmlView<'_>) -> SafeHtml {
     let remote = Arc::new(Mutex::new(Vec::new()));
     let images = ImageRewriter {
@@ -160,6 +189,30 @@ mod tests {
 
     fn clean(html: &str) -> String {
         sanitize(html, "m1", VIEW).html
+    }
+
+    #[test]
+    fn pasted_signatures_keep_their_layout_but_not_their_scripts() {
+        let pasted = r#"<table style="border:0"><tr><td><img src="data:image/png;base64,iVBOR" onerror="x()" width="40"></td>
+<td><b>Alex Berger</b><br><a href="https://example.org" onclick="x()">example.org</a><script>x()</script>
+<a href="javascript:x()">no</a><form><input></form><style>body{}</style></td></tr></table>"#;
+        let clean = clean_signature(pasted);
+        assert!(clean.contains("<table"));
+        assert!(clean.contains(r#"style="border:0""#));
+        assert!(clean.contains(r#"src="data:image/png;base64,iVBOR""#));
+        assert!(clean.contains(r#"href="https://example.org""#));
+        for gone in [
+            "onerror",
+            "onclick",
+            "<script",
+            "x()",
+            "javascript:",
+            "<form",
+            "<input",
+            "<style",
+        ] {
+            assert!(!clean.contains(gone), "{gone} in {clean}");
+        }
     }
 
     #[test]

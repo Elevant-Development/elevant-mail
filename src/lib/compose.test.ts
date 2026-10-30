@@ -8,6 +8,7 @@ import {
   replyQuote,
   replyRecipients,
   replySubject,
+  withSignature,
 } from "./compose";
 
 const lena = { name: "Lena Fischer", address: "lena@example.org" };
@@ -127,5 +128,17 @@ describe("typed addresses", () => {
     expect(looksLikeAddress("lena@example.org")).toBe(true);
     expect(looksLikeAddress("lena@example")).toBe(false);
     expect(looksLikeAddress("lena fischer@example.org")).toBe(false);
+  });
+});
+
+describe("signatures", () => {
+  it("go below the line to write on, above a quote", () => {
+    expect(withSignature("", "<p>Alex</p>")).toBe(
+      '<p></p><div data-signature=""><p>Alex</p></div>',
+    );
+    expect(withSignature("<p></p><p></p><p>Am …</p>", "<p>Alex</p>")).toBe(
+      '<p></p><div data-signature=""><p>Alex</p></div><p></p><p>Am …</p>',
+    );
+    expect(withSignature("<p></p><p>Zitat</p>", "")).toBe("<p></p><p>Zitat</p>");
   });
 });

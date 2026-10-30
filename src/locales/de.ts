@@ -405,4 +405,13 @@ export const de = {
   "compose.dropToAttach": "Loslassen zum Anhängen",
   "error.hint.attachmentLimit":
     "Zusammen gehen höchstens 18 MB in eine Mail. Größere Dateien teilst du besser per Link.",
+  "settings.account.signature": "Signatur",
+  "settings.account.signatureHint":
+    "Steht unter neuen Mails und bei Antworten über dem Zitat. Gespeichert wird beim Verlassen des Felds.",
+  "settings.account.signatureEditor": "Schreiben",
+  "settings.account.signaturePaste": "HTML einfügen",
+  "settings.account.signaturePastePlaceholder": "<table>…</table>",
+  "settings.account.signaturePreview": "Vorschau, so wie gespeichert",
+  "settings.account.signaturePasteHint":
+    "Quelltext einer fertigen Signatur, etwa mit Logo und Tabelle. Skripte und Formulare entfernt die App beim Speichern. Logos von einer Webadresse sieht der Empfänger, in der App bleiben sie ausgeblendet.",
 } as const;

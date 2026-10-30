@@ -399,4 +399,13 @@ export const en: Record<MessageKey, string> = {
   "compose.dropToAttach": "Drop to attach",
   "error.hint.attachmentLimit":
     "At most 18 MB fit into one mail together. Larger files are better shared by a link.",
+  "settings.account.signature": "Signature",
+  "settings.account.signatureHint":
+    "Goes below new mail and, in replies, above the quote. Saved when you leave the field.",
+  "settings.account.signatureEditor": "Write",
+  "settings.account.signaturePaste": "Paste HTML",
+  "settings.account.signaturePastePlaceholder": "<table>…</table>",
+  "settings.account.signaturePreview": "Preview, as saved",
+  "settings.account.signaturePasteHint":
+    "The source of a ready-made signature, say with logo and table. The app removes scripts and forms when saving. Recipients see logos from a web address; in the app they stay hidden.",
 };

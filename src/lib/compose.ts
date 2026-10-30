@@ -152,6 +152,8 @@ export function documentText(document: JSONContent): string {
           return ["---"];
         case "codeBlock":
           return [inline(node.content)];
+        case "htmlSignature":
+          return [String(node.attrs?.text ?? "")];
         default:
           return blocks(node.content);
       }
@@ -178,4 +180,24 @@ export function parseAddresses(input: string): Address[] {
 /** Loosely: something@something.something, no spaces. The server decides the rest. */
 export function looksLikeAddress(address: string): boolean {
   return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(address);
+}
+
+/**
+ * The signature block for the composer (see components/compose/signature.ts); none if empty. A
+ * `pasted` one (HTML) stays whole.
+ */
+export function signatureBlock(signature: string, pasted = false): string {
+  if (!signature.trim()) return "";
+  return pasted
+    ? `<div data-signature="" data-signature-html="">${signature}</div>`
+    : `<div data-signature="">${signature}</div>`;
+}
+
+/** The signature right below the line to write on: in a reply above the quote. */
+export function withSignature(html: string, signature: string, pasted = false): string {
+  const block = signatureBlock(signature, pasted);
+  if (!block) return html || "<p></p>";
+  return html.startsWith("<p></p>")
+    ? `<p></p>${block}${html.slice("<p></p>".length)}`
+    : `<p></p>${block}${html}`;
 }

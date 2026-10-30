@@ -8,6 +8,7 @@ import {
   replyQuote,
   replyRecipients,
   replySubject,
+  withSignature,
 } from "@/lib/compose";
 import { api, UNIFIED_INBOX } from "@/lib/tauri";
 import { useAccounts } from "@/queries/accounts";
@@ -25,7 +26,16 @@ export function useCompose() {
   const { data: folders = [] } = useFolders();
   const openDraft = useUiStore((s) => s.openDraft);
 
-  const compose = () => {
+  /** The account's signature, from its settings, and whether it was pasted as HTML. */
+  const signatureOf = async (accountId: string) => {
+    const settings = await queryClient.fetchQuery({
+      queryKey: ["account-settings", accountId],
+      queryFn: () => api.getAccountSettings(accountId),
+    });
+    return [settings.signature, settings.signatureHtml] as const;
+  };
+
+  const compose = async () => {
     const { selectedMailboxId, startAccountId } = useUiStore.getState();
     const folderAccount =
       selectedMailboxId === UNIFIED_INBOX
@@ -44,7 +54,7 @@ export function useCompose() {
       cc: [],
       bcc: [],
       subject: "",
-      html: "",
+      html: withSignature("", ...(await signatureOf(accountId))),
       text: "",
     });
   };
@@ -75,7 +85,10 @@ export function useCompose() {
       cc,
       bcc: [],
       subject: forward ? forwardSubject(message.subject) : replySubject(message.subject),
-      html: forward ? forwardQuote(message) : replyQuote(message),
+      html: withSignature(
+        forward ? forwardQuote(message) : replyQuote(message),
+        ...(await signatureOf(message.accountId)),
+      ),
       // The composer fills it in from the editor.
       text: "",
     };

@@ -49,6 +49,7 @@ pub fn run() {
             commands::accounts::set_keep_days,
             commands::accounts::set_in_unified_inbox,
             commands::accounts::set_sender_name,
+            commands::accounts::set_signature,
             commands::accounts::change_smtp,
             commands::accounts::change_login,
             commands::accounts::sign_in_again,

@@ -18,6 +18,14 @@ smtp: SmtpSettings,
  */
 senderName: string, 
 /**
+ * HTML from the editor, put below new mail and above quotes; empty: none.
+ */
+signature: string, 
+/**
+ * Pasted as HTML and cleaned ([`set_signature`]): shown as it is, not edited in the editor.
+ */
+signatureHtml: boolean, 
+/**
  * How many days back the cache keeps mail; `None` keeps everything ([`set_keep_days`]).
  */
 keepDays: number | null, };

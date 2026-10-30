@@ -48,7 +48,11 @@ export function Sidebar({ className }: SidebarProps) {
   return (
     <nav className={cn("flex flex-col bg-sidebar text-sidebar-foreground", className)}>
       <div className="px-2 pt-2">
-        <Button className="w-full justify-start" disabled={accounts.length === 0} onClick={compose}>
+        <Button
+          className="w-full justify-start"
+          disabled={accounts.length === 0}
+          onClick={() => void compose()}
+        >
           <Icon name="compose" />
           {t("compose.new")}
         </Button>

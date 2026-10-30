@@ -118,7 +118,7 @@ export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
         return void undo();
       case "c":
         event.preventDefault();
-        return compose();
+        return void compose();
       case "r":
       case "a":
       case "f": {

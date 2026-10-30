@@ -120,6 +120,10 @@
   .compose-editor blockquote {
     @apply my-2 border-l-2 border-border pl-3 text-muted-foreground;
   }
+  /* The signature reads like the rest; in the editor a little set back. */
+  .compose-editor div[data-signature] {
+    @apply mt-1 text-foreground/75;
+  }
   .compose-editor a {
     @apply text-primary underline underline-offset-2;
   }

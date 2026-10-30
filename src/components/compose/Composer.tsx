@@ -8,7 +8,7 @@ import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
 import { Notice } from "@/components/common/Notice";
 import { Button } from "@/components/ui/button";
-import { documentText } from "@/lib/compose";
+import { documentText, signatureBlock } from "@/lib/compose";
 import { formatSize } from "@/lib/formatting";
 import { describeError, type UserError } from "@/lib/errors";
 import { locale, t } from "@/lib/i18n";
@@ -20,6 +20,7 @@ import { useUndoStore } from "@/stores/undo";
 
 import { AddressField } from "./AddressField";
 import { EditorToolbar } from "./EditorToolbar";
+import { HtmlSignature, Signature } from "./signature";
 
 interface ComposerProps {
   className?: string;
@@ -95,6 +96,8 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
         link: { openOnClick: false, autolink: true, protocols: ["mailto"] },
       }),
       Placeholder.configure({ placeholder: t("compose.placeholder") }),
+      Signature,
+      HtmlSignature,
     ],
     content: draft.html,
     // With recipients (a reply) the text starts above the quote; otherwise "To" comes first.
@@ -138,6 +141,28 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
     } finally {
       setSending(false);
     }
+  };
+
+  /** Another sending account brings its signature in place of the one there. */
+  const switchAccount = async (accountId: string) => {
+    update({ accountId });
+    if (!editor) return;
+    const { signature, signatureHtml } = await queryClient.fetchQuery({
+      queryKey: ["account-settings", accountId],
+      queryFn: () => api.getAccountSettings(accountId),
+    });
+    let range: { from: number; to: number } | null = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (range) return false;
+      if (node.type.name !== "signature" && node.type.name !== "htmlSignature") return true;
+      range = { from: pos, to: pos + node.nodeSize };
+      return false;
+    });
+    // Removed from this mail: it stays out.
+    if (!range) return;
+    const block = signatureBlock(signature, signatureHtml);
+    if (block) editor.chain().insertContentAt(range, block).run();
+    else editor.chain().deleteRange(range).run();
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -192,7 +217,7 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
             <select
               id="compose-from"
               value={draft.accountId}
-              onChange={(event) => update({ accountId: event.target.value })}
+              onChange={(event) => void switchAccount(event.target.value)}
               className="h-7 min-w-0 flex-1 truncate rounded-md bg-transparent text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             >
               {accounts.map((a) => (

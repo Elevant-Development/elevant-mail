@@ -226,7 +226,7 @@ it does not understand.
 
 | Table             | Content                                                                                                                                                   |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accounts`        | Accounts with IMAP and SMTP settings (SMTP NULL until changed: then the one that goes with the IMAP host), sign-in method, colour, `sender_name`, `keep_days` (how far back the cache keeps mail), `in_unified_inbox`. No passwords. |
+| `accounts`        | Accounts with IMAP and SMTP settings (SMTP NULL until changed: then the one that goes with the IMAP host), sign-in method, colour, `sender_name`, `signature`, `keep_days` (how far back the cache keeps mail), `in_unified_inbox`. No passwords. |
 | `folders`         | Folders per account with SPECIAL-USE role, `uid_validity`, `uid_next`, `highest_modseq`, counts                                                           |
 | `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to`, `references_header` and `reply_to`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched; unique per folder and UID |
 | `thread_keys`     | Every Message-ID a conversation has seen, per account, so replies find it                                                                                  |
@@ -269,7 +269,7 @@ checks that they are current.
 | Area        | Commands                                                                                                                                 |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | App         | `app_status` (version, schema version, keyring available)                                                                                 |
-| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `set_keep_days`, `set_in_unified_inbox`, `set_sender_name`, `change_login` (server settings, password; checks the login first), `change_smtp` (outgoing server, its own password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
+| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `set_keep_days`, `set_in_unified_inbox`, `set_sender_name`, `set_signature`, `change_login` (server settings, password; checks the login first), `change_smtp` (outgoing server, its own password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
 | Folders     | `list_folders`                                                                                                                            |
 | Mail        | `list_messages` (a page of a folder or the unified inbox; with `threads` one row per conversation, `filters` from the filter bar, `after` for the next page), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images; they also show for senders in `image_senders`), `load_message_body`, `search_messages`, `list_image_senders`, `allow_images_from`, `forbid_images_from` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
@@ -518,7 +518,14 @@ can consent without an admin. Paging beyond 5,000 cached messages per folder cam
   (`APPEND`, `\Draft`) in place of the copy before, found by the draft's own Message-ID. Sending
   or discarding removes both. A draft in the drafts folder, also one from another device, opens
   to write on; each "New mail" is a draft of its own.
-- Text and HTML signatures
+- Signatures — done: one per account, formatted, edited in the account settings (Sending). They
+  go below new mail and, in replies and forwards, above the quote, as a block of their own
+  (`<div data-signature>`) that switching the sending account swaps; removed from a mail, it stays
+  out. No automatic "-- " line. A signature can also be pasted as HTML (logo, table, colours):
+  the backend cleans it when saving (`clean_signature`: no scripts, event handlers, forms or style
+  sheets), the settings preview shows only the cleaned version, and the composer keeps it whole
+  as one block it does not open. Logos from the web reach recipients; the app's CSP keeps them
+  from loading in the app.
 - Sending attachments — done. The paperclip opens the system's file dialog (from Rust), and
   files dropped onto the window attach too: the backend keeps the paths of the last drop and
   attaches only those, so the frontend never names a file. They hang on the draft (table
@@ -680,4 +687,7 @@ Phase 4:
 22. **Attachments:** paperclip and drag and drop, kept with the draft, forwarded files along —
     done
 
-Next: signatures.
+23. **Signatures:** per account, formatted, above the quote, swapped with the sending account —
+    done
+
+Phase 4 is complete. Next: the release of 0.4, then phase 5 (MCP server).
