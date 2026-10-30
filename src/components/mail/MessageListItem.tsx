@@ -18,6 +18,8 @@ interface MessageListItemProps {
   ownAddresses: Set<string>;
   /** With the click, so Ctrl and Shift can add to the selection. */
   onSelect: (event: MouseEvent) => void;
+  /** The list's one tab stop; the other rows are reached with the arrow keys. */
+  tabbable: boolean;
 }
 
 /**
@@ -31,6 +33,7 @@ export function MessageListItem({
   accountColor,
   ownAddresses,
   onSelect,
+  tabbable,
 }: MessageListItemProps) {
   const compact = useUiStore((s) => s.density === "compact");
   const unread = !message.isRead;
@@ -43,6 +46,7 @@ export function MessageListItem({
     <button
       type="button"
       data-message-id={message.id}
+      tabIndex={tabbable ? 0 : -1}
       onClick={onSelect}
       aria-current={selected || undefined}
       className={cn(

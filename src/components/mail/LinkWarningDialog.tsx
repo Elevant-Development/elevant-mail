@@ -42,7 +42,7 @@ export function LinkWarningDialog({ link, onOpen, onClose }: LinkWarningDialogPr
           </dl>
         )}
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} autoFocus>
+          <Button variant="ghost" onClick={onClose} data-autofocus="">
             {t("link.warning.cancel")}
           </Button>
           <Button variant="destructive" onClick={() => link && onOpen(link.url)}>

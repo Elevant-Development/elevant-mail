@@ -132,7 +132,7 @@ function AccountForm({ onDone }: { onDone: () => void }) {
             id="account-email"
             type="email"
             autoComplete="email"
-            autoFocus
+            data-autofocus=""
             required
             value={email}
             readOnly={busy}

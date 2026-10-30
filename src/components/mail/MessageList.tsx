@@ -1,4 +1,4 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { type MouseEvent, type ReactNode, useEffect, useEffectEvent, useMemo, useRef } from "react";
 
 import { Icon } from "@/components/common/Icon";
@@ -62,10 +62,27 @@ interface MessageRowsProps {
   ownAddresses: Set<string>;
   /** Below the last message, e.g. the button for older mail. */
   footer: ReactNode;
+  /** More rows are cached than loaded; `loadMore` gets the next page. */
+  hasMore: boolean;
+  loadMore: () => void;
 }
 
-/** Only the rows in view are rendered, so a folder with thousands of mails scrolls smoothly. */
-function MessageRows({ messages, now, accountColor, ownAddresses, footer }: MessageRowsProps) {
+/** Rows from the end at which the next page loads, so scrolling rarely reaches the end. */
+const LOAD_AHEAD = 60;
+
+/**
+ * Only the rows in view are rendered, so a folder with thousands of mails scrolls smoothly; the
+ * next page loads while scrolling towards the end.
+ */
+function MessageRows({
+  messages,
+  now,
+  accountColor,
+  ownAddresses,
+  footer,
+  hasMore,
+  loadMore,
+}: MessageRowsProps) {
   const selectedIds = useUiStore((s) => s.selectedIds);
   // The end that moves with Shift+j/k; otherwise the open message.
   const focusedId = useUiStore((s) => s.selectionEnd ?? s.selectedMessageId);
@@ -74,6 +91,10 @@ function MessageRows({ messages, now, accountColor, ownAddresses, footer }: Mess
   const selectRange = useUiStore((s) => s.selectRange);
   const compact = useUiStore((s) => s.density === "compact");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
+  // Tab reaches the list once, at the open (or last moved to) message, else at the first.
+  const focusedIndex = focusedId === null ? -1 : messages.findIndex((m) => m.id === focusedId);
+  const tabStopIndex = Math.max(focusedIndex, 0);
 
   // The React Compiler is not in use; it would skip this component anyway.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -87,17 +108,32 @@ function MessageRows({ messages, now, accountColor, ownAddresses, footer }: Mess
     paddingStart: 8,
     paddingEnd: 8,
     overscan: 6,
+    // The tab stop stays rendered when scrolled out of view, so Tab still finds the list.
+    rangeExtractor: (range) => {
+      const indexes = defaultRangeExtractor(range);
+      if (tabStopIndex < range.count && !indexes.includes(tabStopIndex)) {
+        indexes.push(tabStopIndex);
+        indexes.sort((a, b) => a - b);
+      }
+      return indexes;
+    },
   });
 
   // Measured heights belong to the old density.
   useEffect(() => virtualizer.measure(), [compact, virtualizer]);
 
+  const virtualRows = virtualizer.getVirtualItems();
+  const lastShown = virtualizer.range?.endIndex ?? -1;
+  const nearEnd = hasMore && lastShown >= messages.length - LOAD_AHEAD;
+  const loadMoreNow = useEffectEvent(loadMore);
+  useEffect(() => {
+    if (nearEnd) loadMoreNow();
+  }, [nearEnd, messages.length]);
+
   // A selection made with the keyboard may be out of view, and the focus follows it.
   const revealSelection = useEffectEvent(() => {
-    if (focusedId === null) return;
-    const index = messages.findIndex((m) => m.id === focusedId);
-    if (index === -1) return;
-    virtualizer.scrollToIndex(index, { align: "auto" });
+    if (focusedId === null || focusedIndex === -1) return;
+    virtualizer.scrollToIndex(focusedIndex, { align: "auto" });
     if (!scrollRef.current?.contains(document.activeElement)) return;
     const frame = requestAnimationFrame(() => focusListItem(focusedId, { preventScroll: true }));
     return () => cancelAnimationFrame(frame);
@@ -122,10 +158,11 @@ function MessageRows({ messages, now, accountColor, ownAddresses, footer }: Mess
       ref={scrollRef}
       // LIST_ATTRIBUTE: lets the shortcuts tell when the focus is in the list.
       data-message-list=""
+      data-focus-group=""
       className="min-h-0 flex-1 overflow-y-auto"
     >
       <ul className="relative" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualizer.getVirtualItems().map((row) => {
+        {virtualRows.map((row) => {
           const message = messages[row.index];
           if (!message) return null;
           return (
@@ -133,14 +170,16 @@ function MessageRows({ messages, now, accountColor, ownAddresses, footer }: Mess
               key={row.key}
               ref={virtualizer.measureElement}
               data-index={row.index}
-              aria-setsize={messages.length}
+              // -1: the size is not known while more pages follow.
+              aria-setsize={hasMore ? -1 : messages.length}
               aria-posinset={row.index + 1}
               className="absolute inset-x-2 top-0"
               style={{ transform: `translateY(${row.start}px)` }}
             >
               <MessageListItem
                 message={message}
-                selected={selectedIds.includes(message.id)}
+                selected={selected.has(message.id)}
+                tabbable={row.index === tabStopIndex}
                 now={now}
                 accountColor={accountColor(message.accountId)}
                 ownAddresses={ownAddresses}
@@ -150,7 +189,13 @@ function MessageRows({ messages, now, accountColor, ownAddresses, footer }: Mess
           );
         })}
       </ul>
-      {footer}
+      {hasMore ? (
+        <div className="flex justify-center pb-3 text-muted-foreground">
+          <Icon name="spinner" className="size-4 animate-spin" />
+        </div>
+      ) : (
+        footer
+      )}
     </div>
   );
 }
@@ -159,7 +204,16 @@ export function MessageList({ className }: MessageListProps) {
   const mailboxId = useUiStore((s) => s.selectedMailboxId);
   const { data: accounts = [] } = useAccounts();
   const { data: folders = [] } = useFolders();
-  const { data, isPending, isError, searching, filtered } = useVisibleMessages();
+  const {
+    data,
+    isPending,
+    isError,
+    searching,
+    filtered,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useVisibleMessages();
   const clearListFilters = useUiStore((s) => s.clearListFilters);
   const messages = useMemo(() => data ?? [], [data]);
   const searchQuery = useUiStore((s) => s.searchQuery.trim());
@@ -186,12 +240,23 @@ export function MessageList({ className }: MessageListProps) {
   }, [data, selectedIds, followRows]);
 
   const title = searching ? t("search.title") : mailboxTitle(mailboxId, folders, accounts);
-  const unreadCount = messages.filter((m) => !m.isRead).length;
+  // From the folders: the list may not have loaded all of it.
+  const unreadCount = (folder ? [folder] : folders.filter((f) => f.role === "inbox")).reduce(
+    (sum, f) => sum + f.unreadCount,
+    0,
+  );
   const accountColors = new Map(accounts.map((a) => [a.id, a.color]));
   // Search results span all accounts, like the unified inbox.
   const showAccountColor = (searching || mailboxId === UNIFIED_INBOX) && accounts.length > 1;
   const listedCount = messages.reduce((sum, row) => sum + row.messageIds.length, 0);
-  const hasOlder = !searching && folder !== undefined && folder.totalCount > listedCount;
+  // Older mail on the server, once the list shows all that is cached; not while filtering,
+  // when the list shows less than is cached.
+  const hasOlder =
+    !searching &&
+    !filtered &&
+    !hasNextPage &&
+    folder !== undefined &&
+    folder.totalCount > listedCount;
   const ownAddresses = new Set(accounts.map((a) => a.emailAddress.toLowerCase()));
 
   const refresh = () => {
@@ -247,6 +312,10 @@ export function MessageList({ className }: MessageListProps) {
         now={now}
         accountColor={(accountId) => (showAccountColor ? accountColors.get(accountId) : undefined)}
         ownAddresses={ownAddresses}
+        hasMore={hasNextPage}
+        loadMore={() => {
+          if (!isFetchingNextPage) void fetchNextPage();
+        }}
         footer={
           searching ? (
             <SearchOnServer />

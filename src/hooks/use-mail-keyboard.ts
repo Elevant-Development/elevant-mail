@@ -3,6 +3,7 @@ import { useEffect, useEffectEvent } from "react";
 import {
   adjacentMessageId,
   focusListItem,
+  focusNextRegion,
   focusReader,
   focusSearch,
   hasOpenOverlay,
@@ -23,10 +24,12 @@ interface MailKeyboardOptions {
 
 /**
  * Shortcuts of the mail view: j/k (and the arrow keys outside the reader) move through the list,
- * with Shift they widen the selection; Ctrl+A selects the whole list. Enter opens the first mail
+ * Home and End in it to its ends; with Shift they widen the selection. Ctrl+A selects the list as
+ * far as it is loaded. Enter opens the first mail
  * or moves the focus into the reader, Escape goes back one level (and finally clears a search).
  * On the selection: u toggles read, s the star, e archives, # and Delete delete, v moves; z takes
- * the last archiving, deleting or moving back. / jumps to the search field.
+ * the last archiving, deleting or moving back. / jumps to the search field. F6 and Shift+F6
+ * move between search field, folders, list and reader.
  */
 export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
   const { data: messages = [] } = useVisibleMessages();
@@ -34,6 +37,11 @@ export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (!enabled || event.defaultPrevented || event.altKey) return;
+    // Also from the search field.
+    if (event.key === "F6" && !event.ctrlKey && !event.metaKey && !hasOpenOverlay()) {
+      event.preventDefault();
+      return focusNextRegion(event.shiftKey ? -1 : 1);
+    }
     if (isTypingTarget(event.target) || hasOpenOverlay()) return;
 
     const target = event.target instanceof Element ? event.target : null;
@@ -60,8 +68,16 @@ export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
       if (event.shiftKey) ui.selectRange(order, next);
       else selectMessage(next);
     };
+    // Home and End in the list: to the first or the last loaded message.
+    const moveToEnd = (next: string | undefined) => {
+      if (!inList || !next) return;
+      event.preventDefault();
+      if (event.shiftKey) ui.selectRange(order, next);
+      else selectMessage(next);
+    };
 
-    const selected = messages.filter((m) => selectedIds.includes(m.id));
+    const selectedSet = new Set(selectedIds);
+    const selected = messages.filter((m) => selectedSet.has(m.id));
     const ids = selected.map((m) => m.id);
     const onSelection = (action: () => unknown) => {
       if (ids.length === 0) return;
@@ -103,6 +119,10 @@ export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
       case "k":
       case "K":
         return move(-1);
+      case "Home":
+        return moveToEnd(order[0]);
+      case "End":
+        return moveToEnd(order[order.length - 1]);
       case "ArrowDown":
       case "ArrowUp":
         // In the reader the arrow keys scroll the mail, elsewhere they belong to the control.

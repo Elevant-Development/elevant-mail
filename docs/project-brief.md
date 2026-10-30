@@ -267,7 +267,7 @@ checks that they are current.
 | App         | `app_status` (version, schema version, keyring available)                                                                                 |
 | Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `set_keep_days`, `change_login` (server settings, password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
 | Folders     | `list_folders`                                                                                                                            |
-| Mail        | `list_messages` (folder or unified inbox; with `threads` one row per conversation), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images), `load_message_body`, `search_messages` |
+| Mail        | `list_messages` (a page of a folder or the unified inbox; with `threads` one row per conversation, `filters` from the filter bar, `after` for the next page), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images), `load_message_body`, `search_messages` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
 | Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
 | Links       | `open_link`                                                                                                                               |
@@ -308,6 +308,15 @@ included. Its `messageIds` (the conversation's messages in that folder) are what
 archiving, deleting and moving act on; replies in "Sent" stay there. A search hit in "Sent" shows
 as the conversation in the folder where the rest of it is. `get_conversation` returns those
 messages plus the replies from "Sent", newest first.
+
+`list_messages` returns a page of 300 rows and where the next one starts (`next`: date, UID and
+id of the last row's newest message); the list loads it while scrolling towards the end. Each
+folder is read along an index in list order (`idx_messages_folder_list`), the unified inbox
+merges its inboxes; a row is a conversation's newest message in the folder, which brings along
+the rest of it, however old. The filter bar's filters (`unread`, `flagged`, `attachment`) run in
+the database and match a conversation while one of its messages does; the selected rows come
+along as `keep`, so an unread mail does not vanish while it is open. Measured with 50,000
+messages in one folder: about 5 ms a page with conversations, under 1 ms without.
 
 Events from the backend:
 
@@ -372,7 +381,12 @@ Elevant Mail should feel modern and calm, not like Thunderbird, Outlook 2010 or 
   selection clears the search). With `Shift` the moving keys widen the selection, `Ctrl+A` selects
   the list; on the selection `e` archives, `#` and `Del` delete, `v` moves (folder picker), and
   `z` takes the last archiving, deleting or moving back. Shortcuts pause while a dialog or menu
-  is open or while typing in a field.
+  is open or while typing in a field. `Home`/`End` in the list go to its first and last loaded
+  message; `Ctrl+A` selects what is loaded.
+- Focus: Tab reaches each part once: search field, folder tree (at the open folder), list (at the
+  open message), reader. In the folder tree the arrow keys move, `→` opens a folder or account
+  and `←` closes it or goes to its parent; `F6`/`Shift+F6` jump between the parts. A dialog gives
+  the focus back where it was, or to the next mail when the one it came from was moved.
 - Several messages: `Ctrl`-click adds or removes one, `Shift`-click selects a range. The reader
   then shows what can be done with all of them.
 - No animations that slow things down; only small, meaningful transitions
@@ -447,7 +461,7 @@ Gmail's "All Mail" is not synced in the background, and search lists a message o
 is in several folders. Gmail app passwords are used without the spaces Google shows them with.
 
 Still open from these phases: publisher verification for Elevant so users of other organisations
-can consent without an admin, paging in `list_messages` beyond 5,000 cached messages per folder.
+can consent without an admin. Paging beyond 5,000 cached messages per folder came in step 18.
 
 ### Phase 3: comfort
 
@@ -469,7 +483,8 @@ can consent without an admin, paging in `list_messages` beyond 5,000 cached mess
 - Server-side search (IMAP `SEARCH`) for mail outside the cache, on request — done
 - Filters: unread, flagged, sender, with attachment — done (filter bar and search syntax)
 - How far back the cache keeps mail, per account (1 month to everything, default 3 months) — done
-- Keyboard focus management
+- Keyboard focus management — done. Tab reaches each part once (search, folders, list, reader),
+  the arrow keys move within; F6 jumps between the parts; dialogs give the focus back
 - Settings: theme, density, default account, allow images per sender, mark-as-read delay
 - Conversations, switchable, on by default — done. Grouped by Message-ID headers, replies
   without them by subject; per folder, with the user's own replies from "Sent".
@@ -620,4 +635,7 @@ Phase 3:
 17. **Filters and search on the server:** filter bar, `von:`/`ist:`/`hat:` in the search, all mail
     from a sender, search on the server on request, period kept per account — done
 
-Next: polish (paging beyond 5,000 messages, keyboard focus, performance).
+18. **Polish:** the list in pages of 300, filters in the database, one tab stop per part with the
+    arrow keys in the folder tree, F6, focus back after dialogs — done
+
+Next: the remaining settings of phase 3 (default account, images per sender, mark-as-read delay).

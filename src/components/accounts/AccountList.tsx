@@ -106,6 +106,11 @@ export function AccountList({
             <div className="group/account mb-1 flex h-6 items-center gap-1">
               <button
                 type="button"
+                // An entry of the folder tree, above its folders (useTreeFocus).
+                tabIndex={-1}
+                data-tree-entry=""
+                data-depth={-1}
+                data-expanded={!sectionCollapsed}
                 aria-expanded={!sectionCollapsed}
                 aria-controls={`folders-${account.id}`}
                 onClick={() => setCollapsed(sectionKey, !sectionCollapsed)}
@@ -153,6 +158,8 @@ export function AccountList({
               </button>
               <DropdownMenu>
                 <DropdownMenuTrigger
+                  // Out of the Tab order like the folder rows; the settings have the same.
+                  tabIndex={-1}
                   aria-label={t("account.menu", { name: account.displayName })}
                   title={t("account.menu", { name: account.displayName })}
                   className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/account:opacity-100 hover:bg-sidebar-accent hover:text-foreground focus-visible:opacity-100 data-[state=open]:bg-sidebar-accent data-[state=open]:opacity-100 [&_svg]:size-3.5"

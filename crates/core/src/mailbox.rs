@@ -3,18 +3,23 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
+use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row};
 
 use crate::Result;
 use crate::mail::sanitize::{HtmlView, sanitize};
-use crate::model::{Address, Conversation, Folder, FolderRole, Message, MessageSummary};
+use crate::model::{
+    Address, Conversation, Folder, FolderRole, ListCursor, ListFilter, ListPage, Message,
+    MessageSummary,
+};
 use crate::query::SearchQuery;
 
 /// Mailbox id that shows the inboxes of all accounts together (same value as in the frontend).
 pub const UNIFIED_INBOX: &str = "unified-inbox";
 
-/// Newest first. The list is virtualized, so a few thousand rows stay cheap; paging comes later.
-const LIST_LIMIT: u32 = 5000;
+/// Rows per page of the list. The next page loads while scrolling towards the end, so a folder
+/// of 50,000 mails opens as fast as one of 50.
+const PAGE_SIZE: usize = 300;
 
 /// The account a folder belongs to.
 pub fn folder_account(conn: &Connection, folder_id: &str) -> Result<Option<String>> {
@@ -140,43 +145,217 @@ fn replies_in(conn: &Connection, account_id: &str, thread: &str) -> Result<Vec<M
     )
 }
 
-/// Conversations of a folder, or of all inboxes for [`UNIFIED_INBOX`], newest first. Without
-/// `threads` every message is a row of its own.
+/// How to page through the list, see [`list_messages`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListOptions<'a> {
+    /// A row per conversation; without, every message is a row of its own.
+    pub threads: bool,
+    /// Each has to match.
+    pub filters: &'a [ListFilter],
+    /// Rows that stay although they no longer match the filters: the selected ones, so reading
+    /// an unread mail does not pull it away under "unread".
+    pub keep: &'a [String],
+    /// The page after this one; the first page without.
+    pub after: Option<&'a ListCursor>,
+}
+
+/// Leaves out every message but the newest of its conversation in the folder.
+const NEWEST_IN_FOLDER: &str = "AND NOT EXISTS (
+    SELECT 1 FROM messages n INDEXED BY idx_messages_thread
+    WHERE n.account_id = m.account_id AND n.thread_id = m.thread_id AND n.folder_id = m.folder_id
+      AND n.leaving = 0 AND n.by_search = 0
+      AND (coalesce(n.date_sent, n.date_received, n.fetched_at), n.uid, n.id)
+        > (coalesce(m.date_sent, m.date_received, m.fetched_at), m.uid, m.id))";
+
+/// Ids as a JSON array, for `IN (SELECT value FROM json_each(?))`.
+fn json_list(ids: &[impl AsRef<str>]) -> String {
+    let ids: Vec<&str> = ids.iter().map(AsRef::as_ref).collect();
+    serde_json::to_string(&ids).expect("a list of strings is valid JSON")
+}
+
+fn filter_condition(filter: ListFilter, alias: &str) -> String {
+    let condition = match filter {
+        ListFilter::Unread => "is_read = 0",
+        ListFilter::Flagged => "is_flagged = 1",
+        ListFilter::Attachment => "has_attachments = 1",
+    };
+    format!("{alias}.{condition}")
+}
+
+/// The rows of one folder in list order: with `threads` only each conversation's newest message.
+/// Parameters: the folder, the rows to `keep` (with filters), the cursor's date twice, uid and id
+/// (with `after`).
+fn rows_sql(threads: bool, filters: &[ListFilter], after: bool) -> String {
+    let newest = if threads { NEWEST_IN_FOLDER } else { "" };
+    let mut matching = String::new();
+    if !filters.is_empty() {
+        // A conversation matches while one of its messages in the folder does.
+        let each: Vec<String> = filters
+            .iter()
+            .map(|&filter| {
+                let on_row = filter_condition(filter, "m");
+                if !threads {
+                    return on_row;
+                }
+                format!(
+                    "({on_row} OR m.thread_id IS NOT NULL AND EXISTS (
+                       SELECT 1 FROM messages x INDEXED BY idx_messages_thread
+                       WHERE x.account_id = m.account_id AND x.thread_id = m.thread_id
+                         AND x.folder_id = m.folder_id AND x.leaving = 0 AND x.by_search = 0
+                         AND {}))",
+                    filter_condition(filter, "x")
+                )
+            })
+            .collect();
+        matching = format!(
+            "AND (m.id IN (SELECT value FROM json_each(?)) OR {})",
+            each.join(" AND ")
+        );
+    }
+    // The bound on the date alone lets the index start at the cursor.
+    let position = if after {
+        format!("AND {DATE} <= ? AND ({DATE}, m.uid, m.id) < (?, ?, ?)")
+    } else {
+        String::new()
+    };
+    // Mail on its way to another folder (moves::move_messages) no longer shows here, nor older
+    // mail a search on the server fetched (`by_search`), until the sync gets that far. One row
+    // more than the page tells whether another page follows.
+    format!(
+        "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS}, m.uid FROM messages m
+         WHERE m.folder_id = ? AND m.leaving = 0 AND m.by_search = 0 {newest} {matching} {position}
+         ORDER BY {DATE} DESC, m.uid DESC, m.id DESC
+         LIMIT {}",
+        PAGE_SIZE + 1
+    )
+}
+
+/// A page of the conversations of a folder, or of all inboxes for [`UNIFIED_INBOX`], newest
+/// first. A row is a conversation's newest message in the folder; the page brings along the rest
+/// of each conversation, however old.
 pub fn list_messages(
     conn: &Connection,
     mailbox_id: &str,
-    threads: bool,
-) -> Result<Vec<Conversation>> {
-    let filter = if mailbox_id == UNIFIED_INBOX {
-        "m.folder_id IN (SELECT id FROM folders WHERE role = 'inbox' AND ?1 = ?1)"
+    options: ListOptions<'_>,
+) -> Result<ListPage> {
+    let ListOptions {
+        threads,
+        filters,
+        keep,
+        after,
+    } = options;
+    let folders: Vec<String> = if mailbox_id == UNIFIED_INBOX {
+        conn.prepare_cached("SELECT id FROM folders WHERE role = 'inbox'")?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?
     } else {
-        "m.folder_id = ?1"
+        vec![mailbox_id.to_owned()]
     };
-    // Mail on its way to another folder (moves::move_messages) no longer shows here, nor older
-    // mail a search on the server fetched (`by_search`), until the sync gets that far.
-    let listed = members(
-        conn,
-        &format!(
-            "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
-             WHERE {filter} AND m.leaving = 0 AND m.by_search = 0
-             ORDER BY {DATE} DESC, m.uid DESC LIMIT {LIST_LIMIT}"
-        ),
-        [mailbox_id],
-    )?;
-    if !threads {
-        return Ok(group(listed, Vec::new(), false));
+    // Each folder along its own index; the unified inbox merges them.
+    let sql = rows_sql(threads, filters, after.is_some());
+    let mut heads: Vec<(Member, u32)> = Vec::new();
+    for folder_id in folders {
+        let mut params: Vec<Value> = vec![folder_id.into()];
+        if !filters.is_empty() {
+            params.push(json_list(keep).into());
+        }
+        if let Some(after) = after {
+            params.extend([
+                after.date.into(),
+                after.date.into(),
+                after.uid.into(),
+                after.id.clone().into(),
+            ]);
+        }
+        let rows = conn
+            .prepare_cached(&sql)?
+            .query_map(rusqlite::params_from_iter(params), |row| {
+                Ok((member_from_row(row)?, row.get(13)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        heads.extend(rows);
     }
-    let replies = members(
-        conn,
-        &format!(
-            "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
-             JOIN folders f ON f.id = m.folder_id
-             WHERE f.role = 'sent' AND m.leaving = 0
-               AND m.thread_id IN (SELECT m.thread_id FROM messages m WHERE {filter})"
-        ),
-        [mailbox_id],
-    )?;
-    Ok(group(listed, replies, true))
+    let order = |(member, uid): &(Member, u32)| {
+        Reverse((member.summary.date_sent, *uid, member.summary.id.clone()))
+    };
+    heads.sort_by_cached_key(order);
+    let next = if heads.len() > PAGE_SIZE {
+        heads.truncate(PAGE_SIZE);
+        heads.last().map(|(head, uid)| ListCursor {
+            date: head.summary.date_sent,
+            uid: *uid,
+            id: head.summary.id.clone(),
+        })
+    } else {
+        None
+    };
+    let heads: Vec<Member> = heads.into_iter().map(|(head, _)| head).collect();
+    if !threads {
+        return Ok(ListPage {
+            rows: group(heads, Vec::new(), false),
+            next,
+        });
+    }
+
+    // The rest of each conversation in its folder, and the user's replies from "Sent".
+    let mut threads_by_folder: HashMap<(&str, &str), Vec<&str>> = HashMap::new();
+    let mut threads_by_account: HashMap<&str, Vec<&str>> = HashMap::new();
+    for head in &heads {
+        let account = head.summary.account_id.as_str();
+        threads_by_folder
+            .entry((account, &head.summary.folder_id))
+            .or_default()
+            .push(&head.thread);
+        threads_by_account
+            .entry(account)
+            .or_default()
+            .push(&head.thread);
+    }
+    let mut members_by_row: HashMap<(String, String), Vec<Member>> = HashMap::new();
+    for ((account_id, folder_id), thread_ids) in threads_by_folder {
+        let found = members(
+            conn,
+            &format!(
+                "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
+                   INDEXED BY idx_messages_thread
+                 WHERE m.account_id = ?1 AND m.thread_id IN (SELECT value FROM json_each(?2))
+                   AND m.folder_id = ?3 AND m.leaving = 0 AND m.by_search = 0
+                 ORDER BY {DATE} DESC, m.uid DESC, m.id DESC"
+            ),
+            [account_id, &json_list(&thread_ids), folder_id],
+        )?;
+        for member in found {
+            let row = (member.summary.folder_id.clone(), member.thread.clone());
+            members_by_row.entry(row).or_default().push(member);
+        }
+    }
+    let mut replies = Vec::new();
+    for (account_id, thread_ids) in threads_by_account {
+        replies.extend(members(
+            conn,
+            &format!(
+                "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
+                 JOIN folders f ON f.id = m.folder_id
+                 WHERE m.account_id = ?1 AND m.thread_id IN (SELECT value FROM json_each(?2))
+                   AND f.role = 'sent' AND m.leaving = 0"
+            ),
+            [account_id, &json_list(&thread_ids)],
+        )?);
+    }
+    // In the order of the page, each conversation's newest message first: it stands for it.
+    let mut listed = Vec::new();
+    for head in heads {
+        let row = (head.summary.folder_id.clone(), head.thread.clone());
+        match members_by_row.remove(&row) {
+            Some(members) => listed.extend(members),
+            // Not in a conversation yet.
+            None => listed.push(head),
+        }
+    }
+    Ok(ListPage {
+        rows: group(listed, replies, true),
+        next,
+    })
 }
 
 /// Search results shown at most; the newest come first.
@@ -563,6 +742,15 @@ mod tests {
         (newest, "inbox".into())
     }
 
+    /// The first page of the list.
+    fn rows(conn: &Connection, mailbox_id: &str, threads: bool) -> Vec<Conversation> {
+        let options = ListOptions {
+            threads,
+            ..Default::default()
+        };
+        list_messages(conn, mailbox_id, options).unwrap().rows
+    }
+
     #[test]
     fn lists_folders_with_roles() {
         let db = Database::open_in_memory().unwrap();
@@ -578,7 +766,7 @@ mod tests {
         let conn = db.conn();
         let (newest, inbox) = seed(&conn);
 
-        let in_folder = list_messages(&conn, &inbox, true).unwrap();
+        let in_folder = rows(&conn, &inbox, true);
         assert_eq!(
             in_folder
                 .iter()
@@ -589,7 +777,7 @@ mod tests {
         assert_eq!(in_folder[0].latest.id, newest);
 
         // The unified inbox leaves out sent mail.
-        assert_eq!(list_messages(&conn, UNIFIED_INBOX, true).unwrap().len(), 2);
+        assert_eq!(rows(&conn, UNIFIED_INBOX, true).len(), 2);
     }
 
     #[test]
@@ -734,8 +922,8 @@ mod tests {
         let conn = db.conn();
         seed_conversation(&conn);
 
-        let rows = list_messages(&conn, "inbox", true).unwrap();
-        let hike = &rows[0];
+        let listed = rows(&conn, "inbox", true);
+        let hike = &listed[0];
         assert_eq!(hike.latest.id, "lena-again");
         assert_eq!(hike.message_ids, ["lena-again", "answer", "plan"]);
         // Three in the inbox and the reply from "Sent".
@@ -748,19 +936,173 @@ mod tests {
         assert!(!hike.latest.is_read, "one message is unread");
         assert!(hike.latest.is_flagged, "one message is flagged");
         // The mail to oneself counts once; the two older seeded mails stand alone.
-        let note = rows.iter().find(|row| row.latest.id == "note").unwrap();
+        let note = listed.iter().find(|row| row.latest.id == "note").unwrap();
         assert_eq!(note.count, 1);
-        assert_eq!(rows.len(), 4);
+        assert_eq!(listed.len(), 4);
 
         // In "Sent" the replies are rows of their own, without the inbox's mail.
-        let sent = list_messages(&conn, "sent", true).unwrap();
+        let sent = rows(&conn, "sent", true);
         let reply = sent.iter().find(|row| row.latest.id == "reply").unwrap();
         assert_eq!((reply.message_ids.len(), reply.count), (1, 1));
 
         // Without conversations every message is a row.
-        let single = list_messages(&conn, "inbox", false).unwrap();
+        let single = rows(&conn, "inbox", false);
         assert_eq!(single.len(), 6);
         assert!(single.iter().all(|row| row.count == 1));
+    }
+
+    /// Every page in turn, until the last.
+    fn all_pages(conn: &Connection, mailbox_id: &str, options: ListOptions<'_>) -> Vec<ListPage> {
+        let mut pages = vec![list_messages(conn, mailbox_id, options).unwrap()];
+        while let Some(after) = pages.last().unwrap().next.clone() {
+            let next = ListOptions {
+                after: Some(&after),
+                ..options
+            };
+            pages.push(list_messages(conn, mailbox_id, next).unwrap());
+        }
+        pages
+    }
+
+    /// `count` messages in the inbox, one a minute, every three a conversation; the third of
+    /// each (the oldest) unread.
+    fn seed_many(conn: &Connection, count: u32) {
+        seed(conn);
+        conn.execute("DELETE FROM messages", []).unwrap();
+        for uid in 1..=count {
+            conn.execute(
+                "INSERT INTO messages (id, account_id, folder_id, uid, thread_id, subject, from_name,
+                   from_address, date_sent, is_read, fetched_at)
+                 VALUES (?1, 'acc', 'inbox', ?2, ?3, 'Hallo', 'Lena', 'lena@example.org', ?4, ?5, 0)",
+                params![
+                    format!("m{uid}"),
+                    uid,
+                    format!("t{}", (uid - 1) / 3),
+                    i64::from(uid) * 60_000,
+                    (uid - 1) % 3 != 0
+                ],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn pages_through_a_large_folder_newest_first() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed_many(&conn, 1000);
+
+        for threads in [false, true] {
+            let options = ListOptions {
+                threads,
+                ..Default::default()
+            };
+            let pages = all_pages(&conn, "inbox", options);
+            let sizes: Vec<usize> = pages.iter().map(|page| page.rows.len()).collect();
+            let listed: Vec<&Conversation> = pages.iter().flat_map(|page| &page.rows).collect();
+            let dates: Vec<i64> = listed.iter().map(|row| row.latest.date_sent).collect();
+            assert!(dates.is_sorted_by(|a, b| a > b), "newest first");
+            // Every message once, a conversation in one row even across a page's end.
+            let mut ids: Vec<&String> = listed.iter().flat_map(|row| &row.message_ids).collect();
+            assert_eq!(ids.len(), 1000);
+            ids.sort();
+            ids.dedup();
+            assert_eq!(ids.len(), 1000);
+            if threads {
+                assert_eq!(sizes, [300, 34]);
+                assert_eq!(listed[0].message_ids, ["m1000"]);
+                assert_eq!(listed[1].message_ids, ["m999", "m998", "m997"]);
+            } else {
+                assert_eq!(sizes, [300, 300, 300, 100]);
+            }
+        }
+
+        // The unified inbox pages the same way.
+        let unified = all_pages(&conn, UNIFIED_INBOX, ListOptions::default());
+        assert_eq!(
+            unified.iter().map(|page| page.rows.len()).sum::<usize>(),
+            1000
+        );
+    }
+
+    #[test]
+    fn the_unified_inbox_merges_the_accounts_newest_first() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed_many(&conn, 400);
+        conn.execute_batch(
+            "INSERT INTO accounts (id, display_name, email_address, auth_method, imap_host,
+               imap_port, imap_security, imap_username, created_at)
+             VALUES ('work', 'Work', 'alex@work.example', 'password', 'imap.work.example', 993,
+               'tls', 'alex', 0);
+             INSERT INTO folders (id, account_id, name, path, role)
+             VALUES ('work-inbox', 'work', 'INBOX', 'INBOX', 'inbox');",
+        )
+        .unwrap();
+        for uid in 1..=400u32 {
+            conn.execute(
+                "INSERT INTO messages (id, account_id, folder_id, uid, subject, from_name,
+                   from_address, date_sent, fetched_at)
+                 VALUES (?1, 'work', 'work-inbox', ?2, 'Bericht', 'Jana', 'jana@work.example', ?3, 0)",
+                params![format!("w{uid}"), uid, i64::from(uid) * 60_000 + 30_000],
+            )
+            .unwrap();
+        }
+
+        let pages = all_pages(&conn, UNIFIED_INBOX, ListOptions::default());
+        let listed: Vec<&str> = pages
+            .iter()
+            .flat_map(|page| &page.rows)
+            .map(|row| row.latest.id.as_str())
+            .collect();
+        assert_eq!(listed.len(), 800);
+        assert_eq!(listed[..4], ["w400", "m400", "w399", "m399"]);
+        assert_eq!(listed[listed.len() - 2..], ["w1", "m1"]);
+    }
+
+    #[test]
+    fn filters_match_any_message_of_a_conversation_and_keep_the_selected() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed_many(&conn, 9);
+        conn.execute("UPDATE messages SET is_flagged = 1 WHERE id = 'm5'", [])
+            .unwrap();
+
+        let listed = |threads: bool, filters: &[ListFilter], keep: &[String]| -> Vec<String> {
+            let options = ListOptions {
+                threads,
+                filters,
+                keep,
+                after: None,
+            };
+            list_messages(&conn, "inbox", options)
+                .unwrap()
+                .rows
+                .into_iter()
+                .map(|row| row.latest.id)
+                .collect()
+        };
+        // Each conversation has an unread message, its oldest.
+        assert_eq!(listed(true, &[ListFilter::Unread], &[]), ["m9", "m6", "m3"]);
+        assert_eq!(
+            listed(false, &[ListFilter::Unread], &[]),
+            ["m7", "m4", "m1"]
+        );
+        assert_eq!(listed(true, &[ListFilter::Flagged], &[]), ["m6"]);
+        assert_eq!(
+            listed(true, &[ListFilter::Unread, ListFilter::Flagged], &[]),
+            ["m6"]
+        );
+        assert!(listed(true, &[ListFilter::Attachment], &[]).is_empty());
+
+        // Read now, but still selected: it stays.
+        conn.execute("UPDATE messages SET is_read = 1 WHERE id = 'm7'", [])
+            .unwrap();
+        assert_eq!(listed(true, &[ListFilter::Unread], &[]), ["m6", "m3"]);
+        assert_eq!(
+            listed(true, &[ListFilter::Unread], &["m9".into()]),
+            ["m9", "m6", "m3"]
+        );
     }
 
     #[test]

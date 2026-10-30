@@ -1011,7 +1011,9 @@ mod tests {
         // Filling the cache is no news.
         assert!(report.new_mail.is_empty());
         assert_eq!(setup.cached_uids(), (21..=120).collect::<Vec<_>>());
-        let rows = list_messages(&setup.db.conn(), UNIFIED_INBOX, false).unwrap();
+        let rows = list_messages(&setup.db.conn(), UNIFIED_INBOX, Default::default())
+            .unwrap()
+            .rows;
         let newest = &rows[0].latest;
         assert_eq!(newest.subject.as_deref(), Some("Message 120"));
         assert_eq!(newest.from.name.as_deref(), Some("Lena Fischer"));
@@ -1363,11 +1365,13 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n"
 
         /// Cached and listed: a message on its way out is cached but not listed.
         fn listed_uids(&self) -> Vec<u32> {
-            let listed: Vec<String> = list_messages(&self.db.conn(), &self.inbox_id, false)
-                .unwrap()
-                .into_iter()
-                .map(|row| row.latest.id)
-                .collect();
+            let listed: Vec<String> =
+                list_messages(&self.db.conn(), &self.inbox_id, Default::default())
+                    .unwrap()
+                    .rows
+                    .into_iter()
+                    .map(|row| row.latest.id)
+                    .collect();
             self.cached_uids()
                 .into_iter()
                 .filter(|uid| listed.contains(&self.id_of(*uid)))

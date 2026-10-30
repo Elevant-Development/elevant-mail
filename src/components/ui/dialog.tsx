@@ -3,6 +3,7 @@
 import * as React from "react";
 import { cn } from "cn";
 import { t } from "@/lib/i18n";
+import { FOCUS_GROUP_ATTRIBUTE } from "@/lib/keyboard";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { Button } from "@/components/ui/button";
@@ -44,15 +45,48 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
 }) {
+  // Radix returns the focus to the dialog's trigger, and dialogs opened by a shortcut have none.
+  // The focus goes back to where it was, or, if that is gone (a moved mail), to the tab stop of
+  // its group (the next mail). For that it has to be outside while the dialog opens: a field or
+  // button marked `data-autofocus` takes it only then, where React's autoFocus would be first.
+  const returnTo = React.useRef<{ element: HTMLElement; group: Element | null } | null>(null);
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        onOpenAutoFocus={(event) => {
+          const active = document.activeElement;
+          returnTo.current =
+            active instanceof HTMLElement && active !== document.body
+              ? { element: active, group: active.closest(`[${FOCUS_GROUP_ATTRIBUTE}]`) }
+              : null;
+          onOpenAutoFocus?.(event);
+          const marked =
+            event.target instanceof Element
+              ? event.target.querySelector<HTMLElement>("[data-autofocus]")
+              : null;
+          if (event.defaultPrevented || !marked) return;
+          event.preventDefault();
+          marked.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          const back = returnTo.current;
+          if (event.defaultPrevented || !back) return;
+          const target = back.element.isConnected
+            ? back.element
+            : back.group?.querySelector<HTMLElement>('[tabindex="0"]');
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
         className={cn(
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,

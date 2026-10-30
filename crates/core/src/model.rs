@@ -118,6 +118,38 @@ pub struct Conversation {
     pub senders: Vec<Address>,
 }
 
+/// What the filter bar narrows the list to. A conversation matches while one of its messages
+/// in the folder does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum ListFilter {
+    Unread,
+    Flagged,
+    Attachment,
+}
+
+/// Where the list goes on: after the row whose newest message this is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ListCursor {
+    #[ts(type = "number")]
+    pub date: i64,
+    pub uid: u32,
+    pub id: String,
+}
+
+/// One page of the message list, newest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ListPage {
+    pub rows: Vec<Conversation>,
+    /// Where the next page starts; `None` on the last.
+    pub next: Option<ListCursor>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

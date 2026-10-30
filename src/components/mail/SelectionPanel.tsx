@@ -25,7 +25,8 @@ export function SelectionPanel({ className, onBack }: SelectionPanelProps) {
   const { data: folders = [] } = useFolders();
   const { archive, trash, setRead, setFlagged } = useMessageActions();
 
-  const selected = messages.filter((m) => selectedIds.includes(m.id));
+  const selectedSet = new Set(selectedIds);
+  const selected = messages.filter((m) => selectedSet.has(m.id));
   const ids = selected.map((m) => m.id);
   const anyUnread = selected.some((m) => !m.isRead);
   const anyUnflagged = selected.some((m) => !m.isFlagged);

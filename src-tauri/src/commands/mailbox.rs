@@ -1,6 +1,8 @@
 use elevant_mail_core::mail::sanitize::HtmlView;
-use elevant_mail_core::mailbox;
-use elevant_mail_core::model::{Conversation, Folder, Message, MessageSummary};
+use elevant_mail_core::mailbox::{self, ListOptions};
+use elevant_mail_core::model::{
+    Conversation, Folder, ListCursor, ListFilter, ListPage, Message, MessageSummary,
+};
 use tauri::State;
 
 use crate::error::CommandError;
@@ -12,17 +14,28 @@ pub async fn list_folders(state: State<'_, AppState>) -> Result<Vec<Folder>, Com
     Ok(mailbox::list_folders(&state.db.conn())?)
 }
 
-/// `mailbox_id` is a folder id or "unified-inbox". `threads`: grouped into conversations.
+/// A page of the list. `mailbox_id` is a folder id or "unified-inbox"; `threads`: grouped into
+/// conversations; `filters` from the filter bar, with the rows to `keep` although they no longer
+/// match; `after`: where the previous page ended.
 #[tauri::command]
 pub async fn list_messages(
     state: State<'_, AppState>,
     mailbox_id: String,
     threads: bool,
-) -> Result<Vec<Conversation>, CommandError> {
+    filters: Vec<ListFilter>,
+    keep: Vec<String>,
+    after: Option<ListCursor>,
+) -> Result<ListPage, CommandError> {
+    let options = ListOptions {
+        threads,
+        filters: &filters,
+        keep: &keep,
+        after: after.as_ref(),
+    };
     Ok(mailbox::list_messages(
         &state.db.conn(),
         &mailbox_id,
-        threads,
+        options,
     )?)
 }
 

@@ -833,6 +833,9 @@ async function mockBrowserSignIn() {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Rows per page, as in the backend (mailbox::list_messages). */
+const MOCK_PAGE_SIZE = 300;
+
 function suggest(email: string): SuggestedSettings {
   const domain = email.split("@")[1]?.toLowerCase() ?? "";
   // Sample domains: Gmail by name, Microsoft 365 for "outlook.com" and "example.com".
@@ -926,13 +929,37 @@ export const mockBackend: Backend = {
     await mockBrowserSignIn();
   },
   listFolders: async () => folders,
-  listMessages: async (mailboxId, threads) => {
+  listMessages: async (mailboxId, threads, filters, keep, after) => {
     const inMailbox = (
       mailboxId === UNIFIED_INBOX
         ? messages.filter((m) => m.folderId.endsWith(":inbox"))
         : messages.filter((m) => m.folderId === mailboxId)
     ).filter(inFolderList);
-    return toConversations(inMailbox, threads);
+    const matches = (row: Conversation) =>
+      keep.includes(row.id) ||
+      filters.every((filter) =>
+        filter === "unread"
+          ? !row.isRead
+          : filter === "flagged"
+            ? row.isFlagged
+            : row.hasAttachments,
+      );
+    // Newest first like the backend; mock mail has no UIDs, so the id breaks ties.
+    const rows = toConversations(inMailbox, threads)
+      .filter(matches)
+      .sort((a, b) => b.dateSent - a.dateSent || (a.id < b.id ? 1 : -1));
+    const start = after
+      ? rows.findIndex(
+          (row) => row.dateSent < after.date || (row.dateSent === after.date && row.id < after.id),
+        )
+      : 0;
+    const page = start === -1 ? [] : rows.slice(start, start + MOCK_PAGE_SIZE);
+    const last = page[page.length - 1];
+    const more = start !== -1 && start + MOCK_PAGE_SIZE < rows.length;
+    return {
+      rows: page,
+      next: more && last ? { date: last.dateSent, uid: 0, id: last.id } : null,
+    };
   },
   getConversation: async (messageId, threads) => {
     const opened = messages.find((m) => m.id === messageId);

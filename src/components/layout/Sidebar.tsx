@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { AccountList } from "@/components/accounts/AccountList";
 import { RemoveAccountDialog } from "@/components/accounts/RemoveAccountDialog";
 import { Icon } from "@/components/common/Icon";
 import { Button } from "@/components/ui/button";
 import { useSyncActions } from "@/hooks/use-sync";
+import { useTreeFocus } from "@/hooks/use-tree-focus";
 import { t } from "@/lib/i18n";
 import { type Account, UNIFIED_INBOX } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,8 @@ export function Sidebar({ className }: SidebarProps) {
   const setAccountDialogOpen = useUiStore((s) => s.setAccountDialogOpen);
   const [accountToRemove, setAccountToRemove] = useState<Account | null>(null);
   const { syncFolder } = useSyncActions();
+  const treeRef = useRef<HTMLDivElement>(null);
+  useTreeFocus(treeRef);
 
   // Opening a folder other than the inbox fetches its mail (the inbox syncs in the background).
   const openMailbox = (mailboxId: string) => {
@@ -40,7 +43,13 @@ export function Sidebar({ className }: SidebarProps) {
 
   return (
     <nav className={cn("flex flex-col bg-sidebar text-sidebar-foreground", className)}>
-      <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-2">
+      <div
+        ref={treeRef}
+        // FOLDER_TREE_ATTRIBUTE and FOCUS_GROUP_ATTRIBUTE: one tab stop, F6 comes here.
+        data-folder-tree=""
+        data-focus-group=""
+        className="flex flex-1 flex-col gap-4 overflow-y-auto p-2"
+      >
         {accounts.length > 1 && (
           <SidebarItem
             icon="unified"

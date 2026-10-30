@@ -12,11 +12,10 @@ import {
 } from "@/design/themes";
 import { defaultFontId, type FontId } from "@/design/fonts";
 import type { LanguageSetting } from "@/lib/i18n";
-import { UNIFIED_INBOX } from "@/lib/tauri";
+import { type ListFilter, UNIFIED_INBOX } from "@/lib/tauri";
 
+export type { ListFilter } from "@/lib/tauri";
 export type Mode = "dark" | "light" | "system";
-/** The filter bar over the list; several at once narrow it further. */
-export type ListFilter = "unread" | "flagged" | "attachment";
 /** What the search on the servers found for a query, and which accounts it failed on. */
 export interface ServerHits {
   query: string;

@@ -286,8 +286,9 @@ mod tests {
         }
 
         fn listed(&self) -> usize {
-            list_messages(&self.db.conn(), &self.inbox_id, false)
+            list_messages(&self.db.conn(), &self.inbox_id, Default::default())
                 .unwrap()
+                .rows
                 .len()
         }
     }

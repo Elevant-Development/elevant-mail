@@ -34,6 +34,14 @@ export function hasOpenOverlay(): boolean {
 export const LIST_ATTRIBUTE = "data-message-list";
 export const READER_ATTRIBUTE = "data-reader-body";
 export const SEARCH_ATTRIBUTE = "data-search-input";
+/** The sidebar's folder tree, and each of its entries (`useTreeFocus`). */
+export const FOLDER_TREE_ATTRIBUTE = "data-folder-tree";
+export const TREE_ENTRY_ATTRIBUTE = "data-tree-entry";
+/**
+ * A group with one tab stop (`tabindex="0"`) among its entries: the folder tree, the list. A
+ * dialog returns the focus there when the entry it came from is gone, e.g. a moved mail.
+ */
+export const FOCUS_GROUP_ATTRIBUTE = "data-focus-group";
 
 export function focusSearch() {
   const input = document.querySelector<HTMLInputElement>(`[${SEARCH_ATTRIBUTE}]`);
@@ -52,4 +60,34 @@ export function focusListItem(messageId: string, options?: FocusOptions): boolea
   );
   item?.focus(options);
   return item !== null;
+}
+
+/**
+ * F6 and Shift+F6: the focus moves between search field, folders, list and reader, to where
+ * each would be reached with Tab. Parts not shown (the reader without a mail, the sidebar in a
+ * narrow window) are skipped.
+ */
+export function focusNextRegion(step: 1 | -1) {
+  const regions = [
+    SEARCH_ATTRIBUTE,
+    FOLDER_TREE_ATTRIBUTE,
+    LIST_ATTRIBUTE,
+    READER_ATTRIBUTE,
+  ].flatMap((attribute) => {
+    const region = document.querySelector<HTMLElement>(`[${attribute}]`);
+    if (!region || region.getClientRects().length === 0) return [];
+    const target = region.hasAttribute(FOCUS_GROUP_ATTRIBUTE)
+      ? region.querySelector<HTMLElement>('[tabindex="0"]')
+      : region;
+    return target ? [{ region, target }] : [];
+  });
+  if (regions.length === 0) return;
+  const current = regions.findIndex(({ region }) => region.contains(document.activeElement));
+  const next =
+    current === -1
+      ? step === 1
+        ? 0
+        : regions.length - 1
+      : (current + step + regions.length) % regions.length;
+  regions[next]?.target.focus();
 }

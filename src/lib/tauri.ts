@@ -14,6 +14,9 @@ import type { AccountSettings } from "./bindings/AccountSettings";
 import type { Conversation } from "./bindings/Conversation";
 import type { Folder } from "./bindings/Folder";
 import type { ImapSettings } from "./bindings/ImapSettings";
+import type { ListCursor } from "./bindings/ListCursor";
+import type { ListFilter } from "./bindings/ListFilter";
+import type { ListPage } from "./bindings/ListPage";
 import type { Message } from "./bindings/Message";
 import type { MessageSummary } from "./bindings/MessageSummary";
 import type { MoveOutcome } from "./bindings/MoveOutcome";
@@ -34,6 +37,9 @@ export type { Folder } from "./bindings/Folder";
 export type { FolderRole } from "./bindings/FolderRole";
 export type { Hint } from "./bindings/Hint";
 export type { ImapSettings } from "./bindings/ImapSettings";
+export type { ListCursor } from "./bindings/ListCursor";
+export type { ListFilter } from "./bindings/ListFilter";
+export type { ListPage } from "./bindings/ListPage";
 export type { Message } from "./bindings/Message";
 export type { MessageSummary } from "./bindings/MessageSummary";
 export type { MoveOutcome } from "./bindings/MoveOutcome";
@@ -87,10 +93,18 @@ export interface Backend {
   signInAgain(accountId: string): Promise<void>;
   listFolders(): Promise<Folder[]>;
   /**
-   * `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first; with `threads` one row per
-   * conversation, otherwise per message.
+   * A page of the list. `mailboxId` is a folder id or {@link UNIFIED_INBOX}. Newest first; with
+   * `threads` one row per conversation, otherwise per message. `filters` narrow it (a
+   * conversation matches while one of its messages does), except for the rows to `keep`.
+   * `after`: the previous page's `next`.
    */
-  listMessages(mailboxId: string, threads: boolean): Promise<Conversation[]>;
+  listMessages(
+    mailboxId: string,
+    threads: boolean,
+    filters: ListFilter[],
+    keep: string[],
+    after: ListCursor | null,
+  ): Promise<ListPage>;
   /** `remoteImages`: the user allowed the external images of this mail. */
   getMessage(messageId: string, remoteImages: boolean): Promise<Message | null>;
   /**
@@ -165,7 +179,8 @@ const tauriBackend: Backend = {
   changeLogin: (accountId, imap, password) => invoke("change_login", { accountId, imap, password }),
   signInAgain: (accountId) => invoke("sign_in_again", { accountId }),
   listFolders: () => invoke("list_folders"),
-  listMessages: (mailboxId, threads) => invoke("list_messages", { mailboxId, threads }),
+  listMessages: (mailboxId, threads, filters, keep, after) =>
+    invoke("list_messages", { mailboxId, threads, filters, keep, after }),
   getMessage: (messageId, remoteImages) => invoke("get_message", { messageId, remoteImages }),
   getConversation: (messageId, threads) => invoke("get_conversation", { messageId, threads }),
   loadMessageBody: (messageId) => invoke("load_message_body", { messageId }),

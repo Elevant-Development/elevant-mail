@@ -1,15 +1,33 @@
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useMemo } from "react";
 
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { api, type Conversation, type Message } from "@/lib/tauri";
+import { api, type Conversation, type ListCursor, type Message } from "@/lib/tauri";
 import { type ListFilter, useUiStore } from "@/stores/ui";
 
+/**
+ * The mailbox's list, page by page (`fetchNextPage` while scrolling towards the end), narrowed
+ * by the filter bar. The rows selected when a page is fetched stay under the filters, so reading
+ * an unread mail does not pull it away while it is open.
+ */
 export function useMessages(mailboxId: string) {
   const threads = useUiStore((s) => s.threads);
-  return useQuery({
-    queryKey: ["messages", mailboxId, threads],
-    queryFn: () => api.listMessages(mailboxId, threads),
+  const filters = useUiStore((s) => s.listFilters);
+  return useInfiniteQuery({
+    queryKey: ["messages", mailboxId, threads, filters],
+    queryFn: ({ pageParam }) => {
+      const keep = filters.length > 0 ? useUiStore.getState().selectedIds : [];
+      return api.listMessages(mailboxId, threads, filters, keep, pageParam);
+    },
+    initialPageParam: null as ListCursor | null,
+    getNextPageParam: (page) => page.next,
+    // Switching a filter keeps the rows until the new ones are there, but not another mailbox's.
+    placeholderData: (previous, query) => (query?.queryKey[1] === mailboxId ? previous : undefined),
   });
 }
 
@@ -96,6 +114,8 @@ const matches: Record<ListFilter, (row: Conversation) => boolean> = {
  * mailbox, narrowed by the filter bar. The list, the keyboard shortcuts and the actions all use
  * this, so they always agree. A selected row stays while it is selected, so reading an unread
  * mail does not pull it away under the "unread" filter.
+ *
+ * The mailbox comes in pages: `hasNextPage` while more is cached, `fetchNextPage` gets it.
  */
 export function useVisibleMessages() {
   const mailboxId = useUiStore((s) => s.selectedMailboxId);
@@ -104,16 +124,49 @@ export function useVisibleMessages() {
   const selectedIds = useUiStore((s) => s.selectedIds);
   const mailbox = useMessages(mailboxId);
   const search = useSearch(query);
-  const result = query === "" ? { ...mailbox, searching: false } : { ...search, searching: true };
-  const data = useMemo(
-    () =>
-      filters.length === 0
-        ? result.data
-        : result.data?.filter(
-            (row) =>
-              filters.every((filter) => matches[filter](row)) || selectedIds.includes(row.id),
-          ),
-    [result.data, filters, selectedIds],
-  );
-  return { ...result, data, filtered: filters.length > 0 };
+  const searching = query !== "";
+  const pages = mailbox.data?.pages;
+  const mailboxRows = useMemo(() => {
+    if (!pages) return undefined;
+    // A refetch while mail arrives may move a row onto the next page; it shows once.
+    const seen = new Set<string>();
+    return pages
+      .flatMap((page) => page.rows)
+      .filter((row) => !seen.has(row.id) && seen.add(row.id));
+  }, [pages]);
+  // The mailbox is filtered by the backend; search results are all here and filtered now.
+  const results = search.data;
+  const searchRows = useMemo(() => {
+    if (filters.length === 0 || !results) return results;
+    const selected = new Set(selectedIds);
+    return results.filter(
+      (row) => filters.every((filter) => matches[filter](row)) || selected.has(row.id),
+    );
+  }, [results, filters, selectedIds]);
+
+  const filtered = filters.length > 0;
+  if (searching) {
+    return {
+      data: searchRows,
+      isPending: search.isPending,
+      isError: search.isError,
+      searching,
+      filtered,
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      fetchNextPage: noMorePages,
+    };
+  }
+  return {
+    data: mailboxRows,
+    isPending: mailbox.isPending,
+    isError: mailbox.isError,
+    searching,
+    filtered,
+    hasNextPage: mailbox.hasNextPage,
+    isFetchingNextPage: mailbox.isFetchingNextPage,
+    fetchNextPage: mailbox.fetchNextPage,
+  };
 }
+
+const noMorePages = () => Promise.resolve();

@@ -35,7 +35,8 @@ function FolderPicker({ messageIds, onDone }: { messageIds: string[]; onDone: ()
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
 
-  const selected = messages.filter((m) => messageIds.includes(m.id));
+  const chosen = new Set(messageIds);
+  const selected = messages.filter((m) => chosen.has(m.id));
   const targets = moveTargets(selected, folders);
   const needle = query.trim().toLocaleLowerCase(locale);
   const shown = (targets ?? []).filter((target) =>
@@ -72,7 +73,7 @@ function FolderPicker({ messageIds, onDone }: { messageIds: string[]; onDone: ()
         <>
           <div className="px-4 pb-3">
             <Input
-              autoFocus
+              data-autofocus=""
               placeholder={t("move.search")}
               aria-label={t("move.search")}
               aria-controls="move-targets"

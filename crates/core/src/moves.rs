@@ -369,8 +369,9 @@ mod tests {
     }
 
     fn listed(db: &Database, folder_id: &str) -> Vec<String> {
-        crate::mailbox::list_messages(&db.conn(), folder_id, false)
+        crate::mailbox::list_messages(&db.conn(), folder_id, Default::default())
             .unwrap()
+            .rows
             .into_iter()
             .map(|row| row.latest.id)
             .collect()

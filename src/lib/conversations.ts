@@ -15,7 +15,8 @@ export function rowFor<T extends Row>(rows: T[], id: string | null): T | undefin
 
 /** The messages behind the rows, each once. An id the list does not know stands for itself. */
 export function messagesOf(rows: Row[], ids: string[]): string[] {
-  return [...new Set(ids.flatMap((id) => rowFor(rows, id)?.messageIds ?? [id]))];
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return [...new Set(ids.flatMap((id) => (byId.get(id) ?? rowFor(rows, id))?.messageIds ?? [id]))];
 }
 
 /** "Clara Neumann" → "Clara", "Müller, Hans" → "Hans", "Dr. Jana Wolf" → "Jana". */

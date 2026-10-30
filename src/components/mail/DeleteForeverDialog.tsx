@@ -35,7 +35,7 @@ export function DeleteForeverDialog() {
           <Button variant="ghost" onClick={() => ask(null)}>
             {t("account.add.cancel")}
           </Button>
-          <Button variant="destructive" autoFocus onClick={confirm}>
+          <Button variant="destructive" data-autofocus="" onClick={confirm}>
             {t("reader.deleteForever")}
           </Button>
         </DialogFooter>

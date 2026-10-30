@@ -45,6 +45,9 @@ export function SidebarItem({
       {expandable ? (
         <button
           type="button"
+          // The arrow keys open and close it from the entry (useTreeFocus).
+          tabIndex={-1}
+          data-tree-toggle=""
           aria-expanded={expanded}
           aria-label={t(expanded ? "sidebar.collapse" : "sidebar.expand", { name: label })}
           onClick={onToggle}
@@ -60,6 +63,11 @@ export function SidebarItem({
       )}
       <button
         type="button"
+        // One tab stop for the tree; useTreeFocus sets which.
+        tabIndex={-1}
+        data-tree-entry=""
+        data-depth={depth}
+        data-expanded={expandable ? expanded : undefined}
         onClick={onSelect ?? onToggle}
         aria-current={selected ? "page" : undefined}
         aria-expanded={onSelect ? undefined : expanded}

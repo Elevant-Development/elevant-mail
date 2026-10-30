@@ -12,6 +12,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0004_moves.sql"),
     include_str!("migrations/0005_threads.sql"),
     include_str!("migrations/0006_offline.sql"),
+    include_str!("migrations/0007_list_pages.sql"),
 ];
 
 /// Schema version after all migrations of this build have run.
