@@ -11,22 +11,35 @@ unified inbox and a calm interface.
 - **Local first.** Your mail is cached on your computer, opens instantly and stays readable
   offline.
 
-![Elevant Mail with two accounts in the unified inbox](docs/screenshots/main.jpg)
+![Elevant Mail with a conversation in the unified inbox of two accounts](docs/screenshots/main.jpg)
 
-> **Status: v0.2, reading only.** Elevant Mail reads, searches and organizes mail from several
-> accounts. Writing and sending mail comes in a later version (see [Roadmap](#roadmap)). It is
-> early software: please keep another mail client around for now, and
+> **Status: v0.3, reading only.** Elevant Mail reads, searches and organizes mail from several
+> accounts: conversations, filters, archiving and moving with undo, new mail right away. Writing
+> and sending mail comes next (see [Roadmap](#roadmap)). It is early software: please keep another
+> mail client around for now, and
 > [tell us](https://github.com/Elevant-Development/elevant-mail/issues) what breaks.
 
 ## Features
 
-- **Several accounts** with a unified inbox, a color per account and a collapsible folder tree
+- **Several accounts** with a unified inbox (you choose which accounts it brings together), a
+  color per account and a collapsible folder tree
 - **Works with** self-hosted mail servers, Gmail, Microsoft 365, Outlook.com, web.de, GMX and any
   other IMAP provider. Server settings are suggested from your address.
 - **Sign in with Microsoft** for Microsoft 365 and Outlook.com, no password stored
-- **Fast search** across all accounts and folders, right on your computer
-- **Safe HTML mail:** scripts never run, external images stay blocked until you allow them, links
-  open in your browser and the app warns when a link leads somewhere other than it shows
+- **New mail right away** (IMAP IDLE) with a desktop notification, with or without sender and
+  subject
+- **Conversations:** replies sit with the mail they answer, your own replies from Sent included.
+  Prefer single messages? Switch it off in the appearance.
+- **Archive, delete and move** one mail or many at once, with ten seconds to undo
+- **Fast search** across all accounts and folders, right on your computer, with filters like
+  `from:lena` or `is:unread` (see [Searching](#searching)). On request it also searches your mail
+  servers, for older mail.
+- **Filter bar** for unread, starred and mail with attachments
+- **You choose how much stays offline:** per account the last month, three months, a year or
+  everything. Folders with tens of thousands of mails still scroll smoothly.
+- **Safe HTML mail:** scripts never run, external images stay blocked until you allow them for
+  one mail or always for a sender, links open in your browser and the app warns when a link leads
+  somewhere other than it shows
 - **Attachments:** open or save them. Files that could run programs are only saved, never opened
   directly.
 - **Read and starred** state syncs back to the server
@@ -104,20 +117,52 @@ comes with a concrete next step.
 The interface language follows your system. To change it, open **Appearance** (the palette icon
 at the top right) and pick a language; the same menu has mode, colors, density and font.
 
+**Settings** (the gear icon at the top right) has the rest: per account its name, color, server
+settings, password and how far back mail stays on your computer; notifications; and under
+**Reading** which accounts the unified inbox brings together, which inbox opens at start, when an
+opened mail counts as read and whose images always load.
+
+## Searching
+
+Type into the search field at the top; every word has to match, as a word or the start of one
+("invoi" finds "invoice"). Filters narrow it down and work on their own, too:
+
+| Filter                            | Finds                                  |
+| --------------------------------- | -------------------------------------- |
+| `from:lena` or `from:example.org` | Mail from a sender, by name or address |
+| `is:unread`, `is:read`            | Unread or read mail                    |
+| `is:starred`                      | Starred mail                           |
+| `has:attachment`                  | Mail with attachments                  |
+
+The German forms work as well: `von:`, `ist:ungelesen`, `ist:gelesen`, `ist:markiert`,
+`hat:anhang`. The search runs on the mail on your computer. Below the results, **Search on the
+server too** asks your mail servers as well and adds what they find, for mail older than what
+the app keeps offline.
+
 ## Keyboard shortcuts
 
-| Key        | Action                                                          |
-| ---------- | --------------------------------------------------------------- |
-| `j` or `↓` | Next message                                                    |
-| `k` or `↑` | Previous message                                                |
-| `Enter`    | Open the first message, or move into the open message           |
-| `Esc`      | Go back one level: message → list → no selection                |
-| `u`        | Mark as read or unread                                          |
-| `s`        | Star or unstar                                                  |
-| `/`        | Search. `Enter` or `↓` jumps to the first result, `Esc` clears. |
+| Key                  | Action                                                                |
+| -------------------- | --------------------------------------------------------------------- |
+| `j` or `↓`           | Next message                                                          |
+| `k` or `↑`           | Previous message                                                      |
+| `Home`, `End`        | First or last message in the list                                     |
+| `Shift` + `j` or `k` | Add the next or previous message to the selection                     |
+| `Ctrl+A`             | Select the list                                                       |
+| `Enter`              | Open the first message, or move into the open message                 |
+| `Esc`                | Go back one level: message → list → no selection                      |
+| `u`                  | Mark as read or unread                                                |
+| `s`                  | Star or unstar                                                        |
+| `e`                  | Archive                                                               |
+| `#` or `Del`         | Delete                                                                |
+| `v`                  | Move to a folder (type to find it)                                    |
+| `z`                  | Undo the last archiving, deleting or moving                           |
+| `/`                  | Search. `Enter` or `↓` jumps to the first result, `Esc` clears.       |
+| `F6`                 | Jump between search, folders, list and message (`Shift+F6` goes back) |
 
-Inside an open message the arrow keys scroll. Shortcuts pause while you type in a field or a
-dialog is open.
+`Ctrl`-click adds a message to the selection, `Shift`-click selects a range. `Tab` reaches each
+part of the window once; in the folder tree the arrow keys move, `→` opens a folder and `←`
+closes it. Inside an open message the arrow keys scroll. Shortcuts pause while you type in a field
+or a dialog is open.
 
 ## Privacy and security
 
@@ -129,8 +174,9 @@ dialog is open.
 - **Passwords and sign-in tokens** live in your system keyring, never in files or logs.
 - **Encrypted connections only,** with certificates checked against your system's trust store.
 - **Mail is untrusted.** HTML is cleaned before display and shown in a sandbox where scripts
-  never run. External images are blocked, so senders cannot see when you open a mail. Links open
-  in your browser, with a warning when the shown address differs from the real one.
+  never run. External images are blocked, so senders cannot see when you open a mail, until you
+  load them for one mail or always for a sender. Links open in your browser, with a warning when
+  the shown address differs from the real one.
 - **Your data on disk:** the mail cache is a SQLite database in `~/.local/share/dev.elevant.mail/`
   on Linux and `%APPDATA%\dev.elevant.mail\` on Windows. Removing an account in the app deletes
   its mail from that cache and its password from the keyring; the mail on the server stays.
@@ -143,18 +189,17 @@ Found a security problem? Please report it privately, see [SECURITY.md](SECURITY
 
 - v0.1: reading with one account, safe HTML, attachments, search, keyboard control
 - v0.2: several accounts, unified inbox, folder tree, sign in with Microsoft, English and German
+- v0.3: archive, delete and move with undo; new mail right away and notifications; conversations;
+  filters and search on the server; account and reading settings; large folders
 
-**Next: comfort**
+**Next: sending**
 
-- Archive, delete and move, with undo
-- New mail right away (IMAP IDLE) and desktop notifications
-- Conversation view (threads)
-- Filters (unread, starred, with attachment) and server search beyond the local cache
-- Account settings: rename, color, change password, sign in again
+- New mail, reply, reply all, forward
+- Drafts, signatures, attachments
+- SMTP with password or sign-in via Microsoft
 
 **Then**
 
-- **Sending:** new mail, reply, forward, drafts, signatures, attachments
 - **MCP server for AI agents:** optional and off by default, local only, read-only to start, so
   tools like Claude Code can search your mail without their own access to your accounts
 - **Optional AI help:** summaries and reply drafts with a provider you choose, including local
@@ -174,7 +219,7 @@ mailbox (Microsoft 365 admin center → Users → Mail → Manage email apps).
 **Gmail says my password is wrong.** Gmail does not accept your normal password in mail apps. Use
 an app password (see [Getting started](#getting-started)).
 
-**Can I send mail?** Not yet. Sending is the next big step after the comfort features.
+**Can I send mail?** Not yet. Sending is the next step.
 
 **Does it support POP3 or Exchange ActiveSync?** No, IMAP only. Microsoft 365 and Outlook.com work
 over IMAP with sign-in via Microsoft.

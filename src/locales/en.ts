@@ -214,7 +214,7 @@ export const en: Record<MessageKey, string> = {
   "search.results": "Results: {count}",
   "search.empty": "No mail found",
   "search.emptyHint":
-    "Searches the mail on this device. Narrow it down with from:name, is:unread, is:flagged or has:attachment.",
+    "Searches the mail on this device. Narrow it down with from:name, is:unread, is:starred or has:attachment.",
   "search.clear": "Clear search",
   "search.fromKey": "from",
   "search.server": "Search on the server too",
@@ -224,7 +224,7 @@ export const en: Record<MessageKey, string> = {
   "search.server.nothing": "Searched the servers: nothing found",
   "filter.label": "Filters",
   "filter.unread": "Unread",
-  "filter.flagged": "Flagged",
+  "filter.flagged": "Starred",
   "filter.attachment": "Attachment",
   "filter.empty": "No messages match the filters",
   "filter.clear": "Clear filters",
