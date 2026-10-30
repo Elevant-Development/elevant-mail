@@ -43,6 +43,17 @@ export function useAccountSettings(accountId: string) {
   });
 }
 
+/** How far back the account keeps mail; `null` keeps everything. */
+export function useSetKeepDays() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, days }: { accountId: string; days: number | null }) =>
+      api.setKeepDays(accountId, days),
+    onSuccess: (_, { accountId }) =>
+      queryClient.invalidateQueries({ queryKey: ["account-settings", accountId] }),
+  });
+}
+
 export function useUpdateAccount() {
   const queryClient = useQueryClient();
   return useMutation({

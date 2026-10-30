@@ -133,6 +133,8 @@ function MailView({
   const fullBody = useFullBody(message);
   const imagesAllowed = useUiStore((s) => s.remoteImagesAllowed[summary.id] ?? false);
   const allowRemoteImages = useUiStore((s) => s.allowRemoteImages);
+  const setSearchQuery = useUiStore((s) => s.setSearchQuery);
+  const clearListFilters = useUiStore((s) => s.clearListFilters);
   const dark = useResolvedMode() === "dark";
 
   const look: MailLook = message?.htmlStyled
@@ -228,14 +230,24 @@ function MailView({
         ) : (
           <div className="min-w-0 flex-1">{header}</div>
         )}
-        {showsHtml && dark && (
+        <div className="-mt-1.5 ml-2 flex shrink-0 items-center">
+          {showsHtml && dark && (
+            <IconButton
+              label={look === "paper" ? t("reader.view.dark") : t("reader.view.paper")}
+              icon={<Icon name={look === "paper" ? "moon" : "sun"} />}
+              onClick={onSwitchLook}
+            />
+          )}
           <IconButton
-            label={look === "paper" ? t("reader.view.dark") : t("reader.view.paper")}
-            icon={<Icon name={look === "paper" ? "moon" : "sun"} />}
-            className="-mt-1.5 ml-2"
-            onClick={onSwitchLook}
+            label={t("reader.fromSender", { name: displayName(summary.from) })}
+            icon={<Icon name="userSearch" />}
+            onClick={() => {
+              // All of them: the filter bar would hide the read ones.
+              clearListFilters();
+              setSearchQuery(`${t("search.fromKey")}:${summary.from.address}`);
+            }}
           />
-        )}
+        </div>
       </div>
       {message && message.attachments.length > 0 && (
         <AttachmentList attachments={message.attachments} />

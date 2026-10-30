@@ -102,6 +102,13 @@ export const en: Record<MessageKey, string> = {
   "settings.account.signInAgainHint":
     "Needed when the sign-in has expired or you changed your Microsoft password.",
   "settings.account.signedInAgain": "Signed in again.",
+  "settings.account.offline": "On this device",
+  "settings.account.offline.month": "1 month",
+  "settings.account.offline.months": "3 months",
+  "settings.account.offline.year": "1 year",
+  "settings.account.offline.all": "Everything",
+  "settings.account.offlineHint":
+    "How far back mail is kept offline and ready for the quick search. Every folder keeps at least its newest 100; older mail is found by the search on the server.",
   "settings.account.remove": "Remove account",
   "settings.account.removeHint":
     "Deletes this account's mail from this computer. Everything stays on the server.",
@@ -189,8 +196,21 @@ export const en: Record<MessageKey, string> = {
   "search.title": "Search",
   "search.results": "Results: {count}",
   "search.empty": "No mail found",
-  "search.emptyHint": "Searches all mail that is already on this device.",
+  "search.emptyHint":
+    "Searches the mail on this device. Narrow it down with from:name, is:unread, is:flagged or has:attachment.",
   "search.clear": "Clear search",
+  "search.fromKey": "from",
+  "search.server": "Search on the server too",
+  "search.server.running": "Searching the servers…",
+  "search.server.found.one": "Searched the servers: 1 match",
+  "search.server.found.other": "Searched the servers: {count} matches",
+  "search.server.nothing": "Searched the servers: nothing found",
+  "filter.label": "Filters",
+  "filter.unread": "Unread",
+  "filter.flagged": "Flagged",
+  "filter.attachment": "Attachment",
+  "filter.empty": "No messages match the filters",
+  "filter.clear": "Clear filters",
 
   "sidebar.unifiedInbox": "All inboxes",
   "sidebar.addAccount": "Add account",
@@ -234,6 +254,7 @@ export const en: Record<MessageKey, string> = {
   "reader.delete": "Delete",
   "reader.deleteForever": "Delete for good",
   "reader.move": "Move",
+  "reader.fromSender": "All mail from {name}",
 
   "selection.count": "{count} messages selected",
   "selection.hint": "Ctrl-click adds single messages, Shift-click a range.",

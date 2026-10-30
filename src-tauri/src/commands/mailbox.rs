@@ -26,14 +26,21 @@ pub async fn list_messages(
     )?)
 }
 
-/// Full-text search over all cached mail, newest first.
+/// Full-text search over all cached mail, newest first, with filters like `from:`. `also`:
+/// messages the search on the servers found.
 #[tauri::command]
 pub async fn search_messages(
     state: State<'_, AppState>,
     query: String,
     threads: bool,
+    also: Vec<String>,
 ) -> Result<Vec<Conversation>, CommandError> {
-    Ok(mailbox::search_messages(&state.db.conn(), &query, threads)?)
+    Ok(mailbox::search_messages(
+        &state.db.conn(),
+        &query,
+        threads,
+        &also,
+    )?)
 }
 
 /// The messages the reader shows for one, newest first: its conversation, or the message alone.

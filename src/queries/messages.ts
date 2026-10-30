@@ -1,8 +1,9 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { api, type Message } from "@/lib/tauri";
-import { useUiStore } from "@/stores/ui";
+import { api, type Conversation, type Message } from "@/lib/tauri";
+import { type ListFilter, useUiStore } from "@/stores/ui";
 
 export function useMessages(mailboxId: string) {
   const threads = useUiStore((s) => s.threads);
@@ -63,26 +64,56 @@ export function useFullBody(message: Message | null | undefined) {
 
 export function useSearch(query: string) {
   const threads = useUiStore((s) => s.threads);
+  // What the servers found for this query (SearchOnServer) comes along.
+  const also = useUiStore((s) => (s.serverHits?.query === query ? s.serverHits.ids : NONE));
   return useQuery({
-    queryKey: ["search", query, threads],
-    queryFn: () => api.searchMessages(query, threads),
+    queryKey: ["search", query, threads, also],
+    queryFn: () => api.searchMessages(query, threads, also),
     enabled: query.trim() !== "",
     // The previous results stay while the next word is typed.
     placeholderData: keepPreviousData,
   });
 }
 
-/**
- * What the list shows: search results while the search field has text, otherwise the selected
- * mailbox. The list and the keyboard shortcuts both use this, so they always agree.
- */
-export function useVisibleMessages() {
-  const mailboxId = useUiStore((s) => s.selectedMailboxId);
-  const query = useDebouncedValue(
+const NONE: string[] = [];
+
+/** The search field's text as the list searches it: trimmed and a moment after typing. */
+export function useSearchQuery() {
+  return useDebouncedValue(
     useUiStore((s) => s.searchQuery.trim()),
     150,
   );
+}
+
+const matches: Record<ListFilter, (row: Conversation) => boolean> = {
+  unread: (row) => !row.isRead,
+  flagged: (row) => row.isFlagged,
+  attachment: (row) => row.hasAttachments,
+};
+
+/**
+ * What the list shows: search results while the search field has text, otherwise the selected
+ * mailbox, narrowed by the filter bar. The list, the keyboard shortcuts and the actions all use
+ * this, so they always agree. A selected row stays while it is selected, so reading an unread
+ * mail does not pull it away under the "unread" filter.
+ */
+export function useVisibleMessages() {
+  const mailboxId = useUiStore((s) => s.selectedMailboxId);
+  const query = useSearchQuery();
+  const filters = useUiStore((s) => s.listFilters);
+  const selectedIds = useUiStore((s) => s.selectedIds);
   const mailbox = useMessages(mailboxId);
   const search = useSearch(query);
-  return query === "" ? { ...mailbox, searching: false } : { ...search, searching: true };
+  const result = query === "" ? { ...mailbox, searching: false } : { ...search, searching: true };
+  const data = useMemo(
+    () =>
+      filters.length === 0
+        ? result.data
+        : result.data?.filter(
+            (row) =>
+              filters.every((filter) => matches[filter](row)) || selectedIds.includes(row.id),
+          ),
+    [result.data, filters, selectedIds],
+  );
+  return { ...result, data, filtered: filters.length > 0 };
 }

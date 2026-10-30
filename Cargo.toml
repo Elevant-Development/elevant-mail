@@ -12,6 +12,8 @@ publish = false
 [workspace.dependencies]
 ammonia = "4"
 base64 = "0.23"
+# Already built for async-imap; dates for IMAP SEARCH.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
 elevant-mail-core = { path = "crates/core" }
 futures = "0.3"

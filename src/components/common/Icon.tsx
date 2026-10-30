@@ -38,6 +38,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Server,
   Send,
   Settings,
   ShieldAlert,
@@ -45,6 +46,7 @@ import {
   Star,
   Sun,
   Trash2,
+  UserSearch,
   X,
 } from "lucide-react";
 
@@ -84,6 +86,7 @@ const icons = {
   refresh: RefreshCw,
   restore: Copy,
   search: Search,
+  server: Server,
   sent: Send,
   settings: Settings,
   shieldAlert: ShieldAlert,
@@ -94,6 +97,7 @@ const icons = {
   sun: Sun,
   trash: Trash2,
   unified: Mails,
+  userSearch: UserSearch,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof icons;

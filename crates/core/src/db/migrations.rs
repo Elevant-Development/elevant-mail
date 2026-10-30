@@ -11,6 +11,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0003_attachments.sql"),
     include_str!("migrations/0004_moves.sql"),
     include_str!("migrations/0005_threads.sql"),
+    include_str!("migrations/0006_offline.sql"),
 ];
 
 /// Schema version after all migrations of this build have run.

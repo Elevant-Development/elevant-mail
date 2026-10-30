@@ -5,4 +5,8 @@ import type { SignInMethod } from "./SignInMethod";
 /**
  * What the account settings show besides name and colour.
  */
-export type AccountSettings = { signIn: SignInMethod, imap: ImapSettings, };
+export type AccountSettings = { signIn: SignInMethod, imap: ImapSettings, 
+/**
+ * How many days back the cache keeps mail; `None` keeps everything ([`set_keep_days`]).
+ */
+keepDays: number | null, };

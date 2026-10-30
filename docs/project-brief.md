@@ -113,8 +113,14 @@ It follows that:
 Sync rules (implemented in `crates/core/src/mail/sync.rs`):
 
 - Check **UIDVALIDITY** per folder. If it changes, the folder's cache is dropped and fetched again.
-- New mail: everything above the newest UID in the cache. The first sync of a folder fetches the
-  newest 100; older mail comes in batches of 100 via "load older mail" at the end of the list.
+- What the cache keeps per folder: the newest 100, everything from the account's period
+  (`accounts.keep_days`: 1 month, 3 months (default), 1 year or everything, set per account;
+  `UID SEARCH SINCE`), and everything that arrived since the last sync whatever its date (mail
+  moved there keeps its old one). A longer period is fetched at the next sync, newest first; a
+  shorter one keeps what is cached. Older mail comes in batches of 100 via "load older mail" at the
+  end of the list.
+- Mail a search on the server fetched (`messages.by_search`) stays out of its folder's list until
+  the sync reaches it; then it is adopted. "Load older" counts from the oldest synced mail.
 - Mail deleted on the server: the server's UID list (`UID SEARCH ALL`) is compared with the cache.
 - Read and flagged state from other devices: the FLAGS of cached mail are reconciled. CONDSTORE
   (`highest_modseq`) and QRESYNC will make this cheaper later.
@@ -219,9 +225,9 @@ it does not understand.
 
 | Table             | Content                                                                                                                                                   |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accounts`        | Accounts with IMAP and (from phase 4) SMTP settings, sign-in method, colour. No passwords.                                                                 |
+| `accounts`        | Accounts with IMAP and (from phase 4) SMTP settings, sign-in method, colour, `keep_days` (how far back the cache keeps mail). No passwords.                |
 | `folders`         | Folders per account with SPECIAL-USE role, `uid_validity`, `uid_next`, `highest_modseq`, counts                                                           |
-| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to` and `references_header`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way; unique per folder and UID |
+| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to` and `references_header`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched; unique per folder and UID |
 | `thread_keys`     | Every Message-ID a conversation has seen, per account, so replies find it                                                                                  |
 | `attachments`     | Attachments per message with the MIME part to fetch them; small inline images with their bytes                                                           |
 | `pending_actions` | Local changes that still have to reach the server; `due_at` holds a move back while it can be undone                                                       |
@@ -259,14 +265,14 @@ checks that they are current.
 | Area        | Commands                                                                                                                                 |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | App         | `app_status` (version, schema version, keyring available)                                                                                 |
-| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `change_login` (server settings, password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
+| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `set_keep_days`, `change_login` (server settings, password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
 | Folders     | `list_folders`                                                                                                                            |
 | Mail        | `list_messages` (folder or unified inbox; with `threads` one row per conversation), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images), `load_message_body`, `search_messages` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
 | Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
 | Links       | `open_link`                                                                                                                               |
 | Attachments | `save_attachment` (the system's save dialog via `tauri-plugin-dialog`, called from Rust only; the frontend gets no dialog or file permissions), `open_attachment` |
-| Sync        | `sync_account`, `sync_folder`, `load_older`                                                                                               |
+| Sync        | `sync_account`, `sync_folder`, `load_older`, `search_server` (one account's folders on the server)                                        |
 
 Planned: `test_connection` for existing accounts.
 
@@ -280,6 +286,20 @@ finds "Rechnung"); accents and umlauts do not matter ("koln" finds "Köln"). The
 word by word, so FTS5 syntax such as `OR` or `-` is plain text for the user. A message that sits
 in several folders of an account (Gmail labels, "All Mail", copies) is listed once, preferably
 from the inbox. Large mail is searchable by its text only after it was opened once.
+
+Filters in the search field (`crates/core/src/query.rs`), in English and German: `from:`/`von:`
+(name or address, as a phrase in the sender columns), `is:unread`/`ist:ungelesen`,
+`is:read`/`ist:gelesen`, `is:flagged`/`ist:markiert`, `has:attachment`/`hat:anhang`. They work
+alone too ("ist:ungelesen" lists all unread mail). Unknown ones ("Re:", "10:30") are words. A
+button in the reader shows all mail from a sender (`von:address`). The filter bar over the list
+(unread, flagged, attachment) narrows whatever the list shows; a selected row stays while it is
+selected, and the bar resets when another mailbox opens.
+
+`search_server` searches on request ("search on the server too", below the results): per account
+all folders except trash, spam and drafts, on Gmail only "All Mail". The same query goes out as
+IMAP `SEARCH` (`TEXT`, `FROM`, `UNSEEN`, `FLAGGED`; text that is not ASCII as a LITERAL+ literal
+with `CHARSET UTF-8`). The newest 50 matches per folder are fetched like the sync does it and
+returned; `search_messages` lists them too (`also`), so matches deep in large mail show as well.
 
 With conversations on, a row of `list_messages` and `search_messages` is a conversation within
 one folder, shown with its newest message: unread while one of its messages is, flagged while one
@@ -446,8 +466,9 @@ can consent without an admin, paging in `list_messages` beyond 5,000 cached mess
   plus `\Deleted` and `UID EXPUNGE` (plain `EXPUNGE` without UIDPLUS). Archiving goes to the
   archive folder, Gmail's "All Mail", or a folder "Archiv" made on the server; deleting goes to
   the trash and asks before deleting from there for good. A refused move shows the mail again.
-- Server-side search (IMAP `SEARCH`) for mail outside the cache
-- Filters: unread, flagged, sender, with attachment
+- Server-side search (IMAP `SEARCH`) for mail outside the cache, on request — done
+- Filters: unread, flagged, sender, with attachment — done (filter bar and search syntax)
+- How far back the cache keeps mail, per account (1 month to everything, default 3 months) — done
 - Keyboard focus management
 - Settings: theme, density, default account, allow images per sender, mark-as-read delay
 - Conversations, switchable, on by default — done. Grouped by Message-ID headers, replies
@@ -596,4 +617,7 @@ Phase 3:
 16. **Conversations:** grouped list, conversation in the reader with the replies from "Sent",
     switchable — done
 
-Next: filters and server-side search.
+17. **Filters and search on the server:** filter bar, `von:`/`ist:`/`hat:` in the search, all mail
+    from a sender, search on the server on request, period kept per account — done
+
+Next: polish (paging beyond 5,000 messages, keyboard focus, performance).

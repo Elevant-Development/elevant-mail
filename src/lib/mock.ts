@@ -46,6 +46,7 @@ const accountSettings: Record<string, AccountSettings> = {
   "acc-private": {
     signIn: "password",
     imap: { host: "imap.example.org", port: 993, security: "tls", username: "alex@example.org" },
+    keepDays: 90,
   },
   "acc-work": {
     signIn: "microsoft",
@@ -55,6 +56,7 @@ const accountSettings: Record<string, AccountSettings> = {
       security: "tls",
       username: "alex.berger@example.com",
     },
+    keepDays: 365,
   },
 };
 
@@ -109,6 +111,8 @@ interface MockMessage {
   files?: MockFile[];
   /** Sample mail with the same thread forms a conversation. */
   thread?: string;
+  /** Only on the "server": found by searchServer, never in a folder's list. */
+  serverOnly?: boolean;
 }
 
 interface MockFile {
@@ -548,7 +552,37 @@ function archiveFiller(count: number): MockMessage[] {
   }));
 }
 
-const allMockMessages = [...mockMessages, ...archiveFiller(1500)];
+/** Old mail outside the cached period, for the search on the server. */
+const serverOnlyMessages: MockMessage[] = [
+  {
+    account: "acc-private",
+    role: "archive",
+    from: { name: L("Radhaus am Markt", "Bike shop on the square"), address: "laden@example.net" },
+    subject: L("Kaufvertrag Trekkingrad", "Purchase contract trekking bike"),
+    ago: 420 * DAY,
+    read: true,
+    serverOnly: true,
+    body: L(
+      "Anbei der Kaufvertrag für Ihr neues Trekkingrad. Die Garantie läuft drei Jahre.",
+      "Attached is the purchase contract for your new trekking bike. The warranty runs three years.",
+    ),
+  },
+  {
+    account: "acc-work",
+    role: "archive",
+    from: { name: "Martin Schulz", address: "m.schulz@example.com" },
+    subject: L("Rahmenvertrag 2024 unterschrieben", "Framework contract 2024 signed"),
+    ago: 700 * DAY,
+    read: true,
+    serverOnly: true,
+    body: L(
+      "Der Rahmenvertrag ist unterschrieben zurück. Ich lege ihn im Projektordner ab.",
+      "The framework contract is back, signed. I'll put it in the project folder.",
+    ),
+  },
+];
+
+const allMockMessages = [...mockMessages, ...archiveFiller(1500), ...serverOnlyMessages];
 
 function buildMessages(): Message[] {
   const now = Date.now();
@@ -627,6 +661,47 @@ function toSummary({
   return summary;
 }
 
+/**
+ * The search syntax of the backend (crates/core/src/query.rs), as far as the samples need it:
+ * words, `from:`/`von:`, `is:unread`/`ist:ungelesen`, `is:flagged`/`ist:markiert` and
+ * `has:attachment`/`hat:anhang`.
+ */
+function parseMockQuery(query: string) {
+  const words: string[] = [];
+  const from: string[] = [];
+  const checks: ((m: Message) => boolean)[] = [];
+  for (const token of query.toLocaleLowerCase(locale).split(/\s+/).filter(Boolean)) {
+    const [key = "", value = ""] = token.split(/:(.*)/);
+    if ((key === "from" || key === "von") && value) from.push(value);
+    else if ((key === "is" || key === "ist") && ["unread", "ungelesen"].includes(value))
+      checks.push((m) => !m.isRead);
+    else if ((key === "is" || key === "ist") && ["read", "gelesen"].includes(value))
+      checks.push((m) => m.isRead);
+    else if ((key === "is" || key === "ist") && ["flagged", "starred", "markiert"].includes(value))
+      checks.push((m) => m.isFlagged);
+    else if ((key === "has" || key === "hat") && ["attachment", "anhang"].includes(value))
+      checks.push((m) => m.hasAttachments);
+    else words.push(token);
+  }
+  if (words.length + from.length + checks.length === 0) return null;
+  return { words, from, filters: (m: Message) => checks.every((check) => check(m)) };
+}
+
+function matchesMockQuery(
+  message: Message,
+  search: NonNullable<ReturnType<typeof parseMockQuery>>,
+) {
+  const text = [message.subject, message.from.name, message.from.address, message.bodyText]
+    .join(" ")
+    .toLocaleLowerCase(locale);
+  const sender = [message.from.name, message.from.address].join(" ").toLocaleLowerCase(locale);
+  return (
+    search.words.every((word) => text.includes(word)) &&
+    search.from.every((name) => sender.includes(name)) &&
+    search.filters(message)
+  );
+}
+
 /** The sample conversation of a message; mail outside one is a conversation of its own. */
 function threadOf(message: Message): string {
   const index = messages.indexOf(message);
@@ -692,7 +767,16 @@ function setMockFlag(messageIds: string[], flag: "isRead" | "isFlagged", value: 
 const movedFrom = new Map<string, string>();
 const deletedForGood = new Set<string>();
 
-const isListed = (message: Message) => !deletedForGood.has(message.id);
+/** Sample mail fetched by a search on the server; the rest of serverOnly mail is not cached. */
+const fetchedBySearch = new Set<string>();
+const sample = (message: Message) => allMockMessages[messages.indexOf(message)];
+const onServerOnly = (message: Message) =>
+  sample(message)?.serverOnly === true && !fetchedBySearch.has(message.id);
+
+/** In the cache: not deleted for good, and not only on the server. */
+const isListed = (message: Message) => !deletedForGood.has(message.id) && !onServerOnly(message);
+/** In its folder's list: also not fetched by a search only (like `by_search`). */
+const inFolderList = (message: Message) => isListed(message) && !sample(message)?.serverOnly;
 
 /** Role folders count their sample mail; the plain folders keep their made-up numbers. */
 function recount() {
@@ -790,7 +874,7 @@ export const mockBackend: Backend = {
       color: "oklch(0.72 0.14 150)",
     };
     accounts = [...accounts, added];
-    accountSettings[added.id] = { signIn: "password", imap: account.imap };
+    accountSettings[added.id] = { signIn: "password", imap: account.imap, keepDays: 90 };
     folders = [
       ...folders,
       ...folderRoles.map(({ role, name }) => roleFolder(added.id, role, name)),
@@ -800,7 +884,7 @@ export const mockBackend: Backend = {
   addMicrosoftAccount: async (account) => {
     await mockBrowserSignIn();
     const added = await mockBackend.addAccount(account, "");
-    accountSettings[added.id] = { signIn: "microsoft", imap: account.imap };
+    accountSettings[added.id] = { signIn: "microsoft", imap: account.imap, keepDays: 90 };
     return added;
   },
   cancelSignIn: async () => cancelMockSignIn(),
@@ -812,6 +896,11 @@ export const mockBackend: Backend = {
     const settings = accountSettings[accountId];
     if (!settings) throw { kind: "notFound", hint: null };
     return settings;
+  },
+  setKeepDays: async (accountId, days) => {
+    const current = accountSettings[accountId];
+    if (!current) throw { kind: "notFound", hint: null };
+    accountSettings[accountId] = { ...current, keepDays: days };
   },
   updateAccount: async (accountId, changes) => {
     const current = accounts.find((a) => a.id === accountId);
@@ -842,7 +931,7 @@ export const mockBackend: Backend = {
       mailboxId === UNIFIED_INBOX
         ? messages.filter((m) => m.folderId.endsWith(":inbox"))
         : messages.filter((m) => m.folderId === mailboxId)
-    ).filter(isListed);
+    ).filter(inFolderList);
     return toConversations(inMailbox, threads);
   },
   getConversation: async (messageId, threads) => {
@@ -866,15 +955,12 @@ export const mockBackend: Backend = {
       bodyHtml: html && message.bodyComplete ? renderMockHtml(html, remoteImages) : null,
     };
   },
-  searchMessages: async (query, threads) => {
-    const words = query.toLocaleLowerCase(locale).split(/\s+/).filter(Boolean);
-    if (words.length === 0) return [];
-    const hits = messages.filter(isListed).filter((m) => {
-      const text = [m.subject, m.from.name, m.from.address, m.bodyText]
-        .join(" ")
-        .toLocaleLowerCase(locale);
-      return words.every((word) => text.includes(word));
-    });
+  searchMessages: async (query, threads, also) => {
+    const search = parseMockQuery(query);
+    if (!search) return [];
+    const hits = messages
+      .filter(isListed)
+      .filter((m) => matchesMockQuery(m, search) || (also.includes(m.id) && search.filters(m)));
     // With conversations a result is the whole conversation in its folder; for the user's own
     // reply the folder where the rest of it is, the inbox first.
     const shownIn = (hit: Message) => {
@@ -895,6 +981,20 @@ export const mockBackend: Backend = {
         )
       : hits;
     return toConversations(shown, threads).slice(0, 300);
+  },
+  searchServer: async (accountId, query) => {
+    await wait(1400);
+    const search = parseMockQuery(query);
+    if (!search) return [];
+    const found = messages.filter(
+      (m) =>
+        m.accountId === accountId &&
+        !deletedForGood.has(m.id) &&
+        !/:(trash|junk|drafts)$/.test(m.folderId) &&
+        matchesMockQuery(m, search),
+    );
+    for (const m of found) fetchedBySearch.add(m.id);
+    return found.map((m) => m.id);
   },
   setRead: async (messageIds, read) => setMockFlag(messageIds, "isRead", read),
   setFlagged: async (messageIds, flagged) => setMockFlag(messageIds, "isFlagged", flagged),

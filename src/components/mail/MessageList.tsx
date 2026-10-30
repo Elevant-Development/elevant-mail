@@ -19,7 +19,9 @@ import { useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
 
 import { EmptyState } from "./EmptyState";
+import { ListFilters } from "./ListFilters";
 import { MessageListItem } from "./MessageListItem";
+import { SearchOnServer } from "./SearchOnServer";
 
 interface MessageListProps {
   className?: string;
@@ -157,7 +159,8 @@ export function MessageList({ className }: MessageListProps) {
   const mailboxId = useUiStore((s) => s.selectedMailboxId);
   const { data: accounts = [] } = useAccounts();
   const { data: folders = [] } = useFolders();
-  const { data, isPending, isError, searching } = useVisibleMessages();
+  const { data, isPending, isError, searching, filtered } = useVisibleMessages();
+  const clearListFilters = useUiStore((s) => s.clearListFilters);
   const messages = useMemo(() => data ?? [], [data]);
   const searchQuery = useUiStore((s) => s.searchQuery.trim());
   const now = useNow();
@@ -213,7 +216,17 @@ export function MessageList({ className }: MessageListProps) {
         title={t("search.empty")}
         hint={t("search.emptyHint")}
         className="flex-1"
-      />
+      >
+        <SearchOnServer />
+      </EmptyState>
+    );
+  } else if (messages.length === 0 && filtered) {
+    content = (
+      <EmptyState icon={<Icon name="mail" />} title={t("filter.empty")} className="flex-1">
+        <Button variant="ghost" size="sm" onClick={clearListFilters}>
+          {t("filter.clear")}
+        </Button>
+      </EmptyState>
     );
   } else if (messages.length === 0) {
     content = progress ? (
@@ -235,19 +248,23 @@ export function MessageList({ className }: MessageListProps) {
         accountColor={(accountId) => (showAccountColor ? accountColors.get(accountId) : undefined)}
         ownAddresses={ownAddresses}
         footer={
-          hasOlder && (
-            <div className="px-2 pb-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full"
-                disabled={loadingOlder}
-                onClick={() => void loadOlder(folder)}
-              >
-                {loadingOlder && <Icon name="spinner" className="animate-spin" />}
-                {t("sync.loadOlder")}
-              </Button>
-            </div>
+          searching ? (
+            <SearchOnServer />
+          ) : (
+            hasOlder && (
+              <div className="px-2 pb-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full"
+                  disabled={loadingOlder}
+                  onClick={() => void loadOlder(folder)}
+                >
+                  {loadingOlder && <Icon name="spinner" className="animate-spin" />}
+                  {t("sync.loadOlder")}
+                </Button>
+              </div>
+            )
           )
         }
       />
@@ -316,6 +333,7 @@ export function MessageList({ className }: MessageListProps) {
           </div>
         </div>
       )}
+      <ListFilters />
       {content}
     </section>
   );

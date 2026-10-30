@@ -54,6 +54,21 @@ pub async fn update_account(
     Ok(accounts::update(&state.db.conn(), &account_id, &changes)?)
 }
 
+/// How many days back the account keeps mail; `None` keeps everything. The next sync fetches
+/// what a longer period adds.
+#[tauri::command]
+pub async fn set_keep_days(
+    state: State<'_, AppState>,
+    account_id: String,
+    days: Option<u32>,
+) -> Result<(), CommandError> {
+    Ok(accounts::set_keep_days(
+        &state.db.conn(),
+        &account_id,
+        days,
+    )?)
+}
+
 /// New server settings or a new password: logs in with them first and keeps the old ones if that
 /// fails. Without a password the stored one is used.
 #[tauri::command]

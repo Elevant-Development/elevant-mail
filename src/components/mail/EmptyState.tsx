@@ -7,9 +7,11 @@ interface EmptyStateProps {
   title: string;
   hint?: string;
   className?: string;
+  /** Below the hint, e.g. a button that does something about it. */
+  children?: ReactNode;
 }
 
-export function EmptyState({ icon, title, hint, className }: EmptyStateProps) {
+export function EmptyState({ icon, title, hint, className, children }: EmptyStateProps) {
   return (
     <div
       className={cn(
@@ -22,6 +24,7 @@ export function EmptyState({ icon, title, hint, className }: EmptyStateProps) {
       </div>
       <p className="font-medium text-foreground/80">{title}</p>
       {hint && <p className="max-w-xs text-muted-foreground">{hint}</p>}
+      {children}
     </div>
   );
 }

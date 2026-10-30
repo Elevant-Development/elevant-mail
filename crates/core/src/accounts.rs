@@ -53,6 +53,8 @@ pub enum SignInMethod {
 pub struct AccountSettings {
     pub sign_in: SignInMethod,
     pub imap: ImapSettings,
+    /// How many days back the cache keeps mail; `None` keeps everything ([`set_keep_days`]).
+    pub keep_days: Option<u32>,
 }
 
 /// What changes without a login.
@@ -313,7 +315,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Account>> {
 
 pub fn settings(conn: &Connection, account_id: &str) -> Result<AccountSettings> {
     conn.query_row(
-        "SELECT imap_host, imap_port, imap_security, imap_username, auth_method
+        "SELECT imap_host, imap_port, imap_security, imap_username, auth_method, keep_days
          FROM accounts WHERE id = ?1",
         [account_id],
         |row| {
@@ -331,11 +333,26 @@ pub fn settings(conn: &Connection, account_id: &str) -> Result<AccountSettings> 
                     security: Security::from_db_str(&security),
                     username: row.get(3)?,
                 },
+                keep_days: row.get(5)?,
             })
         },
     )
     .optional()?
     .ok_or(Error::AccountNotFound)
+}
+
+/// How far back the account keeps mail in the cache, in days; `None` keeps everything. Every
+/// folder keeps at least its newest 100 anyway. A longer period is fetched at the next sync, a
+/// shorter one keeps what is cached.
+pub fn set_keep_days(conn: &Connection, account_id: &str, days: Option<u32>) -> Result<()> {
+    let updated = conn.execute(
+        "UPDATE accounts SET keep_days = ?2 WHERE id = ?1",
+        params![account_id, days.map(|days| days.clamp(1, 36_500))],
+    )?;
+    if updated == 0 {
+        return Err(Error::AccountNotFound);
+    }
+    Ok(())
 }
 
 /// Renames the account and sets its colour. An empty name falls back to the address, as when
@@ -727,8 +744,20 @@ mod tests {
             AccountSettings {
                 sign_in: SignInMethod::Password,
                 imap: new_account().imap,
+                keep_days: Some(90),
             }
         );
+        set_keep_days(&db.conn(), &password.id, None).unwrap();
+        assert_eq!(settings(&db.conn(), &password.id).unwrap().keep_days, None);
+        set_keep_days(&db.conn(), &password.id, Some(0)).unwrap();
+        assert_eq!(
+            settings(&db.conn(), &password.id).unwrap().keep_days,
+            Some(1)
+        );
+        assert!(matches!(
+            set_keep_days(&db.conn(), "missing", Some(30)),
+            Err(Error::AccountNotFound)
+        ));
         assert_eq!(
             settings(&db.conn(), &microsoft.id).unwrap().sign_in,
             SignInMethod::Microsoft

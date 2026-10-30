@@ -71,3 +71,22 @@ pub async fn load_older(
     let emit = emitter(&app);
     Ok(sync::load_older(&state.db, state.secrets.as_ref(), &folder_id, &emit).await?)
 }
+
+/// Searches the account's folders on the server for what the cache does not have and fetches it.
+/// Returns the matching messages, for `search_messages` to list as `also`.
+#[tauri::command]
+pub async fn search_server(
+    state: State<'_, AppState>,
+    account_id: String,
+    query: String,
+) -> Result<Vec<String>, CommandError> {
+    let lock = state.account_lock(&account_id);
+    let _turn = lock.lock().await;
+    Ok(elevant_mail_core::mail::search::search_server(
+        &state.db,
+        state.secrets.as_ref(),
+        &account_id,
+        &query,
+    )
+    .await?)
+}

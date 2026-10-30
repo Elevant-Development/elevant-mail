@@ -32,13 +32,14 @@ use crate::model::Address;
 use crate::secrets::{SecretKind, SecretStore};
 use crate::{Error, Result};
 
-/// Messages per batch: the first sync of a folder and every "load older".
+/// Messages per batch: the newest of a folder, which the sync keeps whatever their date, and
+/// every "load older".
 pub const BATCH_SIZE: usize = 100;
 /// Larger messages are fetched without body; the reader loads them when opened.
 const BODY_SIZE_LIMIT: u32 = 512 * 1024;
 /// For those, this much of the body is fetched for the preview line.
 const PREVIEW_BYTES: u32 = 64 * 1024;
-const FETCH_CHUNK: usize = 25;
+pub(crate) const FETCH_CHUNK: usize = 25;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -92,11 +93,12 @@ enum Mode {
     Older,
 }
 
-struct FolderState {
-    id: String,
-    account_id: String,
-    path: String,
-    uid_validity: Option<u32>,
+#[derive(Clone)]
+pub(crate) struct FolderState {
+    pub(crate) id: String,
+    pub(crate) account_id: String,
+    pub(crate) path: String,
+    pub(crate) uid_validity: Option<u32>,
 }
 
 /// Syncs the inbox of an account (creating the folder list first if it is missing).
@@ -260,20 +262,57 @@ async fn sync_folder_in(
         .into_iter()
         .collect();
     let cached = cached_flags(&db.conn(), &folder.id)?;
+    // What the sync keeps, without mail a search on the server fetched from further back.
+    let synced = synced_uids(&db.conn(), &folder.id)?;
 
     let mut result = SyncReport::default();
     // Mail above this arrived since the last sync; none on the first one.
     let known_until = if mode == Mode::Newest {
-        cached.keys().next_back().copied()
+        synced.last().copied()
     } else {
         None
     };
-    let to_fetch: Vec<u32> = match (mode, cached.keys().next(), cached.keys().next_back()) {
-        (Mode::Newest, _, Some(&newest)) => server_uids.range(newest + 1..).copied().collect(),
-        (Mode::Newest, _, None) => newest(&server_uids, None),
-        (Mode::Older, Some(&oldest), _) => newest(&server_uids, Some(oldest)),
-        (Mode::Older, None, _) => newest(&server_uids, None),
+    let wanted: BTreeSet<u32> = match mode {
+        // The folder's newest, everything from the account's period, and what arrived since the
+        // last sync whatever its date (mail moved here keeps its old one).
+        Mode::Newest => {
+            let mut wanted: BTreeSet<u32> = newest(&server_uids, None).into_iter().collect();
+            if let Some(&last) = synced.last() {
+                wanted.extend(server_uids.range(last + 1..));
+            }
+            let since = keep_since(&db.conn(), &folder.account_id)?;
+            match since {
+                Some(since) => {
+                    let recent = with_timeout(
+                        COMMAND_TIMEOUT,
+                        session.uid_search(format!("SINCE {since}")),
+                    )
+                    .await?
+                    .map_err(protocol_error)?;
+                    wanted.extend(recent.into_iter().filter(|uid| server_uids.contains(uid)));
+                }
+                None => wanted.extend(&server_uids),
+            }
+            wanted
+        }
+        Mode::Older => newest(&server_uids, synced.first().copied())
+            .into_iter()
+            .collect(),
     };
+    adopt(
+        &db.conn(),
+        &folder.id,
+        wanted
+            .iter()
+            .filter(|uid| cached.contains_key(uid) && !synced.contains(uid)),
+    )?;
+    // Newest first, so a long first sync fills the list from the top.
+    let to_fetch: Vec<u32> = wanted
+        .iter()
+        .rev()
+        .filter(|uid| !cached.contains_key(uid))
+        .copied()
+        .collect();
 
     if mode == Mode::Newest {
         let gone: Vec<u32> = cached
@@ -300,7 +339,7 @@ async fn sync_folder_in(
         total,
     );
     for chunk in to_fetch.chunks(FETCH_CHUNK) {
-        result.added += fetch_and_store(db, session, folder, chunk).await?;
+        result.added += fetch_and_store(db, session, folder, chunk, false).await?;
         report(
             progress,
             &folder.account_id,
@@ -506,11 +545,13 @@ pub(crate) fn meta_of(fetch: &Fetch) -> Meta {
     }
 }
 
-async fn fetch_and_store(
+/// `by_search`: fetched for a search on the server, not by the sync (`messages.by_search`).
+pub(crate) async fn fetch_and_store(
     db: &Database,
     session: &mut ImapSession,
     folder: &FolderState,
     uids: &[u32],
+    by_search: bool,
 ) -> Result<u32> {
     let metas: BTreeMap<u32, Meta> =
         fetch_all(session, uids, "(UID FLAGS INTERNALDATE RFC822.SIZE)")
@@ -543,7 +584,7 @@ async fn fetch_and_store(
     let mut stored = 0;
     for (uid, (message, complete)) in &parsed {
         let Some(meta) = metas.get(uid) else { continue };
-        store_message(&tx, folder, *uid, message, *complete, meta)?;
+        store_message(&tx, folder, *uid, message, *complete, meta, by_search)?;
         stored += 1;
     }
     crate::threads::assign_pending(&tx)?;
@@ -558,6 +599,7 @@ fn store_message(
     message: &ParsedMessage,
     complete: bool,
     meta: &Meta,
+    by_search: bool,
 ) -> Result<()> {
     let to_json = |addresses: &[crate::model::Address]| serde_json::to_string(addresses).ok();
     // On a conflict the row keeps its id, which RETURNING hands back for the inline images.
@@ -565,11 +607,12 @@ fn store_message(
         "INSERT INTO messages (id, account_id, folder_id, uid, message_id, in_reply_to,
            references_header, subject, from_name, from_address, to_addresses, cc_addresses,
            date_sent, date_received, size_bytes, snippet, is_read, is_flagged, has_attachments,
-           body_state, body_text, body_html, fetched_at)
+           body_state, body_text, body_html, fetched_at, by_search)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-           ?19, ?20, ?21, ?22, ?23)
+           ?19, ?20, ?21, ?22, ?23, ?24)
          ON CONFLICT (folder_id, uid) DO UPDATE
-           SET is_read = excluded.is_read, is_flagged = excluded.is_flagged
+           SET is_read = excluded.is_read, is_flagged = excluded.is_flagged,
+             by_search = min(by_search, excluded.by_search)
          RETURNING id",
         params![
             new_id(),
@@ -595,6 +638,7 @@ fn store_message(
             message.body_text,
             message.body_html,
             now_millis(),
+            by_search,
         ],
         |row| row.get(0),
     )?;
@@ -668,6 +712,48 @@ fn new_mail(conn: &Connection, folder_id: &str, above_uid: u32) -> Result<Vec<Ne
     Ok(mail)
 }
 
+/// The folder's mail the sync keeps, without what only a search on the server fetched.
+fn synced_uids(conn: &Connection, folder_id: &str) -> Result<BTreeSet<u32>> {
+    let mut statement =
+        conn.prepare("SELECT uid FROM messages WHERE folder_id = ?1 AND by_search = 0")?;
+    let uids = statement
+        .query_map([folder_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(uids)
+}
+
+/// Mail a search on the server fetched that the sync keeps now: it shows in its folder.
+fn adopt<'a>(
+    conn: &Connection,
+    folder_id: &str,
+    uids: impl Iterator<Item = &'a u32>,
+) -> Result<()> {
+    let mut statement =
+        conn.prepare("UPDATE messages SET by_search = 0 WHERE folder_id = ?1 AND uid = ?2")?;
+    for uid in uids {
+        statement.execute(params![folder_id, uid])?;
+    }
+    Ok(())
+}
+
+/// The start of the account's period as an IMAP date ("29-Jul-2026"); `None` keeps all mail.
+fn keep_since(conn: &Connection, account_id: &str) -> Result<Option<String>> {
+    let days: Option<i64> = conn
+        .query_row(
+            "SELECT keep_days FROM accounts WHERE id = ?1",
+            [account_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or(Error::AccountNotFound)?;
+    Ok(days.map(|days| imap_date(chrono::Utc::now() - chrono::TimeDelta::days(days))))
+}
+
+/// A day as IMAP SEARCH writes it: "29-Oct-2026".
+pub(crate) fn imap_date(time: chrono::DateTime<chrono::Utc>) -> String {
+    time.format("%-d-%b-%Y").to_string()
+}
+
 fn cached_flags(conn: &Connection, folder_id: &str) -> Result<BTreeMap<u32, (bool, bool)>> {
     let mut statement =
         conn.prepare("SELECT uid, is_read, is_flagged FROM messages WHERE folder_id = ?1")?;
@@ -697,7 +783,7 @@ pub(crate) async fn refresh_folder_in(
     Ok(())
 }
 
-fn folder_state(conn: &Connection, folder_id: &str) -> Result<Option<FolderState>> {
+pub(crate) fn folder_state(conn: &Connection, folder_id: &str) -> Result<Option<FolderState>> {
     Ok(conn
         .query_row(
             "SELECT id, account_id, path, uid_validity FROM folders WHERE id = ?1",
@@ -733,7 +819,7 @@ pub(crate) async fn credentials(
     secrets: &dyn SecretStore,
     account_id: &str,
 ) -> Result<(ImapSettings, Credential)> {
-    let AccountSettings { sign_in, imap } = accounts::settings(&db.conn(), account_id)?;
+    let AccountSettings { sign_in, imap, .. } = accounts::settings(&db.conn(), account_id)?;
     let credential = match sign_in {
         SignInMethod::Microsoft => {
             Credential::AccessToken(crate::oauth::access_token(secrets, account_id).await?)
@@ -1003,6 +1089,51 @@ mod tests {
         let report = setup.sync().await;
         assert_eq!(report.added, 2);
         assert_eq!(setup.cached_uids(), vec![10, 11]);
+    }
+
+    #[tokio::test]
+    async fn the_account_period_is_kept_beyond_the_newest_batch() {
+        let setup = setup(0).await;
+        setup.server.mailbox.lock().unwrap().messages = (1..=150)
+            .map(|uid| {
+                let message = TestMessage::new(uid);
+                if uid > 30 {
+                    message.arrived_days_ago(10)
+                } else {
+                    message
+                }
+            })
+            .collect();
+
+        // The default of 90 days: all recent mail, more than the newest 100, newest first.
+        let report = setup.sync().await;
+        assert_eq!(report.added, 120);
+        assert_eq!(setup.cached_uids(), (31..=150).collect::<Vec<_>>());
+        let fetches: Vec<String> = setup
+            .server
+            .commands()
+            .into_iter()
+            .filter(|c| c.contains("BODY.PEEK"))
+            .collect();
+        assert!(fetches[0].contains("150"), "{fetches:?}");
+
+        // Everything: the rest comes, and it is no news.
+        let set_days = |days: Option<u32>| {
+            setup
+                .db
+                .conn()
+                .execute("UPDATE accounts SET keep_days = ?1", [days])
+                .unwrap();
+        };
+        set_days(None);
+        let report = setup.sync().await;
+        assert_eq!(report.added, 30);
+        assert!(report.new_mail.is_empty());
+
+        // A shorter period fetches nothing more and keeps what is there.
+        set_days(Some(1));
+        assert_eq!(setup.sync().await.added, 0);
+        assert_eq!(setup.cached_uids().len(), 150);
     }
 
     #[tokio::test]

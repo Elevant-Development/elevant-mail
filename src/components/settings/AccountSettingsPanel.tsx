@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import {
   useAccountSettings,
   useChangeLogin,
+  useSetKeepDays,
   useSignInAgain,
   useUpdateAccount,
 } from "@/queries/accounts";
@@ -75,6 +76,10 @@ export function AccountSettingsPanel({ account }: { account: Account }) {
         )}
       </Section>
 
+      <Section title={t("settings.account.offline")}>
+        {settings && <OfflinePeriod account={account} settings={settings} />}
+      </Section>
+
       <Section title={t("settings.account.remove")}>
         <p className="text-sm text-muted-foreground">{t("settings.account.removeHint")}</p>
         <Button
@@ -90,6 +95,61 @@ export function AccountSettingsPanel({ account }: { account: Account }) {
           onClose={() => setRemoving(false)}
         />
       </Section>
+    </div>
+  );
+}
+
+/** The choices for how far back mail stays on this device; `null` is everything. */
+const periods: { days: number | null; label: "month" | "months" | "year" | "all" }[] = [
+  { days: 30, label: "month" },
+  { days: 90, label: "months" },
+  { days: 365, label: "year" },
+  { days: null, label: "all" },
+];
+
+/** How far back the account keeps mail; a longer period is fetched right away. */
+function OfflinePeriod({ account, settings }: { account: Account; settings: AccountSettings }) {
+  const setKeepDays = useSetKeepDays();
+  const { syncAccount } = useSyncActions();
+
+  const choose = (days: number | null) => {
+    if (days === settings.keepDays) return;
+    setKeepDays.mutate(
+      { accountId: account.id, days },
+      { onSuccess: () => void syncAccount(account.id) },
+    );
+  };
+
+  return (
+    <div className="grid gap-2">
+      <div
+        role="radiogroup"
+        aria-label={t("settings.account.offline")}
+        aria-describedby="settings-account-offline-hint"
+        className="grid auto-cols-fr grid-flow-col gap-1 rounded-lg bg-muted p-1"
+      >
+        {periods.map(({ days, label }) => (
+          <button
+            key={label}
+            type="button"
+            role="radio"
+            aria-checked={settings.keepDays === days}
+            onClick={() => choose(days)}
+            className={cn(
+              "flex h-7 items-center justify-center rounded-md text-xs font-medium transition-colors",
+              settings.keepDays === days
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t(`settings.account.offline.${label}`)}
+          </button>
+        ))}
+      </div>
+      <p id="settings-account-offline-hint" className="text-sm text-muted-foreground">
+        {t("settings.account.offlineHint")}
+      </p>
+      {setKeepDays.error && <Notice tone="error" {...errorNotice(setKeepDays.error)} />}
     </div>
   );
 }

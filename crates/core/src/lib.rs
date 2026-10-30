@@ -12,6 +12,7 @@ pub mod mailbox;
 pub mod model;
 pub mod moves;
 pub mod oauth;
+pub mod query;
 pub mod redact;
 pub mod secrets;
 mod threads;

@@ -8,6 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Row};
 use crate::Result;
 use crate::mail::sanitize::{HtmlView, sanitize};
 use crate::model::{Address, Conversation, Folder, FolderRole, Message, MessageSummary};
+use crate::query::SearchQuery;
 
 /// Mailbox id that shows the inboxes of all accounts together (same value as in the frontend).
 pub const UNIFIED_INBOX: &str = "unified-inbox";
@@ -151,12 +152,13 @@ pub fn list_messages(
     } else {
         "m.folder_id = ?1"
     };
-    // Mail on its way to another folder (moves::move_messages) no longer shows here.
+    // Mail on its way to another folder (moves::move_messages) no longer shows here, nor older
+    // mail a search on the server fetched (`by_search`), until the sync gets that far.
     let listed = members(
         conn,
         &format!(
             "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
-             WHERE {filter} AND m.leaving = 0
+             WHERE {filter} AND m.leaving = 0 AND m.by_search = 0
              ORDER BY {DATE} DESC, m.uid DESC LIMIT {LIST_LIMIT}"
         ),
         [mailbox_id],
@@ -181,16 +183,35 @@ pub fn list_messages(
 const SEARCH_LIMIT: u32 = 300;
 
 /// Full-text search over subject, sender and text of all cached mail, newest first. Every word
-/// must match, as a word or the start of one ("rech" finds "Rechnung").
+/// must match, as a word or the start of one ("rech" finds "Rechnung"); filters like `from:` or
+/// `is:unread` narrow it down ([`SearchQuery`]). `also`: messages a search on the servers found,
+/// e.g. by text deep in large mail that the cache only has the start of; they are listed too.
 ///
 /// A message that sits in several folders of an account (Gmail shows labels and "All Mail" as
 /// folders, other servers keep copies) is listed once, preferably from the inbox. With
 /// `threads`, a result is the whole conversation in that folder, like in the list.
-pub fn search_messages(conn: &Connection, query: &str, threads: bool) -> Result<Vec<Conversation>> {
-    let Some(fts_query) = fts_query(query) else {
+pub fn search_messages(
+    conn: &Connection,
+    input: &str,
+    threads: bool,
+    also: &[String],
+) -> Result<Vec<Conversation>> {
+    let query = SearchQuery::parse(input);
+    if query.is_empty() {
         return Ok(Vec::new());
+    }
+    let mut conditions = query.conditions();
+    conditions.push("m.leaving = 0");
+    let filters = conditions.join(" AND ");
+    let (source, text, fts) = match query.fts() {
+        Some(fts) => (
+            "messages_fts JOIN messages m ON m.seq = messages_fts.rowid",
+            "messages_fts MATCH ?1 AND",
+            vec![fts],
+        ),
+        None => ("messages m", "", Vec::new()),
     };
-    let hits = members(
+    let mut hits = members(
         conn,
         &format!(
             "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM (
@@ -198,17 +219,41 @@ pub fn search_messages(conn: &Connection, query: &str, threads: bool) -> Result<
                  PARTITION BY m.account_id, coalesce(m.message_id, m.id)
                  ORDER BY f.role = 'inbox' DESC, f.role IS NOT NULL AND f.role <> 'all' DESC
                ) AS copy
-               FROM messages_fts
-               JOIN messages m ON m.seq = messages_fts.rowid
+               FROM {source}
                JOIN folders f ON f.id = m.folder_id
-               WHERE messages_fts MATCH ?1 AND m.leaving = 0
+               WHERE {text} {filters}
              ) m
              WHERE m.copy = 1
              ORDER BY {DATE} DESC, m.uid DESC
              LIMIT {SEARCH_LIMIT}"
         ),
-        [fts_query],
+        rusqlite::params_from_iter(fts),
     )?;
+    if !also.is_empty() {
+        // Each mail once, also where the cache holds a copy in another folder.
+        let copy = |member: &Member| {
+            let account = member.summary.account_id.clone();
+            member.header_id.clone().map(|id| (account, id))
+        };
+        let mut ids: HashSet<String> = hits.iter().map(|hit| hit.summary.id.clone()).collect();
+        let mut copies: HashSet<(String, String)> = hits.iter().filter_map(copy).collect();
+        let placeholders = vec!["?"; also.len()].join(", ");
+        let found = members(
+            conn,
+            &format!(
+                "SELECT {SUMMARY_COLUMNS}, {MEMBER_COLUMNS} FROM messages m
+                 WHERE m.id IN ({placeholders}) AND {filters}"
+            ),
+            rusqlite::params_from_iter(also),
+        )?;
+        for member in found {
+            let new_copy = copy(&member).is_none_or(|key| copies.insert(key));
+            if ids.insert(member.summary.id.clone()) && new_copy {
+                hits.push(member);
+            }
+        }
+        hits.sort_by_key(|hit| Reverse(hit.summary.date_sent));
+    }
     if !threads {
         return Ok(group(hits, Vec::new(), false));
     }
@@ -395,18 +440,6 @@ fn group(listed: Vec<Member>, replies: Vec<Member>, threads: bool) -> Vec<Conver
             row.conversation
         })
         .collect()
-}
-
-/// User input as an FTS5 query: each word quoted (so `-`, `:` or `AND` are just text) and
-/// matched as a prefix.
-fn fts_query(input: &str) -> Option<String> {
-    let terms: Vec<String> = input
-        .split_whitespace()
-        .map(|word| word.replace('"', ""))
-        .filter(|word| word.chars().any(char::is_alphanumeric))
-        .map(|word| format!("\"{word}\"*"))
-        .collect();
-    (!terms.is_empty()).then(|| terms.join(" "))
 }
 
 /// A message ready to show, plus what the asset protocol needs to serve its external images.
@@ -618,19 +651,6 @@ mod tests {
     }
 
     #[test]
-    fn builds_safe_search_queries() {
-        assert_eq!(
-            fts_query("  Rech  Müller "),
-            Some(r#""Rech"* "Müller"*"#.into())
-        );
-        assert_eq!(
-            fts_query(r#"a"b OR -x"#),
-            Some(r#""ab"* "OR"* "-x"*"#.into())
-        );
-        assert_eq!(fts_query(" \" - "), None);
-    }
-
-    #[test]
     fn searches_subject_sender_and_text() {
         let db = Database::open_in_memory().unwrap();
         let conn = db.conn();
@@ -643,7 +663,7 @@ mod tests {
         .unwrap();
 
         let ids = |query: &str| -> Vec<String> {
-            search_messages(&conn, query, true)
+            search_messages(&conn, query, true, &[])
                 .unwrap()
                 .into_iter()
                 .map(|row| row.latest.id)
@@ -675,7 +695,7 @@ mod tests {
                       ('other', 'acc', 'all', 8, '<y@example.org>', 'Quartalszahlen alt', 0);",
         )
         .unwrap();
-        let mut ids: Vec<String> = search_messages(&conn, "quartal", false)
+        let mut ids: Vec<String> = search_messages(&conn, "quartal", false, &[])
             .unwrap()
             .into_iter()
             .map(|row| row.latest.id)
@@ -774,18 +794,18 @@ mod tests {
         seed_conversation(&conn);
 
         // Only the first mail mentions the meeting point; the row is the conversation.
-        let rows = search_messages(&conn, "treffpunkt", true).unwrap();
+        let rows = search_messages(&conn, "treffpunkt", true, &[]).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].latest.id, "lena-again");
         assert_eq!(rows[0].message_ids, ["lena-again", "answer", "plan"]);
         assert_eq!(rows[0].count, 4);
 
-        let single = search_messages(&conn, "treffpunkt", false).unwrap();
+        let single = search_messages(&conn, "treffpunkt", false, &[]).unwrap();
         assert_eq!(single[0].latest.id, "plan");
         assert_eq!(single[0].message_ids, ["plan"]);
 
         // Found in the user's own reply: the conversation in the inbox, which shows it.
-        let rows = search_messages(&conn, "dabei", true).unwrap();
+        let rows = search_messages(&conn, "dabei", true, &[]).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].latest.id, "lena-again");
         assert_eq!(rows[0].count, 4);
@@ -797,8 +817,47 @@ mod tests {
             [],
         )
         .unwrap();
-        let rows = search_messages(&conn, "niemand", true).unwrap();
+        let rows = search_messages(&conn, "niemand", true, &[]).unwrap();
         assert_eq!(rows[0].latest.id, "lonely");
+    }
+
+    #[test]
+    fn search_filters_by_sender_state_and_attachment() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed_conversation(&conn);
+        // Only the conversation and the note, without the unread mail from the first seed.
+        conn.execute_batch(
+            "DELETE FROM messages WHERE thread_id IS NULL;
+             UPDATE messages SET has_attachments = 1 WHERE id = 'plan';",
+        )
+        .unwrap();
+
+        let ids = |query: &str, also: &[&str]| -> Vec<String> {
+            let also: Vec<String> = also.iter().map(|id| (*id).to_owned()).collect();
+            let mut ids: Vec<String> = search_messages(&conn, query, false, &also)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.latest.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        // Filters alone, without a word.
+        assert_eq!(ids("ist:ungelesen", &[]), ["answer"]);
+        assert_eq!(ids("is:flagged", &[]), ["answer"]);
+        assert_eq!(ids("hat:anhang", &[]), ["plan"]);
+        // A sender by name or address, upper or lower case.
+        assert_eq!(ids("von:lena", &[]), ["lena-again", "plan"]);
+        assert_eq!(ids("from:lena@example.org schön", &[]), ["lena-again"]);
+        assert_eq!(ids("von:ben wanderung", &[]), ["answer"]);
+        assert!(ids("von:ben treffpunkt", &[]).is_empty());
+
+        // What the servers found is listed too, if it passes the filters, and once.
+        assert_eq!(ids("nirgends", &["plan"]), ["plan"]);
+        assert!(ids("is:unread", &["plan"]).contains(&"answer".to_owned()));
+        assert!(!ids("is:unread", &["plan"]).contains(&"plan".to_owned()));
+        assert_eq!(ids("milch", &["note-sent"]), ["note"]);
     }
 
     #[test]

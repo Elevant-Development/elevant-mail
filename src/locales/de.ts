@@ -102,6 +102,13 @@ export const de = {
   "settings.account.signInAgainHint":
     "Nötig, wenn die Anmeldung abgelaufen ist oder du dein Microsoft-Passwort geändert hast.",
   "settings.account.signedInAgain": "Neu angemeldet.",
+  "settings.account.offline": "Auf diesem Gerät",
+  "settings.account.offline.month": "1 Monat",
+  "settings.account.offline.months": "3 Monate",
+  "settings.account.offline.year": "1 Jahr",
+  "settings.account.offline.all": "Alles",
+  "settings.account.offlineHint":
+    "So weit zurück liegen Mails offline und für die schnelle Suche bereit. Jeder Ordner behält mindestens die neuesten 100; Älteres findet die Suche auf dem Server.",
   "settings.account.remove": "Konto entfernen",
   "settings.account.removeHint":
     "Löscht die Mails dieses Kontos von diesem Rechner. Auf dem Server bleibt alles erhalten.",
@@ -192,8 +199,21 @@ export const de = {
   "search.title": "Suche",
   "search.results": "{count} Treffer",
   "search.empty": "Keine Mails gefunden",
-  "search.emptyHint": "Gesucht wird in allen Mails, die schon auf diesem Gerät liegen.",
+  "search.emptyHint":
+    "Gesucht wird in den Mails auf diesem Gerät. Eingrenzen mit von:name, ist:ungelesen, ist:markiert oder hat:anhang.",
   "search.clear": "Suche leeren",
+  "search.fromKey": "von",
+  "search.server": "Auch auf dem Server suchen",
+  "search.server.running": "Suche auf den Servern …",
+  "search.server.found.one": "Auf den Servern gesucht: 1 Treffer",
+  "search.server.found.other": "Auf den Servern gesucht: {count} Treffer",
+  "search.server.nothing": "Auf den Servern gesucht: nichts gefunden",
+  "filter.label": "Filter",
+  "filter.unread": "Ungelesen",
+  "filter.flagged": "Markiert",
+  "filter.attachment": "Anhang",
+  "filter.empty": "Keine Mails passen zum Filter",
+  "filter.clear": "Filter aufheben",
 
   "sidebar.unifiedInbox": "Alle Posteingänge",
   "sidebar.addAccount": "Konto hinzufügen",
@@ -237,6 +257,7 @@ export const de = {
   "reader.delete": "Löschen",
   "reader.deleteForever": "Endgültig löschen",
   "reader.move": "Verschieben",
+  "reader.fromSender": "Alle Mails von {name}",
 
   "selection.count": "{count} Mails ausgewählt",
   "selection.hint":

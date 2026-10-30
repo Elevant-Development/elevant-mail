@@ -31,6 +31,9 @@ pub struct TestMessage {
     pub seen: bool,
     pub flagged: bool,
     pub deleted: bool,
+    /// INTERNALDATE, when the message arrived. Long ago by default, so the sync's period of
+    /// recent mail does not cover it and only the newest batch counts.
+    pub arrived: String,
     pub raw: Vec<u8>,
 }
 
@@ -47,9 +50,96 @@ impl TestMessage {
             seen: false,
             flagged: false,
             deleted: false,
+            arrived: "28-Oct-2020 10:00:00 +0000".to_owned(),
             raw: raw.into_bytes(),
         }
     }
+
+    /// Arrived this many days ago.
+    pub fn arrived_days_ago(mut self, days: i64) -> Self {
+        let time = chrono::Utc::now() - chrono::TimeDelta::days(days);
+        self.arrived = time.format("%d-%b-%Y %H:%M:%S +0000").to_string();
+        self
+    }
+
+    /// From, subject and body as given.
+    pub fn with_content(mut self, from: &str, subject: &str, body: &str) -> Self {
+        let uid = self.uid;
+        self.raw = format!(
+            "From: {from}\r\nTo: alex@example.org\r\nSubject: {subject}\r\n\
+             Date: Wed, 28 Oct 2026 10:00:00 +0000\r\nMessage-ID: <{uid}@example.org>\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\r\n{body}\r\n"
+        )
+        .into_bytes();
+        self
+    }
+
+    /// Whether it meets all criteria of a `UID SEARCH`, as far as this server knows them:
+    /// ALL, UNSEEN, FLAGGED, SINCE, TEXT and FROM, after an optional CHARSET.
+    fn matches(&self, criteria: &[String]) -> bool {
+        let text = String::from_utf8_lossy(&self.raw).to_lowercase();
+        let from = text
+            .lines()
+            .find(|line| line.starts_with("from:"))
+            .unwrap_or_default()
+            .to_owned();
+        let mut criteria = criteria.iter();
+        while let Some(key) = criteria.next() {
+            let mut value = || criteria.next().cloned().unwrap_or_default().to_lowercase();
+            let met = match key.to_ascii_uppercase().as_str() {
+                "ALL" => true,
+                "CHARSET" => {
+                    value();
+                    true
+                }
+                "UNSEEN" => !self.seen,
+                "FLAGGED" => self.flagged,
+                "SINCE" => day(&self.arrived) >= day(&value()),
+                "TEXT" => text.contains(&value()),
+                "FROM" => from.contains(&value()),
+                _ => false,
+            };
+            if !met {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// "28-Oct-2026 …" → (2026, 10, 28), for comparing days.
+fn day(date: &str) -> (u32, usize, u32) {
+    const MONTHS: [&str; 12] = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let mut parts = date.split(' ').next().unwrap_or_default().split('-');
+    let day = parts.next().and_then(|d| d.parse().ok()).unwrap_or(0);
+    let month = parts.next().unwrap_or_default().to_lowercase();
+    let month = MONTHS.iter().position(|m| *m == month).unwrap_or(0) + 1;
+    let year = parts.next().and_then(|y| y.parse().ok()).unwrap_or(0);
+    (year, month, day)
+}
+
+/// A command's arguments as words; quoted strings are one word without the quotes.
+fn words(arguments: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    for c in arguments.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            ' ' if !quoted => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
 }
 
 #[derive(Debug)]
@@ -206,6 +296,31 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
         if stream.read_line(&mut line).await? == 0 {
             return Ok(());
         }
+        // Literals ("{6+}" and the bytes on the next line) become quoted strings.
+        while let Some(start) = line
+            .trim_end()
+            .ends_with('}')
+            .then(|| line.rfind('{'))
+            .flatten()
+        {
+            let marker = line[start + 1..]
+                .trim_end()
+                .trim_end_matches('}')
+                .to_owned();
+            let length: usize = marker.trim_end_matches('+').parse().unwrap_or(0);
+            if !marker.ends_with('+') {
+                stream.get_mut().write_all(b"+ go on\r\n").await?;
+            }
+            let mut literal = vec![0; length];
+            tokio::io::AsyncReadExt::read_exact(&mut stream, &mut literal).await?;
+            line.truncate(start);
+            line.push('"');
+            line.push_str(&String::from_utf8_lossy(&literal));
+            line.push('"');
+            let mut rest = String::new();
+            stream.read_line(&mut rest).await?;
+            line.push_str(&rest);
+        }
         let mut parts = line.trim_end().splitn(3, ' ');
         let tag = parts.next().unwrap_or("*").to_owned();
         let command = parts.next().unwrap_or_default().to_ascii_uppercase();
@@ -227,8 +342,10 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
                 if !mailbox.without_idle {
                     extensions.push_str(" IDLE");
                 }
-                format!("* CAPABILITY IMAP4rev1 SPECIAL-USE{extensions}\r\n{tag} OK done\r\n")
-                    .into_bytes()
+                format!(
+                    "* CAPABILITY IMAP4rev1 SPECIAL-USE LITERAL+{extensions}\r\n{tag} OK done\r\n"
+                )
+                .into_bytes()
             }
             "LOGIN" if arguments.contains(&format!("\"{PASSWORD}\"")) => {
                 format!("{tag} OK logged in\r\n").into_bytes()
@@ -354,11 +471,15 @@ fn uid_command(tag: &str, arguments: &str, mailbox: &mut Mailbox) -> Vec<u8> {
     let sub = parts.next().unwrap_or_default().to_ascii_uppercase();
     match sub.as_str() {
         "SEARCH" => {
-            let criteria = parts.next().unwrap_or_default().to_ascii_uppercase();
+            let rest = [
+                parts.next().unwrap_or_default(),
+                parts.next().unwrap_or_default(),
+            ];
+            let criteria = words(&rest.join(" "));
             let uids: Vec<String> = mailbox
                 .messages
                 .iter()
-                .filter(|m| criteria != "UNSEEN" || !m.seen)
+                .filter(|m| m.matches(&criteria))
                 .map(|m| m.uid.to_string())
                 .collect();
             let space = if uids.is_empty() { "" } else { " " };
@@ -416,8 +537,9 @@ fn uid_command(tag: &str, arguments: &str, mailbox: &mut Mailbox) -> Vec<u8> {
                 } else if items.contains("RFC822.SIZE") {
                     out.extend(
                         format!(
-                            "* {seq} FETCH (UID {} FLAGS ({flags}) INTERNALDATE \"28-Oct-2026 10:00:00 +0000\" RFC822.SIZE {})\r\n",
+                            "* {seq} FETCH (UID {} FLAGS ({flags}) INTERNALDATE \"{}\" RFC822.SIZE {})\r\n",
                             message.uid,
+                            message.arrived,
                             message.raw.len()
                         )
                         .as_bytes(),

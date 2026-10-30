@@ -71,6 +71,11 @@ export interface Backend {
   cancelSignIn(): Promise<void>;
   removeAccount(accountId: string): Promise<void>;
   getAccountSettings(accountId: string): Promise<AccountSettings>;
+  /**
+   * How many days back the account keeps mail (`null`: everything). Every folder keeps at least
+   * its newest 100; the next sync fetches what a longer period adds.
+   */
+  setKeepDays(accountId: string, days: number | null): Promise<void>;
   /** Name and colour; they change without a login. */
   updateAccount(accountId: string, changes: AccountChanges): Promise<Account>;
   /**
@@ -100,8 +105,17 @@ export interface Backend {
   syncFolder(folderId: string): Promise<SyncReport>;
   /** The next 100 messages older than the oldest cached one. */
   loadOlder(folderId: string): Promise<SyncReport>;
-  /** Full-text search over all cached mail, newest first; rows as in {@link Backend.listMessages}. */
-  searchMessages(query: string, threads: boolean): Promise<Conversation[]>;
+  /**
+   * Full-text search over all cached mail, newest first, with filters like `from:lena` or
+   * `is:unread`; rows as in {@link Backend.listMessages}. `also`: messages
+   * {@link Backend.searchServer} found, listed too.
+   */
+  searchMessages(query: string, threads: boolean, also: string[]): Promise<Conversation[]>;
+  /**
+   * Searches the account's folders on the server for what the cache does not have, fetches it
+   * and returns the matching messages.
+   */
+  searchServer(accountId: string, query: string): Promise<string[]>;
   /**
    * Set (not toggle) read or flagged state. The cache changes at once; returns the accounts
    * whose changes still have to go to the server ({@link Backend.pushActions}).
@@ -146,6 +160,7 @@ const tauriBackend: Backend = {
   cancelSignIn: () => invoke("cancel_sign_in"),
   removeAccount: (accountId) => invoke("remove_account", { accountId }),
   getAccountSettings: (accountId) => invoke("get_account_settings", { accountId }),
+  setKeepDays: (accountId, days) => invoke("set_keep_days", { accountId, days }),
   updateAccount: (accountId, changes) => invoke("update_account", { accountId, changes }),
   changeLogin: (accountId, imap, password) => invoke("change_login", { accountId, imap, password }),
   signInAgain: (accountId) => invoke("sign_in_again", { accountId }),
@@ -157,7 +172,8 @@ const tauriBackend: Backend = {
   syncAccount: (accountId) => invoke("sync_account", { accountId }),
   syncFolder: (folderId) => invoke("sync_folder", { folderId }),
   loadOlder: (folderId) => invoke("load_older", { folderId }),
-  searchMessages: (query, threads) => invoke("search_messages", { query, threads }),
+  searchMessages: (query, threads, also) => invoke("search_messages", { query, threads, also }),
+  searchServer: (accountId, query) => invoke("search_server", { accountId, query }),
   setRead: (messageIds, read) => invoke("set_read", { messageIds, read }),
   setFlagged: (messageIds, flagged) => invoke("set_flagged", { messageIds, flagged }),
   pushActions: (accountId) => invoke("push_actions", { accountId }),

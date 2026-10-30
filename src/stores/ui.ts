@@ -15,6 +15,14 @@ import type { LanguageSetting } from "@/lib/i18n";
 import { UNIFIED_INBOX } from "@/lib/tauri";
 
 export type Mode = "dark" | "light" | "system";
+/** The filter bar over the list; several at once narrow it further. */
+export type ListFilter = "unread" | "flagged" | "attachment";
+/** What the search on the servers found for a query, and which accounts it failed on. */
+export interface ServerHits {
+  query: string;
+  ids: string[];
+  failed: { accountId: string; message: string }[];
+}
 export type Density = "comfortable" | "compact";
 /** A page of the settings window: an account (null: the first one), or the appearance. */
 export type SettingsPage =
@@ -64,6 +72,10 @@ interface UiState {
   collapsed: Record<string, boolean | undefined>;
   /** Text in the search field; while it is not empty, the list shows search results. */
   searchQuery: string;
+  /** Switched on in the filter bar; reset when another mailbox opens. */
+  listFilters: ListFilter[];
+  /** From the last search on the servers; it counts while the search field holds its query. */
+  serverHits: ServerHits | null;
   /** Mails whose external images the user allowed in this session. */
   remoteImagesAllowed: Record<string, boolean | undefined>;
 
@@ -100,6 +112,9 @@ interface UiState {
   closeSettings: () => void;
   allowRemoteImages: (messageId: string) => void;
   setSearchQuery: (query: string) => void;
+  toggleListFilter: (filter: ListFilter) => void;
+  clearListFilters: () => void;
+  setServerHits: (hits: ServerHits | null) => void;
   setCollapsed: (key: string, collapsed: boolean) => void;
 }
 
@@ -127,6 +142,8 @@ export const useUiStore = create<UiState>()(
       settingsPage: null,
       remoteImagesAllowed: {},
       searchQuery: "",
+      listFilters: [],
+      serverHits: null,
       collapsed: {},
 
       setMode: (mode) => set({ mode }),
@@ -151,6 +168,8 @@ export const useUiStore = create<UiState>()(
           selectionEnd: null,
           sidebarOpen: false,
           searchQuery: "",
+          listFilters: [],
+          serverHits: null,
         }),
       selectMessage: (messageId) =>
         set({
@@ -232,6 +251,14 @@ export const useUiStore = create<UiState>()(
       openSettings: (page) => set({ settingsPage: page, sidebarOpen: false }),
       closeSettings: () => set({ settingsPage: null }),
       setSearchQuery: (query) => set({ searchQuery: query }),
+      toggleListFilter: (filter) =>
+        set((state) => ({
+          listFilters: state.listFilters.includes(filter)
+            ? state.listFilters.filter((f) => f !== filter)
+            : [...state.listFilters, filter],
+        })),
+      clearListFilters: () => set({ listFilters: [] }),
+      setServerHits: (serverHits) => set({ serverHits }),
       setCollapsed: (key, collapsed) =>
         set((state) => ({ collapsed: { ...state.collapsed, [key]: collapsed } })),
       allowRemoteImages: (messageId) =>

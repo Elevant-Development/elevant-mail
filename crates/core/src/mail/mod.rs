@@ -9,6 +9,7 @@ pub mod presets;
 pub mod push;
 pub mod remote;
 pub mod sanitize;
+pub mod search;
 pub mod settings;
 pub mod sync;
 #[cfg(test)]
