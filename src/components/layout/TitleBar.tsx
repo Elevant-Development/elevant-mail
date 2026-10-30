@@ -4,6 +4,7 @@ import { ElevantMark } from "@/components/common/ElevantMark";
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
 import { SearchInput } from "@/components/common/SearchInput";
+import { UpdateNotice } from "@/components/updates/UpdateNotice";
 import { t } from "@/lib/i18n";
 import { usesMockData } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
@@ -57,6 +58,7 @@ export function TitleBar({ isWide }: TitleBarProps) {
             {t("app.mockData")}
           </span>
         )}
+        <UpdateNotice />
         <AppearanceMenu />
         <IconButton
           label={t("titlebar.settings")}

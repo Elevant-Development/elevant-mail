@@ -38,6 +38,7 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
         .invoke_handler(tauri::generate_handler![
             commands::app::app_status,
+            commands::app::check_for_update,
             commands::accounts::detect_settings,
             commands::accounts::add_account,
             commands::accounts::add_microsoft_account,

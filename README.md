@@ -101,9 +101,10 @@ app. Click **More info**, then **Run anyway**. Passwords go into the Windows Cre
 
 ### Updates
 
-Elevant Mail does not check for updates by itself, because it does not contact anything but your
-mail servers. Install a new version over the old one; your accounts and mail stay. To hear about
-new versions, watch the repository on GitHub (**Watch → Custom → Releases**).
+Once a day Elevant Mail asks GitHub whether a newer version was released and then shows it at
+the top, next to the settings, with a link to the download page. It does not download or install
+anything by itself. Install a new version over the old one; your accounts and mail stay. The
+first start explains the check; switch it off under **Settings → Notifications**.
 
 ## Getting started
 
@@ -183,8 +184,9 @@ or a dialog is open.
 ## Privacy and security
 
 - **No telemetry, no analytics, no cloud.** Elevant Mail has no server of its own. It connects to
-  your mail servers, to Microsoft when you sign in with Microsoft, and to image hosts only when you
-  load a mail's images.
+  your mail servers, to Microsoft when you sign in with Microsoft, to image hosts only when you
+  load a mail's images, and once a day to GitHub's API to look for a new version (one request
+  without anything about you; can be switched off).
 - **Nothing from the web.** Fonts, icons and styles are part of the app; no CDNs, no avatar
   services. The build is checked for this on every change.
 - **Passwords and sign-in tokens** live in your system keyring, never in files or logs.

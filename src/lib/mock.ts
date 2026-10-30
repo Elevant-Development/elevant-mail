@@ -1341,6 +1341,14 @@ export const mockBackend: Backend = {
   loadOlder: async () => ({ added: 0, updated: 0, removed: 0, newMail: [] }),
   onSyncProgress: async () => () => undefined,
   onInboxChanged: async () => () => undefined,
+  // Sample data has no updates; set "mock-update" in localStorage to see the notice.
+  checkForUpdate: async () =>
+    localStorage.getItem("mock-update")
+      ? {
+          version: "0.5.0",
+          url: "https://github.com/Elevant-Development/elevant-mail/releases/latest",
+        }
+      : null,
   onCacheChanged: async (handler) => {
     changeHandlers.add(handler);
     return () => changeHandlers.delete(handler);

@@ -45,6 +45,12 @@ interface UiState {
   notifications: boolean;
   /** Sender and subject in it; off, it only names the account. */
   notificationPreview: boolean;
+  /** Once a day, ask GitHub whether a newer version was released. */
+  updateCheck: boolean;
+  /** The first start explained the check above. */
+  updateCheckExplained: boolean;
+  /** A version the user put off with "Later"; not offered again. */
+  skippedUpdate: string | null;
   /** The account whose inbox opens at start; null: all inboxes. */
   startAccountId: string | null;
   /** How long an opened mail stays open before it counts as read, in ms; null: never by itself. */
@@ -98,6 +104,9 @@ interface UiState {
   setLanguage: (language: LanguageSetting) => void;
   setNotifications: (on: boolean) => void;
   setNotificationPreview: (on: boolean) => void;
+  setUpdateCheck: (on: boolean) => void;
+  explainUpdateCheck: () => void;
+  skipUpdate: (version: string) => void;
   setStartAccount: (accountId: string | null) => void;
   setMarkReadDelay: (delay: number | null) => void;
   setThreads: (on: boolean) => void;
@@ -150,6 +159,9 @@ export const useUiStore = create<UiState>()(
       language: "system",
       notifications: true,
       notificationPreview: true,
+      updateCheck: true,
+      updateCheckExplained: false,
+      skippedUpdate: null,
       startAccountId: null,
       markReadDelay: 1000,
       threads: true,
@@ -178,6 +190,9 @@ export const useUiStore = create<UiState>()(
       setDensity: (density) => set({ density }),
       setNotifications: (notifications) => set({ notifications }),
       setNotificationPreview: (notificationPreview) => set({ notificationPreview }),
+      setUpdateCheck: (updateCheck) => set({ updateCheck, updateCheckExplained: true }),
+      explainUpdateCheck: () => set({ updateCheckExplained: true }),
+      skipUpdate: (version) => set({ skippedUpdate: version }),
       setStartAccount: (startAccountId) => set({ startAccountId }),
       setMarkReadDelay: (markReadDelay) => set({ markReadDelay }),
       setThreads: (threads) => set({ threads }),
@@ -331,6 +346,9 @@ export const useUiStore = create<UiState>()(
         language: state.language,
         notifications: state.notifications,
         notificationPreview: state.notificationPreview,
+        updateCheck: state.updateCheck,
+        updateCheckExplained: state.updateCheckExplained,
+        skippedUpdate: state.skippedUpdate,
         startAccountId: state.startAccountId,
         markReadDelay: state.markReadDelay,
         threads: state.threads,

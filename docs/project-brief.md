@@ -690,4 +690,9 @@ Phase 4:
 23. **Signatures:** per account, formatted, above the quote, swapped with the sending account —
     done
 
-Phase 4 is complete. Next: the release of 0.4, then phase 5 (MCP server).
+24. **Update notice:** once a day, while switched on (default, explained at the first start), the
+    backend asks GitHub's API for the latest published release (`updates.rs`, user agent only);
+    a newer one shows in the title bar with a link to the release page, "Later" skips that
+    version — done
+
+Phase 4 is complete and released as 0.4. Next: phase 5 (MCP server).

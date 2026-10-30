@@ -30,6 +30,7 @@ import type { SmtpSettings } from "./bindings/SmtpSettings";
 import type { SuggestedSettings } from "./bindings/SuggestedSettings";
 import type { SyncProgress } from "./bindings/SyncProgress";
 import type { SyncReport } from "./bindings/SyncReport";
+import type { Update } from "./bindings/Update";
 import { mockBackend } from "./mock";
 
 export type { Account } from "./bindings/Account";
@@ -63,6 +64,7 @@ export type { SuggestedSettings } from "./bindings/SuggestedSettings";
 export type { SuggestionSource } from "./bindings/SuggestionSource";
 export type { SyncProgress } from "./bindings/SyncProgress";
 export type { SyncReport } from "./bindings/SyncReport";
+export type { Update } from "./bindings/Update";
 export type { SyncStage } from "./bindings/SyncStage";
 
 /** Mailbox id that shows the inboxes of all accounts together (same value in Rust). */
@@ -221,6 +223,8 @@ export interface Backend {
   openAttachment(attachmentId: string): Promise<void>;
   /** Opens a web or mail link from a mail in the system browser or mail program. */
   openLink(url: string): Promise<void>;
+  /** A newer published version, if there is one (one request to GitHub's API). */
+  checkForUpdate(): Promise<Update | null>;
   /** Links clicked in a mail frame (see SafeHtmlMail); returns a function that stops listening. */
   onMailLink(handler: (url: string) => void): Promise<() => void>;
   /** Progress of running syncs; returns a function that stops listening. */
@@ -276,6 +280,7 @@ const tauriBackend: Backend = {
   saveAttachment: (attachmentId) => invoke("save_attachment", { attachmentId }),
   openAttachment: (attachmentId) => invoke("open_attachment", { attachmentId }),
   openLink: (url) => invoke("open_link", { url }),
+  checkForUpdate: () => invoke("check_for_update"),
   onMailLink: (handler) => listen<string>("mail-link", (event) => handler(event.payload)),
   onSyncProgress: (handler) =>
     listen<SyncProgress>("sync-progress", (event) => handler(event.payload)),

@@ -9,6 +9,7 @@ import { MessageList } from "@/components/mail/MessageList";
 import { MessageReader } from "@/components/mail/MessageReader";
 import { MoveDialog } from "@/components/mail/MoveDialog";
 import { UndoToast } from "@/components/mail/UndoToast";
+import { UpdateCheckIntro } from "@/components/updates/UpdateNotice";
 import { useDraftLeaving, useKeptDrafts } from "@/hooks/use-compose";
 import { useMailKeyboard } from "@/hooks/use-mail-keyboard";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -94,6 +95,7 @@ export function AppShell() {
       <MoveDialog />
       <DeleteForeverDialog />
       <UndoToast />
+      <UpdateCheckIntro />
     </div>
   );
 }

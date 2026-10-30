@@ -21,3 +21,11 @@ pub fn app_status(state: State<'_, AppState>) -> Result<AppStatus, CommandError>
         keyring_available: state.keyring_available,
     })
 }
+
+/// A newer published version, if there is one. One request to GitHub's API; the frontend asks
+/// only while the setting allows it.
+#[tauri::command]
+pub async fn check_for_update() -> Result<Option<elevant_mail_core::updates::Update>, CommandError>
+{
+    Ok(elevant_mail_core::updates::check().await?)
+}

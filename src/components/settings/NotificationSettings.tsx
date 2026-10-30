@@ -51,6 +51,8 @@ export function NotificationSettings() {
   const preview = useUiStore((s) => s.notificationPreview);
   const setNotifications = useUiStore((s) => s.setNotifications);
   const setPreview = useUiStore((s) => s.setNotificationPreview);
+  const updateCheck = useUiStore((s) => s.updateCheck);
+  const setUpdateCheck = useUiStore((s) => s.setUpdateCheck);
   const [denied, setDenied] = useState(false);
 
   // Asks the system right away, so the first new mail is not where it asks.
@@ -81,6 +83,13 @@ export function NotificationSettings() {
         onChange={setPreview}
       />
       {denied && <Notice tone="error" text={t("settings.notifications.denied")} />}
+      <Setting
+        id="settings-update-check"
+        label={t("settings.notifications.updates")}
+        hint={t("settings.notifications.updatesHint")}
+        checked={updateCheck}
+        onChange={setUpdateCheck}
+      />
       <Button
         variant="outline"
         className="justify-self-start"

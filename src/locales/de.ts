@@ -414,4 +414,14 @@ export const de = {
   "settings.account.signaturePreview": "Vorschau, so wie gespeichert",
   "settings.account.signaturePasteHint":
     "Quelltext einer fertigen Signatur, etwa mit Logo und Tabelle. Skripte und Formulare entfernt die App beim Speichern. Logos von einer Webadresse sieht der Empfänger, in der App bleiben sie ausgeblendet.",
+  "update.available": "Version {version} ist da",
+  "update.download": "Zur Download-Seite",
+  "update.later": "Später, diese Version nicht mehr anzeigen",
+  "update.intro":
+    "Elevant Mail sieht einmal am Tag bei GitHub nach, ob es eine neue Version gibt, und zeigt sie dann oben an. Dabei geht nichts über dich oder deine Mails mit. Abschalten kannst du das jederzeit unter Einstellungen → Benachrichtigungen.",
+  "update.introOk": "Verstanden",
+  "update.introOff": "Abschalten",
+  "settings.notifications.updates": "Nach neuen Versionen suchen",
+  "settings.notifications.updatesHint":
+    "Einmal am Tag eine Anfrage an GitHub, ohne Angaben über dich. Eine neue Version erscheint oben neben den Einstellungen.",
 } as const;

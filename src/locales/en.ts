@@ -408,4 +408,14 @@ export const en: Record<MessageKey, string> = {
   "settings.account.signaturePreview": "Preview, as saved",
   "settings.account.signaturePasteHint":
     "The source of a ready-made signature, say with logo and table. The app removes scripts and forms when saving. Recipients see logos from a web address; in the app they stay hidden.",
+  "update.available": "Version {version} is out",
+  "update.download": "To the download page",
+  "update.later": "Later, don't show this version again",
+  "update.intro":
+    "Elevant Mail asks GitHub once a day whether there is a new version and then shows it at the top. Nothing about you or your mail goes along. You can switch it off any time under Settings → Notifications.",
+  "update.introOk": "Got it",
+  "update.introOff": "Switch off",
+  "settings.notifications.updates": "Look for new versions",
+  "settings.notifications.updatesHint":
+    "One request to GitHub a day, with nothing about you. A new version shows at the top next to the settings.",
 };
