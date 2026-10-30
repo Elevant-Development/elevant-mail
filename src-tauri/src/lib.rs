@@ -27,6 +27,14 @@ pub fn run() {
             }
             Ok(())
         })
+        // Files dropped onto the window: kept for `attach_dropped`, never named by the frontend.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                window
+                    .state::<state::AppState>()
+                    .set_dropped_files(paths.clone());
+            }
+        })
         .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
         .invoke_handler(tauri::generate_handler![
             commands::app::app_status,
@@ -68,6 +76,11 @@ pub fn run() {
             commands::attachments::save_attachment,
             commands::attachments::open_attachment,
             commands::compose::send_message,
+            commands::compose::pick_attachments,
+            commands::compose::attach_dropped,
+            commands::compose::detach_attachment,
+            commands::compose::list_attachments,
+            commands::compose::forward_attachments,
             commands::compose::save_draft,
             commands::compose::list_drafts,
             commands::compose::upload_draft,

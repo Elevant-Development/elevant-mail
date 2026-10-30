@@ -393,4 +393,10 @@ export const en: Record<MessageKey, string> = {
   "settings.account.saveSmtp": "Check and save",
   "settings.account.savingSmtp": "Checking …",
   "compose.draftInFolder": "Draft",
+  "compose.attach": "Attach a file",
+  "compose.attachments": "Attachments",
+  "compose.removeAttachment": "Remove {name}",
+  "compose.dropToAttach": "Drop to attach",
+  "error.hint.attachmentLimit":
+    "At most 18 MB fit into one mail together. Larger files are better shared by a link.",
 };

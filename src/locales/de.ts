@@ -399,4 +399,10 @@ export const de = {
   "settings.account.saveSmtp": "Prüfen und speichern",
   "settings.account.savingSmtp": "Wird geprüft …",
   "compose.draftInFolder": "Entwurf",
+  "compose.attach": "Datei anhängen",
+  "compose.attachments": "Anhänge",
+  "compose.removeAttachment": "{name} entfernen",
+  "compose.dropToAttach": "Loslassen zum Anhängen",
+  "error.hint.attachmentLimit":
+    "Zusammen gehen höchstens 18 MB in eine Mail. Größere Dateien teilst du besser per Link.",
 } as const;

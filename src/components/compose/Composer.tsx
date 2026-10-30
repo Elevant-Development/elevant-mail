@@ -1,6 +1,7 @@
 import { EditorContent, useEditor } from "@tiptap/react";
 import { Placeholder } from "@tiptap/extensions";
 import StarterKit from "@tiptap/starter-kit";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, useEffect, useState } from "react";
 
 import { Icon } from "@/components/common/Icon";
@@ -8,8 +9,9 @@ import { IconButton } from "@/components/common/IconButton";
 import { Notice } from "@/components/common/Notice";
 import { Button } from "@/components/ui/button";
 import { documentText } from "@/lib/compose";
+import { formatSize } from "@/lib/formatting";
 import { describeError, type UserError } from "@/lib/errors";
-import { t } from "@/lib/i18n";
+import { locale, t } from "@/lib/i18n";
 import { api } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
@@ -41,6 +43,39 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
   const [showCopies, setShowCopies] = useState(draft.cc.length > 0 || draft.bcc.length > 0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<UserError | null>(null);
+  const queryClient = useQueryClient();
+  const attachmentsKey = ["draftAttachments", draft.key];
+  const { data: attachments = [] } = useQuery({
+    queryKey: attachmentsKey,
+    queryFn: () => api.listAttachments(draft.key),
+  });
+  const [attaching, setAttaching] = useState(false);
+  const [dragging, setDragging] = useState(false);
+
+  /** Saves the draft first: files hang on it in the backend. */
+  const attach = async (how: (key: string) => Promise<unknown>) => {
+    setAttaching(true);
+    setError(null);
+    try {
+      await api.saveDraft(useUiStore.getState().drafts[draft.key] ?? draft);
+      await how(draft.key);
+    } catch (cause) {
+      setError(describeError(cause));
+    } finally {
+      setAttaching(false);
+      void queryClient.invalidateQueries({ queryKey: attachmentsKey });
+    }
+  };
+
+  // Files dragged onto the window go to this draft while it is open.
+  useEffect(() => {
+    const stop = api.onFileDrag((state) => {
+      setDragging(state === "over");
+      if (state === "drop") void attach(api.attachDropped);
+    });
+    return () => void stop.then((unlisten) => unlisten());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.key]);
   const update = (changes: Partial<Draft>) => updateDraft(draft.key, changes);
   // Kept on this device a moment after each change; leaving it uploads it (useDraftLeaving).
   const current = useUiStore((s) => s.drafts[draft.key]);
@@ -225,6 +260,47 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
       >
         <EditorContent editor={editor} className="h-full" />
       </div>
+      {dragging && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/60 bg-background/80 text-sm font-medium"
+        >
+          <Icon name="paperclip" className="mr-2 size-4 text-primary" />
+          {t("compose.dropToAttach")}
+        </div>
+      )}
+
+      {attachments.length > 0 && (
+        <ul
+          aria-label={t("compose.attachments")}
+          className="flex shrink-0 flex-wrap gap-2 border-t px-4 py-2.5"
+        >
+          {attachments.map((file) => (
+            <li
+              key={file.id}
+              className="flex h-8 max-w-64 min-w-0 items-center gap-2 rounded-lg border bg-muted/40 pr-1 pl-2.5 text-sm"
+            >
+              <Icon name="paperclip" className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate">{file.fileName}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {formatSize(file.size, locale)}
+              </span>
+              <button
+                type="button"
+                aria-label={t("compose.removeAttachment", { name: file.fileName })}
+                onClick={() =>
+                  void api
+                    .detachAttachment(file.id)
+                    .then(() => queryClient.invalidateQueries({ queryKey: attachmentsKey }))
+                }
+                className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3"
+              >
+                <Icon name="close" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <footer className="grid shrink-0 gap-2 border-t px-4 py-3">
         {error && (
@@ -235,6 +311,18 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
             {sending ? <Icon name="spinner" className="animate-spin" /> : <Icon name="sent" />}
             {sending ? t("compose.sending") : t("compose.send")}
           </Button>
+          <IconButton
+            label={t("compose.attach")}
+            icon={
+              attaching ? (
+                <Icon name="spinner" className="animate-spin" />
+              ) : (
+                <Icon name="paperclip" />
+              )
+            }
+            disabled={attaching}
+            onClick={() => void attach(api.pickAttachments)}
+          />
           <span className="text-xs text-muted-foreground">{t("compose.sendHint")}</span>
           {account && (
             <span className="ml-auto truncate text-xs text-muted-foreground">

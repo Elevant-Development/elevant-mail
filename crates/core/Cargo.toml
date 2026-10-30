@@ -17,6 +17,7 @@ hickory-resolver.workspace = true
 keyring.workspace = true
 lettre.workspace = true
 mail-parser.workspace = true
+mime_guess.workspace = true
 percent-encoding.workspace = true
 reqwest.workspace = true
 ring.workspace = true

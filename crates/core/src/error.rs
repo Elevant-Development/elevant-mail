@@ -136,6 +136,9 @@ pub enum Error {
 
     #[error("the outgoing server refused the mail: {0}")]
     MessageRejected(String),
+
+    #[error("the attachments are too large for one mail")]
+    AttachmentsTooLarge,
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -214,6 +217,8 @@ pub enum Hint {
     /// A typo in an address, or a recipient the server does not know.
     CheckRecipients,
     AddRecipient,
+    /// Together at most about 18 MB; larger files go better by a link.
+    AttachmentLimit,
 }
 
 impl Error {
@@ -230,7 +235,8 @@ impl Error {
             | Error::NotOpenable
             | Error::WrongSignInMethod
             | Error::NoRecipients
-            | Error::InvalidRecipient(_) => ErrorKind::InvalidInput,
+            | Error::InvalidRecipient(_)
+            | Error::AttachmentsTooLarge => ErrorKind::InvalidInput,
             Error::HostNotFound => ErrorKind::ServerNotFound,
             Error::ConnectionFailed(_) | Error::TlsFailed(_) | Error::StartTlsUnsupported => {
                 ErrorKind::ConnectionFailed
@@ -287,6 +293,7 @@ impl Error {
                 None => Hint::CheckCredentials,
             }),
             Error::NoRecipients => Some(Hint::AddRecipient),
+            Error::AttachmentsTooLarge => Some(Hint::AttachmentLimit),
             Error::InvalidRecipient(_) | Error::RecipientRejected(_) => Some(Hint::CheckRecipients),
             Error::OAuthRequired { .. } => Some(Hint::SignInWithMicrosoft),
             Error::ConsentRequired => Some(Hint::AskAdminForConsent),

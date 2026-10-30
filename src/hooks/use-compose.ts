@@ -66,7 +66,7 @@ export function useCompose() {
     const { to, cc } = forward
       ? { to: [], cc: [] }
       : replyRecipients(message, mode === "replyAll", own);
-    openDraft({
+    const draft = {
       key,
       mode,
       sourceId: messageId,
@@ -78,7 +78,14 @@ export function useCompose() {
       html: forward ? forwardQuote(message) : replyQuote(message),
       // The composer fills it in from the editor.
       text: "",
-    });
+    };
+    openDraft(draft);
+    // Forwarding takes the files along; the draft has to exist for them.
+    if (forward && message.attachments.length > 0) {
+      await api.saveDraft(draft);
+      await api.forwardAttachments(key, messageId);
+      void queryClient.invalidateQueries({ queryKey: ["draftAttachments", key] });
+    }
   };
 
   return { compose, respond };
@@ -105,6 +112,7 @@ export function useKeptDrafts() {
  * development.
  */
 export function useDraftLeaving() {
+  const queryClient = useQueryClient();
   useEffect(
     () =>
       useUiStore.subscribe((state, previous) => {
@@ -112,10 +120,12 @@ export function useDraftLeaving() {
         if (!left || left === state.composeKey) return;
         const draft = state.drafts[left];
         if (!draft) return;
+        const files = queryClient.getQueryData<unknown[]>(["draftAttachments", left]) ?? [];
         const empty =
           draft.to.length + draft.cc.length + draft.bcc.length === 0 &&
           !draft.subject.trim() &&
-          !draft.text.trim();
+          !draft.text.trim() &&
+          files.length === 0;
         if (empty) {
           state.discardDraft(left);
           void api.discardDraft(left);
@@ -123,6 +133,6 @@ export function useDraftLeaving() {
           void api.saveDraft(draft).then(() => api.uploadDraft(left));
         }
       }),
-    [],
+    [queryClient],
   );
 }

@@ -11,6 +11,7 @@ import type {
   Backend,
   Conversation,
   Draft,
+  DraftAttachment,
   Folder,
   FolderRole,
   Message,
@@ -856,6 +857,14 @@ const changeHandlers = new Set<(accountId: string) => void>();
 const announceChange = (accountId: string) =>
   window.setTimeout(() => changeHandlers.forEach((handler) => handler(accountId)), 300);
 
+/** Files attached to drafts, by draft. */
+const mockAttachments = new Map<string, DraftAttachment[]>();
+const attachMock = (draftKey: string, files: Omit<DraftAttachment, "id">[]) => {
+  const added = files.map((file) => ({ ...file, id: `att-draft-${crypto.randomUUID()}` }));
+  mockAttachments.set(draftKey, [...(mockAttachments.get(draftKey) ?? []), ...added]);
+  return added;
+};
+
 /** Drafts kept "on this device", and the id of each one's copy in the drafts folder. */
 const mockDrafts = new Map<string, Draft>();
 const draftCopies = new Map<string, string>();
@@ -1079,6 +1088,35 @@ export const mockBackend: Backend = {
     dropDraftCopy(key);
     if (draft) announceChange(draft.accountId);
   },
+  pickAttachments: async (draftKey) => {
+    await wait(300);
+    return attachMock(draftKey, [
+      { fileName: "Notizen.pdf", mimeType: "application/pdf", size: 48_210 },
+    ]);
+  },
+  attachDropped: async () => [],
+  detachAttachment: async (attachmentId) => {
+    for (const [key, files] of mockAttachments) {
+      mockAttachments.set(
+        key,
+        files.filter((file) => file.id !== attachmentId),
+      );
+    }
+  },
+  listAttachments: async (draftKey) => mockAttachments.get(draftKey) ?? [],
+  forwardAttachments: async (draftKey, messageId) => {
+    await wait(400);
+    const message = messages.find((m) => m.id === messageId);
+    return attachMock(
+      draftKey,
+      (message?.attachments ?? []).map(({ fileName, mimeType, size }) => ({
+        fileName,
+        mimeType,
+        size,
+      })),
+    );
+  },
+  onFileDrag: async () => () => undefined,
   openDraft: async (messageId) => {
     const kept = [...draftCopies].find(([, copy]) => copy === messageId)?.[0];
     const draft = kept ? mockDrafts.get(kept) : undefined;

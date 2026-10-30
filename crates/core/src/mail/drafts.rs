@@ -9,10 +9,10 @@ use tokio_rustls::TlsConnector;
 use ts_rs::TS;
 
 use crate::db::Database;
-use crate::ids::now_millis;
+use crate::ids::{new_id, now_millis};
 use crate::mail::imap::{self, COMMAND_TIMEOUT, protocol_error, with_timeout};
 use crate::mail::sanitize::HtmlView;
-use crate::mail::send::{self, OutgoingMail};
+use crate::mail::send::{self, OutgoingFile, OutgoingMail};
 use crate::model::{Address, FolderRole};
 use crate::secrets::SecretStore;
 use crate::{Error, Result};
@@ -77,6 +77,147 @@ impl Draft {
             && self.subject.trim().is_empty()
             && self.text.trim().is_empty()
     }
+}
+
+/// A file attached to a draft.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DraftAttachment {
+    pub id: String,
+    pub file_name: String,
+    pub mime_type: String,
+    #[ts(type = "number")]
+    pub size: u64,
+}
+
+/// Files of one mail together, at most. Mail servers take about 25 MB per mail, and attachments
+/// grow by a third on the way.
+pub const ATTACHMENT_LIMIT: u64 = 18 * 1024 * 1024;
+
+/// Attaches a file to the draft, which has to be saved already.
+pub fn attach(
+    conn: &Connection,
+    key: &str,
+    file_name: &str,
+    data: Vec<u8>,
+) -> Result<DraftAttachment> {
+    let size = data.len() as u64;
+    let taken: u64 = conn
+        .query_row(
+            "SELECT coalesce(sum(size), 0) FROM draft_attachments WHERE draft_key = ?1",
+            [key],
+            |row| row.get::<_, i64>(0),
+        )?
+        .try_into()
+        .unwrap_or(0);
+    if taken + size > ATTACHMENT_LIMIT {
+        return Err(Error::AttachmentsTooLarge);
+    }
+    let name = std::path::Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Anhang")
+        .to_owned();
+    let mime_type = mime_guess::from_path(&name)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_owned();
+    let attachment = DraftAttachment {
+        id: new_id(),
+        file_name: name,
+        mime_type,
+        size,
+    };
+    conn.execute(
+        "INSERT INTO draft_attachments (id, draft_key, file_name, mime_type, size, data, added_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            attachment.id,
+            key,
+            attachment.file_name,
+            attachment.mime_type,
+            i64::try_from(size).unwrap_or(i64::MAX),
+            data,
+            now_millis()
+        ],
+    )?;
+    touch(conn, key)?;
+    Ok(attachment)
+}
+
+/// The draft's files, in the order they were added.
+pub fn attachments(conn: &Connection, key: &str) -> Result<Vec<DraftAttachment>> {
+    Ok(conn
+        .prepare_cached(
+            "SELECT id, file_name, mime_type, size FROM draft_attachments WHERE draft_key = ?1
+             ORDER BY added_at, rowid",
+        )?
+        .query_map([key], |row| {
+            Ok(DraftAttachment {
+                id: row.get(0)?,
+                file_name: row.get(1)?,
+                mime_type: row.get(2)?,
+                size: row.get::<_, i64>(3)?.try_into().unwrap_or(0),
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn detach(conn: &Connection, attachment_id: &str) -> Result<()> {
+    let key: Option<String> = conn
+        .query_row(
+            "DELETE FROM draft_attachments WHERE id = ?1 RETURNING draft_key",
+            [attachment_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(key) = key {
+        touch(conn, &key)?;
+    }
+    Ok(())
+}
+
+/// The draft's files with their bytes, for sending or uploading.
+pub(crate) fn files(conn: &Connection, key: &str) -> Result<Vec<OutgoingFile>> {
+    Ok(conn
+        .prepare_cached(
+            "SELECT file_name, mime_type, data FROM draft_attachments WHERE draft_key = ?1
+             ORDER BY added_at, rowid",
+        )?
+        .query_map([key], |row| {
+            Ok(OutgoingFile {
+                file_name: row.get(0)?,
+                mime_type: row.get(1)?,
+                data: row.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// A changed attachment is a change of the draft: the next upload takes it along.
+fn touch(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE drafts SET updated_at = max(?2, updated_at + 1) WHERE key = ?1",
+        params![key, now_millis()],
+    )?;
+    Ok(())
+}
+
+/// Forwarding: the files of the forwarded mail go along, fetched from the server.
+pub async fn attach_from_message(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    key: &str,
+    message_id: &str,
+) -> Result<Vec<DraftAttachment>> {
+    let listed = crate::attachments::list(&db.conn(), message_id)?;
+    let mut attached = Vec::new();
+    for attachment in listed {
+        let file = crate::mail::download::fetch_attachment(db, secrets, &attachment.id).await?;
+        attached.push(attach(&db.conn(), key, &attachment.file_name, file.data)?);
+    }
+    Ok(attached)
 }
 
 /// Where a draft's copy on the server is: the account and the Message-ID.
@@ -300,7 +441,8 @@ pub(crate) async fn upload_with(
     let Some((draft, message_id, updated_at, uploaded_to, uploaded_at)) = stored else {
         return Ok(false);
     };
-    if uploaded_at.is_some_and(|at| at >= updated_at) || draft.is_empty() {
+    let files = files(&db.conn(), key)?;
+    if uploaded_at.is_some_and(|at| at >= updated_at) || (draft.is_empty() && files.is_empty()) {
         return Ok(false);
     }
     let Some(path) = drafts_path(&db.conn(), &draft.account_id)? else {
@@ -318,7 +460,7 @@ pub(crate) async fn upload_with(
             .then(|| draft.source_id.clone())
             .flatten(),
     };
-    let (_, copy) = send::compose(&db.conn(), &mail, &message_id, true)?;
+    let (_, copy) = send::compose(&db.conn(), &mail, &message_id, true, &files)?;
 
     let (settings, credential) =
         crate::mail::sync::credentials(db, secrets, &draft.account_id).await?;
@@ -581,6 +723,53 @@ mod tests {
         assert!(setup.on_server().is_empty());
         assert!(list(&setup.db.conn()).unwrap().is_empty());
         assert!(take(&setup.db.conn(), "new:1").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn files_go_with_the_draft_up_to_a_limit() {
+        let setup = setup().await;
+        let conn = || setup.db.conn();
+        save(&conn(), &draft(&setup.account_id, "Entwurf mit Datei")).unwrap();
+        assert!(setup.upload().await);
+
+        let plan = attach(
+            &conn(),
+            "new:1",
+            "/home/alex/Plan.pdf",
+            b"%PDF-1.4 plan".to_vec(),
+        )
+        .unwrap();
+        assert_eq!(
+            (plan.file_name.as_str(), plan.mime_type.as_str(), plan.size),
+            ("Plan.pdf", "application/pdf", 13)
+        );
+        // A new file is a change: the copy on the server gets it.
+        assert!(setup.upload().await);
+        let copy = setup
+            .server
+            .mailbox
+            .lock()
+            .unwrap()
+            .messages
+            .iter()
+            .rev()
+            .find(|m| !m.deleted)
+            .map(|m| String::from_utf8_lossy(&m.raw).into_owned())
+            .unwrap();
+        assert!(copy.contains("multipart/mixed"), "{copy}");
+        assert!(copy.contains("Plan.pdf"));
+
+        let too_large = vec![0; usize::try_from(ATTACHMENT_LIMIT).unwrap()];
+        assert!(matches!(
+            attach(&conn(), "new:1", "Film.mp4", too_large),
+            Err(Error::AttachmentsTooLarge)
+        ));
+        detach(&conn(), &plan.id).unwrap();
+        assert!(attachments(&conn(), "new:1").unwrap().is_empty());
+        // Gone with the draft.
+        attach(&conn(), "new:1", "Notiz.txt", b"x".to_vec()).unwrap();
+        take(&conn(), "new:1").unwrap();
+        assert!(attachments(&conn(), "new:1").unwrap().is_empty());
     }
 
     #[tokio::test]

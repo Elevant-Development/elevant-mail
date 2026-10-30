@@ -2,12 +2,14 @@
 //! the server (filing in Sent, the drafts folder) runs in the background and ends with the
 //! `cache-changed` event.
 
-use elevant_mail_core::mail::drafts::{self, Draft, ServerCopy};
+use elevant_mail_core::Error;
+use elevant_mail_core::mail::drafts::{self, Draft, DraftAttachment, ServerCopy};
 use elevant_mail_core::mail::send::{self, OutgoingMail, SentMail};
 use elevant_mail_core::mail::sync;
 use elevant_mail_core::model::{Address, FolderRole};
 use elevant_mail_core::{mailbox, moves};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::error::CommandError;
 use crate::state::AppState;
@@ -26,7 +28,13 @@ pub async fn send_message(
     mail: OutgoingMail,
     draft_key: Option<String>,
 ) -> Result<(), CommandError> {
-    let sent = send::send(&state.db, state.secrets.as_ref(), &mail).await?;
+    let sent = send::send(
+        &state.db,
+        state.secrets.as_ref(),
+        &mail,
+        draft_key.as_deref(),
+    )
+    .await?;
     let copy = match draft_key {
         Some(key) => drafts::take(&state.db.conn(), &key)?,
         None => None,
@@ -113,6 +121,88 @@ pub async fn open_draft(
     message_id: String,
 ) -> Result<Draft, CommandError> {
     Ok(drafts::open_cached(&state.db.conn(), &message_id)?)
+}
+
+/// Asks for files to attach (the system's dialog, opened here, not by the frontend) and attaches
+/// them to the draft, which has to be saved already. Empty when the dialog was cancelled.
+#[tauri::command]
+pub async fn pick_attachments(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    draft_key: String,
+) -> Result<Vec<DraftAttachment>, CommandError> {
+    let mut dialog = app.dialog().file();
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&window);
+    }
+    // The dialog blocks until the user answers, so it runs off the async workers.
+    let chosen = tauri::async_runtime::spawn_blocking(move || dialog.blocking_pick_files())
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let paths = chosen
+        .into_iter()
+        .filter_map(|file| file.into_path().ok())
+        .collect();
+    attach_paths(&state, &draft_key, paths)
+}
+
+/// Attaches the files just dropped onto the window.
+#[tauri::command]
+pub async fn attach_dropped(
+    state: State<'_, AppState>,
+    draft_key: String,
+) -> Result<Vec<DraftAttachment>, CommandError> {
+    let paths = state.take_dropped_files();
+    attach_paths(&state, &draft_key, paths)
+}
+
+fn attach_paths(
+    state: &AppState,
+    draft_key: &str,
+    paths: Vec<std::path::PathBuf>,
+) -> Result<Vec<DraftAttachment>, CommandError> {
+    let mut attached = Vec::new();
+    for path in paths.into_iter().filter(|path| path.is_file()) {
+        let data = std::fs::read(&path).map_err(Error::Io)?;
+        let name = path.to_string_lossy();
+        attached.push(drafts::attach(&state.db.conn(), draft_key, &name, data)?);
+    }
+    Ok(attached)
+}
+
+#[tauri::command]
+pub async fn detach_attachment(
+    state: State<'_, AppState>,
+    attachment_id: String,
+) -> Result<(), CommandError> {
+    Ok(drafts::detach(&state.db.conn(), &attachment_id)?)
+}
+
+#[tauri::command]
+pub async fn list_attachments(
+    state: State<'_, AppState>,
+    draft_key: String,
+) -> Result<Vec<DraftAttachment>, CommandError> {
+    Ok(drafts::attachments(&state.db.conn(), &draft_key)?)
+}
+
+/// Forwarding: the files of the forwarded mail go into the draft, fetched from the server.
+#[tauri::command]
+pub async fn forward_attachments(
+    state: State<'_, AppState>,
+    draft_key: String,
+    message_id: String,
+) -> Result<Vec<DraftAttachment>, CommandError> {
+    let account_id =
+        mailbox::message_account(&state.db.conn(), &message_id)?.ok_or(Error::MessageNotFound)?;
+    let lock = state.account_lock(&account_id);
+    let _turn = lock.lock().await;
+    Ok(
+        drafts::attach_from_message(&state.db, state.secrets.as_ref(), &draft_key, &message_id)
+            .await?,
+    )
 }
 
 /// Up to eight addresses matching what was typed, the ones written with most first.

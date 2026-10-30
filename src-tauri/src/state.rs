@@ -31,6 +31,9 @@ pub struct AppState {
     sign_in_cancel: Mutex<Option<oneshot::Sender<()>>>,
     /// Waiting for new mail, per account.
     pub watchers: Watchers,
+    /// The files last dropped onto the window: the only paths the frontend may attach, so it
+    /// never names files on its own.
+    dropped_files: Mutex<Vec<PathBuf>>,
 }
 
 impl AppState {
@@ -66,6 +69,7 @@ impl AppState {
             attachment_dir,
             attachment_files: Mutex::default(),
             sign_in_cancel: Mutex::default(),
+            dropped_files: Mutex::default(),
             watchers: Watchers::default(),
         })
     }
@@ -134,6 +138,23 @@ impl AppState {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(attachment.id.clone(), path.clone());
         Ok(path)
+    }
+
+    pub fn set_dropped_files(&self, paths: Vec<PathBuf>) {
+        *self
+            .dropped_files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = paths;
+    }
+
+    /// The files dropped last, once: a second request gets none.
+    pub fn take_dropped_files(&self) -> Vec<PathBuf> {
+        std::mem::take(
+            &mut *self
+                .dropped_files
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
     }
 
     pub fn account_lock(&self, account_id: &str) -> Arc<AsyncMutex<()>> {

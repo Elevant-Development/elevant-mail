@@ -231,6 +231,7 @@ it does not understand.
 | `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to`, `references_header` and `reply_to`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched; unique per folder and UID |
 | `thread_keys`     | Every Message-ID a conversation has seen, per account, so replies find it                                                                                  |
 | `drafts`          | Mail being written: recipients, subject, HTML and text, the Message-ID of its copy in the drafts folder, when it changed and when it was uploaded |
+| `draft_attachments` | Files attached to a draft, with their bytes; they go with the draft |
 | `image_senders`   | Senders (address in lower case) whose mail shows its external images when opened                                                                           |
 | `attachments`     | Attachments per message with the MIME part to fetch them; small inline images with their bytes                                                           |
 | `pending_actions` | Local changes that still have to reach the server; `due_at` holds a move back while it can be undone                                                       |
@@ -273,7 +274,7 @@ checks that they are current.
 | Mail        | `list_messages` (a page of a folder or the unified inbox; with `threads` one row per conversation, `filters` from the filter bar, `after` for the next page), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images; they also show for senders in `image_senders`), `load_message_body`, `search_messages`, `list_image_senders`, `allow_images_from`, `forbid_images_from` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
 | Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
-| Writing     | `send_message` (returns once the SMTP server took it; filing in Sent and removing the draft follow, then `cache-changed`), `save_draft`, `list_drafts`, `upload_draft`, `discard_draft`, `open_draft` (from the drafts folder), `suggest_addresses` |
+| Writing     | `send_message` (returns once the SMTP server took it; filing in Sent and removing the draft follow, then `cache-changed`), `save_draft`, `list_drafts`, `upload_draft`, `discard_draft`, `open_draft` (from the drafts folder), `pick_attachments`, `attach_dropped`, `detach_attachment`, `list_attachments`, `forward_attachments`, `suggest_addresses` |
 | Links       | `open_link`                                                                                                                               |
 | Attachments | `save_attachment` (the system's save dialog via `tauri-plugin-dialog`, called from Rust only; the frontend gets no dialog or file permissions), `open_attachment` |
 | Sync        | `sync_account`, `sync_folder`, `load_older`, `search_server` (one account's folders on the server)                                        |
@@ -518,7 +519,11 @@ can consent without an admin. Paging beyond 5,000 cached messages per folder cam
   or discarding removes both. A draft in the drafts folder, also one from another device, opens
   to write on; each "New mail" is a draft of its own.
 - Text and HTML signatures
-- Sending attachments
+- Sending attachments — done. The paperclip opens the system's file dialog (from Rust), and
+  files dropped onto the window attach too: the backend keeps the paths of the last drop and
+  attaches only those, so the frontend never names a file. They hang on the draft (table
+  `draft_attachments`, with their bytes), go into its server copy and go with it; forwarding takes
+  the forwarded mail's files along. Together at most 18 MB (about 25 MB once encoded).
 
 ### Phase 5: MCP server for AI agents (planned)
 
@@ -672,4 +677,7 @@ Phase 4:
 21. **Drafts:** kept across restarts and in the server's drafts folder, replaced on every
     upload, opened from the folder to write on — done
 
-Next: attachments, then signatures.
+22. **Attachments:** paperclip and drag and drop, kept with the draft, forwarded files along —
+    done
+
+Next: signatures.

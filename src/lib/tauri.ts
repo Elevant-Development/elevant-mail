@@ -7,6 +7,7 @@
  */
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import type { Account } from "./bindings/Account";
 import type { AccountChanges } from "./bindings/AccountChanges";
@@ -15,6 +16,7 @@ import type { Address } from "./bindings/Address";
 import type { Conversation } from "./bindings/Conversation";
 import type { Folder } from "./bindings/Folder";
 import type { Draft } from "./bindings/Draft";
+import type { DraftAttachment } from "./bindings/DraftAttachment";
 import type { ImapSettings } from "./bindings/ImapSettings";
 import type { ListCursor } from "./bindings/ListCursor";
 import type { ListFilter } from "./bindings/ListFilter";
@@ -42,6 +44,7 @@ export type { FolderRole } from "./bindings/FolderRole";
 export type { Hint } from "./bindings/Hint";
 export type { ComposeMode } from "./bindings/ComposeMode";
 export type { Draft } from "./bindings/Draft";
+export type { DraftAttachment } from "./bindings/DraftAttachment";
 export type { ImapSettings } from "./bindings/ImapSettings";
 export type { ListCursor } from "./bindings/ListCursor";
 export type { ListFilter } from "./bindings/ListFilter";
@@ -122,6 +125,22 @@ export interface Backend {
   discardDraft(key: string): Promise<void>;
   /** A draft from the drafts folder (a cached message), to write on. */
   openDraft(messageId: string): Promise<Draft>;
+  /**
+   * Asks for files with the system's dialog and attaches them to the draft, which has to be
+   * saved already; empty when cancelled.
+   */
+  pickAttachments(draftKey: string): Promise<DraftAttachment[]>;
+  /** Attaches the files just dropped onto the window ({@link Backend.onFileDrag}). */
+  attachDropped(draftKey: string): Promise<DraftAttachment[]>;
+  detachAttachment(attachmentId: string): Promise<void>;
+  listAttachments(draftKey: string): Promise<DraftAttachment[]>;
+  /** The files of a forwarded mail go into the draft, fetched from the server. */
+  forwardAttachments(draftKey: string, messageId: string): Promise<DraftAttachment[]>;
+  /**
+   * Files dragged over the window ("over"), away ("leave") or dropped ("drop"); returns a
+   * function that stops listening.
+   */
+  onFileDrag(handler: (state: "over" | "leave" | "drop") => void): Promise<() => void>;
   /** Addresses matching what was typed into a recipient field, the ones written with most first. */
   suggestAddresses(query: string): Promise<Address[]>;
   /** Microsoft accounts: the browser sign-in again, for the account's own address. */
@@ -265,6 +284,17 @@ const tauriBackend: Backend = {
   uploadDraft: (key) => invoke("upload_draft", { key }),
   discardDraft: (key) => invoke("discard_draft", { key }),
   openDraft: (messageId) => invoke("open_draft", { messageId }),
+  pickAttachments: (draftKey) => invoke("pick_attachments", { draftKey }),
+  attachDropped: (draftKey) => invoke("attach_dropped", { draftKey }),
+  detachAttachment: (attachmentId) => invoke("detach_attachment", { attachmentId }),
+  listAttachments: (draftKey) => invoke("list_attachments", { draftKey }),
+  forwardAttachments: (draftKey, messageId) =>
+    invoke("forward_attachments", { draftKey, messageId }),
+  onFileDrag: (handler) =>
+    getCurrentWebview().onDragDropEvent((event) => {
+      const type = event.payload.type;
+      handler(type === "drop" ? "drop" : type === "leave" ? "leave" : "over");
+    }),
   suggestAddresses: (query) => invoke("suggest_addresses", { query }),
 };
 

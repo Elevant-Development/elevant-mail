@@ -6,7 +6,8 @@ use std::time::{Duration, SystemTime};
 
 use lettre::Message;
 use lettre::address::Envelope;
-use lettre::message::{Mailbox, MultiPart};
+use lettre::message::header::ContentType;
+use lettre::message::{Attachment, Mailbox, MultiPart};
 use lettre::transport::smtp::client::TlsParameters;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
@@ -39,6 +40,14 @@ pub struct OutgoingMail {
     pub in_reply_to: Option<String>,
 }
 
+/// A file that goes along: from a draft (`drafts::files`).
+#[derive(Debug, Clone)]
+pub struct OutgoingFile {
+    pub file_name: String,
+    pub mime_type: String,
+    pub data: Vec<u8>,
+}
+
 /// A mail the server took: its Message-ID and the copy for Sent, Bcc included.
 #[derive(Debug, Clone)]
 pub struct SentMail {
@@ -50,23 +59,30 @@ pub struct SentMail {
 /// How long to give the server to put the mail into Sent by itself before filing it there.
 const WAIT_FOR_SENT: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(4)];
 
+/// Sends the mail with the files attached to `draft`, the draft it was written in.
 pub async fn send(
     db: &Database,
     secrets: &dyn SecretStore,
     mail: &OutgoingMail,
+    draft: Option<&str>,
 ) -> Result<SentMail> {
     let host = accounts::settings(&db.conn(), &mail.account_id)?.smtp.host;
-    send_with(db, secrets, mail, smtp::platform_tls(&host)?).await
+    send_with(db, secrets, mail, draft, smtp::platform_tls(&host)?).await
 }
 
 pub(crate) async fn send_with(
     db: &Database,
     secrets: &dyn SecretStore,
     mail: &OutgoingMail,
+    draft: Option<&str>,
     tls: TlsParameters,
 ) -> Result<SentMail> {
     let settings = accounts::settings(&db.conn(), &mail.account_id)?;
-    let (message, sent) = prepare(&db.conn(), mail)?;
+    let files = match draft {
+        Some(key) => crate::mail::drafts::files(&db.conn(), key)?,
+        None => Vec::new(),
+    };
+    let (message, sent) = prepare(&db.conn(), mail, &files)?;
     let credential = credential(secrets, &mail.account_id, settings.sign_in).await?;
     smtp::send_with(&settings.smtp, &credential, tls, message).await?;
     tracing::info!(account = %mail.account_id, "mail sent");
@@ -94,12 +110,16 @@ pub(crate) async fn credential(
 }
 
 /// The message to send (without Bcc) and the copy for Sent (with it).
-fn prepare(conn: &Connection, mail: &OutgoingMail) -> Result<(Message, SentMail)> {
+fn prepare(
+    conn: &Connection,
+    mail: &OutgoingMail,
+    files: &[OutgoingFile],
+) -> Result<(Message, SentMail)> {
     if mail.to.is_empty() && mail.cc.is_empty() && mail.bcc.is_empty() {
         return Err(Error::NoRecipients);
     }
     let message_id = new_message_id(&account_email(conn, &mail.account_id)?);
-    let (message, copy) = compose(conn, mail, &message_id, false)?;
+    let (message, copy) = compose(conn, mail, &message_id, false, files)?;
     Ok((
         message,
         SentMail {
@@ -136,6 +156,7 @@ pub(crate) fn compose(
     mail: &OutgoingMail,
     message_id: &str,
     draft: bool,
+    files: &[OutgoingFile],
 ) -> Result<(Message, Vec<u8>)> {
     let email = account_email(conn, &mail.account_id)?;
     let sender_name = accounts::settings(conn, &mail.account_id)?.sender_name;
@@ -194,11 +215,23 @@ pub(crate) fn compose(
                 .in_reply_to(parent.clone())
                 .references(references.clone());
         }
+        let text = MultiPart::alternative_plain_html(mail.text.clone(), html_document(&mail.html));
+        let body = if files.is_empty() {
+            text
+        } else {
+            files
+                .iter()
+                .fold(MultiPart::mixed().multipart(text), |body, file| {
+                    let kind = ContentType::parse(&file.mime_type).unwrap_or_else(|_| {
+                        ContentType::parse("application/octet-stream").expect("a media type")
+                    });
+                    body.singlepart(
+                        Attachment::new(file.file_name.clone()).body(file.data.clone(), kind),
+                    )
+                })
+        };
         builder
-            .multipart(MultiPart::alternative_plain_html(
-                mail.text.clone(),
-                html_document(&mail.html),
-            ))
+            .multipart(body)
             .map_err(|error| Error::MessageRejected(error.to_string()))
     };
     Ok((build(false)?, build(true)?.formatted()))
@@ -432,7 +465,7 @@ mod tests {
             in_reply_to: Some(setup.cached_id(2)),
             ..setup.mail(&[])
         };
-        let sent = send_with(&setup.db, &setup.secrets, &reply, setup.smtp.tls())
+        let sent = send_with(&setup.db, &setup.secrets, &reply, None, setup.smtp.tls())
             .await
             .unwrap();
 
@@ -489,11 +522,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn files_of_the_draft_go_along() {
+        let setup = setup().await;
+        let mail = setup.mail(&["lena@example.org"]);
+        let draft = crate::mail::drafts::Draft {
+            key: "new:1".into(),
+            mode: crate::mail::drafts::ComposeMode::New,
+            source_id: None,
+            account_id: setup.account_id.clone(),
+            to: mail.to.clone(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            subject: mail.subject.clone(),
+            html: mail.html.clone(),
+            text: mail.text.clone(),
+        };
+        crate::mail::drafts::save(&setup.db.conn(), &draft).unwrap();
+        crate::mail::drafts::attach(&setup.db.conn(), "new:1", "Fotos.zip", b"PK..".to_vec())
+            .unwrap();
+        send_with(
+            &setup.db,
+            &setup.secrets,
+            &mail,
+            Some("new:1"),
+            setup.smtp.tls(),
+        )
+        .await
+        .unwrap();
+        let data = &setup.smtp.mails()[0].data;
+        assert!(data.contains("multipart/mixed"), "{data}");
+        assert!(data.contains("Fotos.zip"));
+        assert!(data.contains("application/zip"));
+    }
+
+    #[tokio::test]
     async fn refusals_say_what_to_fix() {
         let setup = setup().await;
         let send = |mail: OutgoingMail| {
             let setup = &setup;
-            async move { send_with(&setup.db, &setup.secrets, &mail, setup.smtp.tls()).await }
+            async move { send_with(&setup.db, &setup.secrets, &mail, None, setup.smtp.tls()).await }
         };
         assert!(matches!(
             send(setup.mail(&[])).await,
