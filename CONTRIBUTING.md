@@ -6,7 +6,7 @@ Thanks for helping. Bug reports, translations, ideas and code are all welcome.
 
 Open an [issue](https://github.com/Elevant-Development/elevant-mail/issues). For a bug, include:
 
-- the Elevant Mail version and your system (for example "0.4.1, Ubuntu 24.04, .deb")
+- the Elevant Mail version and your system (for example "0.5.0, Ubuntu 24.04, .deb")
 - the kind of account (Gmail, Microsoft 365, web.de, self-hosted …)
 - what you did, what you expected and what happened instead
 

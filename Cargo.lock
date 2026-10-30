@@ -1194,7 +1194,7 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "elevant-mail"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "elevant-mail-core",
  "open",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "elevant-mail-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "ammonia",
  "argon2",
