@@ -77,10 +77,6 @@ impl KeyringStore {
             .map_err(|_| Error::KeyringUnavailable(keyring::Error::NoDefaultStore))?;
         Ok(())
     }
-
-    fn entry(&self, account_id: &str, kind: SecretKind) -> Result<keyring::Entry> {
-        keyring::Entry::new(&self.service, &entry_name(account_id, kind)).map_err(map_keyring_error)
-    }
 }
 
 fn map_keyring_error(error: keyring::Error) -> Error {
@@ -95,29 +91,108 @@ fn map_keyring_error(error: keyring::Error) -> Error {
 
 impl SecretStore for KeyringStore {
     fn set(&self, account_id: &str, kind: SecretKind, secret: &Secret) -> Result<()> {
-        self.entry(account_id, kind)?
-            .set_password(secret.expose())
-            .map_err(map_keyring_error)
+        set_in_parts(self, &entry_name(account_id, kind), secret)
     }
 
     fn get(&self, account_id: &str, kind: SecretKind) -> Result<Secret> {
-        let password = self
-            .entry(account_id, kind)?
-            .get_password()
-            .map_err(map_keyring_error)?;
-        Ok(Secret::new(password))
+        get_in_parts(self, &entry_name(account_id, kind))
     }
 
     fn delete(&self, account_id: &str, kind: SecretKind) -> Result<()> {
-        match self
-            .entry(account_id, kind)?
-            .delete_credential()
+        delete_in_parts(self, &entry_name(account_id, kind))
+    }
+}
+
+/// Single keyring entries by name, as the platform stores them.
+trait Entries {
+    fn put(&self, name: &str, value: &str) -> Result<()>;
+    fn read(&self, name: &str) -> Result<Zeroizing<String>>;
+    /// Removing something that is not there is not an error.
+    fn remove(&self, name: &str) -> Result<()>;
+}
+
+impl Entries for KeyringStore {
+    fn put(&self, name: &str, value: &str) -> Result<()> {
+        keyring::Entry::new(&self.service, name)
+            .and_then(|entry| entry.set_password(value))
+            .map_err(map_keyring_error)
+    }
+
+    fn read(&self, name: &str) -> Result<Zeroizing<String>> {
+        keyring::Entry::new(&self.service, name)
+            .and_then(|entry| entry.get_password())
+            .map(Zeroizing::new)
+            .map_err(map_keyring_error)
+    }
+
+    fn remove(&self, name: &str) -> Result<()> {
+        match keyring::Entry::new(&self.service, name)
+            .and_then(|entry| entry.delete_credential())
             .map_err(map_keyring_error)
         {
             Err(Error::SecretNotFound) => Ok(()),
             other => other,
         }
     }
+}
+
+/// Windows keeps at most 2560 bytes per credential, as UTF-16: 1280 characters. Microsoft's
+/// refresh tokens are longer, so longer secrets go into several entries, and the entry itself
+/// says how many.
+const PART_CHARS: usize = 1000;
+const PARTS_PREFIX: &str = "elevant-mail-parts:";
+
+fn part_name(name: &str, index: usize) -> String {
+    format!("{name}:part{index}")
+}
+
+fn set_in_parts(entries: &dyn Entries, name: &str, secret: &Secret) -> Result<()> {
+    let chars: Vec<char> = secret.expose().chars().collect();
+    let parts: Vec<Zeroizing<String>> = chars
+        .chunks(PART_CHARS)
+        .map(|chunk| Zeroizing::new(chunk.iter().collect()))
+        .collect();
+    let count = if parts.len() > 1 {
+        for (index, part) in parts.iter().enumerate() {
+            entries.put(&part_name(name, index), part)?;
+        }
+        entries.put(name, &format!("{PARTS_PREFIX}{}", parts.len()))?;
+        parts.len()
+    } else {
+        entries.put(name, secret.expose())?;
+        0
+    };
+    // Parts a longer secret left behind.
+    remove_parts_from(entries, name, count)
+}
+
+fn get_in_parts(entries: &dyn Entries, name: &str) -> Result<Secret> {
+    let value = entries.read(name)?;
+    let Some(count) = value
+        .strip_prefix(PARTS_PREFIX)
+        .and_then(|count| count.parse::<usize>().ok())
+    else {
+        return Ok(Secret::new(value.as_str()));
+    };
+    let mut whole = Zeroizing::new(String::new());
+    for index in 0..count {
+        whole.push_str(&entries.read(&part_name(name, index))?);
+    }
+    Ok(Secret::new(whole.as_str()))
+}
+
+fn delete_in_parts(entries: &dyn Entries, name: &str) -> Result<()> {
+    entries.remove(name)?;
+    remove_parts_from(entries, name, 0)
+}
+
+fn remove_parts_from(entries: &dyn Entries, name: &str, first: usize) -> Result<()> {
+    let mut index = first;
+    while entries.read(&part_name(name, index)).is_ok() {
+        entries.remove(&part_name(name, index))?;
+        index += 1;
+    }
+    Ok(())
 }
 
 /// In-memory store for tests and for running without a keyring in development.
@@ -162,6 +237,56 @@ mod tests {
         let secret = Secret::new("hunter2");
         assert_eq!(format!("{secret:?}"), "Secret(***)");
         assert_eq!(secret.expose(), "hunter2");
+    }
+
+    /// Entries as Windows keeps them: at most 1280 characters each.
+    #[derive(Default)]
+    struct SmallEntries(Mutex<HashMap<String, String>>);
+
+    impl Entries for SmallEntries {
+        fn put(&self, name: &str, value: &str) -> Result<()> {
+            if value.chars().count() > 1280 {
+                return Err(Error::Keyring(keyring::Error::TooLong(name.into(), 2560)));
+            }
+            self.0.lock().unwrap().insert(name.into(), value.into());
+            Ok(())
+        }
+
+        fn read(&self, name: &str) -> Result<Zeroizing<String>> {
+            let entries = self.0.lock().unwrap();
+            let value = entries.get(name).ok_or(Error::SecretNotFound)?;
+            Ok(Zeroizing::new(value.clone()))
+        }
+
+        fn remove(&self, name: &str) -> Result<()> {
+            self.0.lock().unwrap().remove(name);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn long_secrets_fit_into_small_entries() {
+        let entries = SmallEntries::default();
+        let token = "x".repeat(2600);
+        set_in_parts(&entries, "acc:token", &Secret::new(token.as_str())).unwrap();
+        assert_eq!(entries.0.lock().unwrap().len(), 4);
+        assert_eq!(get_in_parts(&entries, "acc:token").unwrap().expose(), token);
+
+        // A shorter one replaces it, parts and all.
+        set_in_parts(&entries, "acc:token", &Secret::new("kurz")).unwrap();
+        assert_eq!(entries.0.lock().unwrap().len(), 1);
+        assert_eq!(
+            get_in_parts(&entries, "acc:token").unwrap().expose(),
+            "kurz"
+        );
+
+        set_in_parts(&entries, "acc:token", &Secret::new(token.as_str())).unwrap();
+        delete_in_parts(&entries, "acc:token").unwrap();
+        assert!(entries.0.lock().unwrap().is_empty());
+        assert!(matches!(
+            get_in_parts(&entries, "acc:token"),
+            Err(Error::SecretNotFound)
+        ));
     }
 
     #[test]
@@ -237,6 +362,19 @@ mod tests {
         store.delete(&account, SecretKind::ImapPassword).unwrap();
         assert!(matches!(
             store.get(&account, SecretKind::ImapPassword),
+            Err(Error::SecretNotFound)
+        ));
+
+        // As long as a Microsoft refresh token, too long for one Windows credential.
+        let token = "t".repeat(2600);
+        let kind = SecretKind::OAuthRefreshToken;
+        store
+            .set(&account, kind, &Secret::new(token.as_str()))
+            .unwrap();
+        assert_eq!(store.get(&account, kind).unwrap().expose(), token);
+        store.delete(&account, kind).unwrap();
+        assert!(matches!(
+            store.get(&account, kind),
             Err(Error::SecretNotFound)
         ));
     }
