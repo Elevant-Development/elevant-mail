@@ -9,6 +9,7 @@ import { MessageList } from "@/components/mail/MessageList";
 import { MessageReader } from "@/components/mail/MessageReader";
 import { MoveDialog } from "@/components/mail/MoveDialog";
 import { UndoToast } from "@/components/mail/UndoToast";
+import { useDraftLeaving, useKeptDrafts } from "@/hooks/use-compose";
 import { useMailKeyboard } from "@/hooks/use-mail-keyboard";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useStartMailbox } from "@/hooks/use-start-mailbox";
@@ -41,6 +42,8 @@ export function AppShell() {
   const showOverlay = !isWide && sidebarOpen;
   useMailKeyboard({ enabled: !firstStart && !showOverlay, isWide });
   useStartMailbox();
+  useKeptDrafts();
+  useDraftLeaving();
 
   useEffect(() => {
     if (!showOverlay) return;

@@ -16,6 +16,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0008_image_senders.sql"),
     include_str!("migrations/0009_unified_inbox.sql"),
     include_str!("migrations/0010_sending.sql"),
+    include_str!("migrations/0011_drafts.sql"),
 ];
 
 /// Schema version after all migrations of this build have run.

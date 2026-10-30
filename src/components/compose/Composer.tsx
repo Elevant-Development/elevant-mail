@@ -1,7 +1,7 @@
 import { EditorContent, useEditor } from "@tiptap/react";
 import { Placeholder } from "@tiptap/extensions";
 import StarterKit from "@tiptap/starter-kit";
-import { type KeyboardEvent, useState } from "react";
+import { type KeyboardEvent, useEffect, useState } from "react";
 
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
@@ -42,6 +42,13 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<UserError | null>(null);
   const update = (changes: Partial<Draft>) => updateDraft(draft.key, changes);
+  // Kept on this device a moment after each change; leaving it uploads it (useDraftLeaving).
+  const current = useUiStore((s) => s.drafts[draft.key]);
+  useEffect(() => {
+    if (!current) return;
+    const timer = window.setTimeout(() => void api.saveDraft(current), 1500);
+    return () => window.clearTimeout(timer);
+  }, [current]);
 
   const editor = useEditor({
     extensions: [
@@ -64,26 +71,31 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
         "aria-multiline": "true",
       },
     },
-    onUpdate: ({ editor }) => update({ html: editor.getHTML() }),
+    onCreate: ({ editor }) => update({ text: documentText(editor.getJSON()) }),
+    onUpdate: ({ editor }) =>
+      update({ html: editor.getHTML(), text: documentText(editor.getJSON()) }),
   });
 
   const send = async () => {
     if (!editor || sending) return;
     // What the store holds now: an address typed but not turned into a chip has just been.
-    const current = useUiStore.getState().drafts[draft.key] ?? draft;
+    const latest = useUiStore.getState().drafts[draft.key] ?? draft;
     setSending(true);
     setError(null);
     try {
-      await api.sendMessage({
-        accountId: current.accountId,
-        to: current.to,
-        cc: current.cc,
-        bcc: current.bcc,
-        subject: current.subject,
-        html: editor.getHTML(),
-        text: documentText(editor.getJSON()),
-        inReplyTo: current.mode === "forward" ? null : current.sourceId,
-      });
+      await api.sendMessage(
+        {
+          accountId: latest.accountId,
+          to: latest.to,
+          cc: latest.cc,
+          bcc: latest.bcc,
+          subject: latest.subject,
+          html: editor.getHTML(),
+          text: documentText(editor.getJSON()),
+          inReplyTo: latest.mode === "forward" ? null : latest.sourceId,
+        },
+        draft.key,
+      );
       discardDraft(draft.key);
       useUndoStore.getState().show(t("compose.sent"), null);
     } catch (cause) {
@@ -123,7 +135,10 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
           <IconButton
             label={t("compose.discard")}
             icon={<Icon name="trash" />}
-            onClick={() => discardDraft(draft.key)}
+            onClick={() => {
+              discardDraft(draft.key);
+              void api.discardDraft(draft.key);
+            }}
           />
           <IconButton
             label={t("compose.close")}

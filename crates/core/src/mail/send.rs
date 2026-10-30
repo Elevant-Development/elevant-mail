@@ -5,6 +5,7 @@
 use std::time::{Duration, SystemTime};
 
 use lettre::Message;
+use lettre::address::Envelope;
 use lettre::message::{Mailbox, MultiPart};
 use lettre::transport::smtp::client::TlsParameters;
 use rusqlite::{Connection, OptionalExtension};
@@ -92,38 +93,68 @@ pub(crate) async fn credential(
     })
 }
 
-/// The message to send (without Bcc) and the copy for Sent (with it), sharing Message-ID and
-/// date.
+/// The message to send (without Bcc) and the copy for Sent (with it).
 fn prepare(conn: &Connection, mail: &OutgoingMail) -> Result<(Message, SentMail)> {
     if mail.to.is_empty() && mail.cc.is_empty() && mail.bcc.is_empty() {
         return Err(Error::NoRecipients);
     }
-    let email: String = conn
-        .query_row(
-            "SELECT email_address FROM accounts WHERE id = ?1",
-            [&mail.account_id],
-            |row| row.get(0),
-        )
-        .optional()?
-        .ok_or(Error::AccountNotFound)?;
-    let sender_name = accounts::settings(conn, &mail.account_id)?.sender_name;
-    let from = mailbox(&sender_name, &email).map_err(|_| Error::InvalidEmail)?;
+    let message_id = new_message_id(&account_email(conn, &mail.account_id)?);
+    let (message, copy) = compose(conn, mail, &message_id, false)?;
+    Ok((
+        message,
+        SentMail {
+            account_id: mail.account_id.clone(),
+            message_id,
+            copy,
+        },
+    ))
+}
+
+pub(crate) fn account_email(conn: &Connection, account_id: &str) -> Result<String> {
+    conn.query_row(
+        "SELECT email_address FROM accounts WHERE id = ?1",
+        [account_id],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or(Error::AccountNotFound)
+}
+
+/// A new Message-ID in the domain of the sender's address.
+pub(crate) fn new_message_id(email: &str) -> String {
     let domain = email
         .rsplit_once('@')
         .map_or("localhost", |(_, domain)| domain);
-    let message_id = format!("<{}@{domain}>", new_id());
+    format!("<{}@{domain}>", new_id())
+}
+
+/// The mail as MIME: the message to send (without Bcc) and the copy to keep (with it), sharing
+/// `message_id` and date. A `draft` may still hold addresses being typed: those are left out
+/// instead of refused. Without recipients the envelope names the sender; only SMTP reads it.
+pub(crate) fn compose(
+    conn: &Connection,
+    mail: &OutgoingMail,
+    message_id: &str,
+    draft: bool,
+) -> Result<(Message, Vec<u8>)> {
+    let email = account_email(conn, &mail.account_id)?;
+    let sender_name = accounts::settings(conn, &mail.account_id)?.sender_name;
+    let from = mailbox(&sender_name, &email).map_err(|()| Error::InvalidEmail)?;
     let thread = match &mail.in_reply_to {
         Some(id) => thread_headers(conn, id)?,
         None => None,
     };
     let recipients = |list: &[Address]| -> Result<Vec<Mailbox>> {
         list.iter()
-            .map(|address| {
-                mailbox(
+            .filter_map(|address| {
+                match mailbox(
                     address.name.as_deref().unwrap_or_default(),
                     &address.address,
-                )
-                .map_err(|()| Error::InvalidRecipient(address.address.clone()))
+                ) {
+                    Ok(mailbox) => Some(Ok(mailbox)),
+                    Err(()) if draft => None,
+                    Err(()) => Some(Err(Error::InvalidRecipient(address.address.clone()))),
+                }
             })
             .collect()
     };
@@ -132,6 +163,7 @@ fn prepare(conn: &Connection, mail: &OutgoingMail) -> Result<(Message, SentMail)
         recipients(&mail.cc)?,
         recipients(&mail.bcc)?,
     );
+    let nobody = to.is_empty() && cc.is_empty() && bcc.is_empty();
     let date = SystemTime::now();
 
     let build = |keep_bcc: bool| -> Result<Message> {
@@ -139,7 +171,7 @@ fn prepare(conn: &Connection, mail: &OutgoingMail) -> Result<(Message, SentMail)
             .from(from.clone())
             .subject(mail.subject.trim())
             .date(date)
-            .message_id(Some(message_id.clone()));
+            .message_id(Some(message_id.to_owned()));
         for mailbox in &to {
             builder = builder.to(mailbox.clone());
         }
@@ -151,6 +183,11 @@ fn prepare(conn: &Connection, mail: &OutgoingMail) -> Result<(Message, SentMail)
         }
         if keep_bcc {
             builder = builder.keep_bcc();
+        }
+        if nobody {
+            let envelope = Envelope::new(Some(from.email.clone()), vec![from.email.clone()])
+                .map_err(|error| Error::MessageRejected(error.to_string()))?;
+            builder = builder.envelope(envelope);
         }
         if let Some((parent, references)) = &thread {
             builder = builder
@@ -164,16 +201,7 @@ fn prepare(conn: &Connection, mail: &OutgoingMail) -> Result<(Message, SentMail)
             ))
             .map_err(|error| Error::MessageRejected(error.to_string()))
     };
-    let message = build(false)?;
-    let copy = build(true)?.formatted();
-    Ok((
-        message,
-        SentMail {
-            account_id: mail.account_id.clone(),
-            message_id,
-            copy,
-        },
-    ))
+    Ok((build(false)?, build(true)?.formatted()))
 }
 
 fn mailbox(name: &str, address: &str) -> std::result::Result<Mailbox, ()> {

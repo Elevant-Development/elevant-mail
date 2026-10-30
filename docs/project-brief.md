@@ -230,6 +230,7 @@ it does not understand.
 | `folders`         | Folders per account with SPECIAL-USE role, `uid_validity`, `uid_next`, `highest_modseq`, counts                                                           |
 | `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to`, `references_header` and `reply_to`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched; unique per folder and UID |
 | `thread_keys`     | Every Message-ID a conversation has seen, per account, so replies find it                                                                                  |
+| `drafts`          | Mail being written: recipients, subject, HTML and text, the Message-ID of its copy in the drafts folder, when it changed and when it was uploaded |
 | `image_senders`   | Senders (address in lower case) whose mail shows its external images when opened                                                                           |
 | `attachments`     | Attachments per message with the MIME part to fetch them; small inline images with their bytes                                                           |
 | `pending_actions` | Local changes that still have to reach the server; `due_at` holds a move back while it can be undone                                                       |
@@ -272,7 +273,7 @@ checks that they are current.
 | Mail        | `list_messages` (a page of a folder or the unified inbox; with `threads` one row per conversation, `filters` from the filter bar, `after` for the next page), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images; they also show for senders in `image_senders`), `load_message_body`, `search_messages`, `list_image_senders`, `allow_images_from`, `forbid_images_from` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
 | Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
-| Writing     | `send_message` (returns once the SMTP server took it; filing in Sent follows, then the `mail-sent` event), `suggest_addresses` |
+| Writing     | `send_message` (returns once the SMTP server took it; filing in Sent and removing the draft follow, then `cache-changed`), `save_draft`, `list_drafts`, `upload_draft`, `discard_draft`, `open_draft` (from the drafts folder), `suggest_addresses` |
 | Links       | `open_link`                                                                                                                               |
 | Attachments | `save_attachment` (the system's save dialog via `tauri-plugin-dialog`, called from Rust only; the frontend gets no dialog or file permissions), `open_attachment` |
 | Sync        | `sync_account`, `sync_folder`, `load_older`, `search_server` (one account's folders on the server)                                        |
@@ -511,7 +512,11 @@ can consent without an admin. Paging beyond 5,000 cached messages per folder cam
   empty line; Bcc goes to the server but only into the copy for Sent.
 - Sent mail in Sent where the provider does not do it — done: a few seconds after sending the app
   looks for the Message-ID in Sent and only then files the copy (`APPEND`, read).
-- Drafts kept while the app runs — done; saved locally and in the server's drafts folder: next
+- Drafts saved locally and in the server's drafts folder — done (`mail/drafts.rs`). Kept a moment
+  after each change (table `drafts`); leaving the composer uploads the draft to the drafts folder
+  (`APPEND`, `\Draft`) in place of the copy before, found by the draft's own Message-ID. Sending
+  or discarding removes both. A draft in the drafts folder, also one from another device, opens
+  to write on; each "New mail" is a draft of its own.
 - Text and HTML signatures
 - Sending attachments
 
@@ -664,4 +669,7 @@ Phase 4:
     column with formatting, reply, reply all, forward, Sent filled where the server does not, address
     suggestions from the cache — done
 
-Next: drafts that survive a restart, then attachments and signatures.
+21. **Drafts:** kept across restarts and in the server's drafts folder, replaced on every
+    upload, opened from the folder to write on — done
+
+Next: attachments, then signatures.

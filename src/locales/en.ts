@@ -392,4 +392,5 @@ export const en: Record<MessageKey, string> = {
   "settings.account.smtpSaved": "Signing in to the outgoing server worked; saved.",
   "settings.account.saveSmtp": "Check and save",
   "settings.account.savingSmtp": "Checking …",
+  "compose.draftInFolder": "Draft",
 };

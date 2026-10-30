@@ -8,7 +8,7 @@ import { displayName, formatFullDate } from "./formatting";
 import { locale, t } from "./i18n";
 import type { Address, Message } from "./tauri";
 
-export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
+export type { ComposeMode } from "./tauri";
 
 const REPLY_PREFIX = /^\s*(re|aw|antw|sv|vs)\s*:/i;
 const FORWARD_PREFIX = /^\s*(fwd?|wg|tr)\s*:/i;

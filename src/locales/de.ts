@@ -398,4 +398,5 @@ export const de = {
   "settings.account.smtpSaved": "Anmeldung am Postausgang geprüft und gespeichert.",
   "settings.account.saveSmtp": "Prüfen und speichern",
   "settings.account.savingSmtp": "Wird geprüft …",
+  "compose.draftInFolder": "Entwurf",
 } as const;

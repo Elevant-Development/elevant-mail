@@ -223,7 +223,7 @@ async fn push_moves(
 
 /// Marks the messages deleted and removes them. Without UIDPLUS only a plain EXPUNGE is left,
 /// which also removes what another client marked deleted in this folder.
-async fn expunge(
+pub(crate) async fn expunge(
     session: &mut ImapSession,
     set: &str,
     uid_expunge: bool,

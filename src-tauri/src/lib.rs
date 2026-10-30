@@ -68,6 +68,11 @@ pub fn run() {
             commands::attachments::save_attachment,
             commands::attachments::open_attachment,
             commands::compose::send_message,
+            commands::compose::save_draft,
+            commands::compose::list_drafts,
+            commands::compose::upload_draft,
+            commands::compose::discard_draft,
+            commands::compose::open_draft,
             commands::compose::suggest_addresses,
         ])
         .run(tauri::generate_context!())

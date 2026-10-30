@@ -1,6 +1,7 @@
 //! Mail protocols: IMAP login and sync, sending over SMTP, message parsing and server settings.
 
 pub mod download;
+pub mod drafts;
 pub mod folders;
 pub mod idle;
 pub mod imap;

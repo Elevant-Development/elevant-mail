@@ -336,6 +336,7 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
   const now = useNow();
   // A reply or forward begun in this conversation and put aside.
   const openDraft = useUiStore((s) => s.openDraft);
+  const selectMessage = useUiStore((s) => s.selectMessage);
   const waiting = useUiStore((s) =>
     Object.values(s.drafts).find(
       (draft) => draft.sourceId !== null && conversation.some((m) => m.id === draft.sourceId),
@@ -347,6 +348,8 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
   const folderId = (conversation.find((m) => m.id === selectedMessageId) ?? conversation[0])
     ?.folderId;
   const own = conversation.filter((m) => m.folderId === folderId);
+  // In the drafts folder a mail is one to finish.
+  const inDrafts = folders.find((f) => f.id === folderId)?.role === "drafts";
   const newest = own[0];
   const anyUnread = own.some((m) => !m.isRead);
   const anyFlagged = own.some((m) => m.isFlagged);
@@ -528,13 +531,28 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
           </div>
         )}
       </div>
-      {waiting && (
+      {(waiting || (inDrafts && newest)) && (
         <div className="flex shrink-0 items-center gap-3 border-b bg-muted/40 px-4 py-2 text-sm">
           <Icon name="compose" className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate">
-            {t("compose.draftWaiting", { title: t(`compose.title.${waiting.mode}`) })}
+            {waiting
+              ? t("compose.draftWaiting", { title: t(`compose.title.${waiting.mode}`) })
+              : t("compose.draftInFolder")}
           </span>
-          <Button variant="outline" size="sm" onClick={() => openDraft(waiting)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (waiting) openDraft(waiting);
+              else if (newest) {
+                // The copy in the folder goes once the draft is sent or replaced.
+                void api.openDraft(newest.id).then((draft) => {
+                  openDraft(draft);
+                  selectMessage(null);
+                });
+              }
+            }}
+          >
             {t("compose.draftResume")}
           </Button>
         </div>

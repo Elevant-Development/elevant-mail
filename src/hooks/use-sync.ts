@@ -100,10 +100,10 @@ export function useBackgroundSync() {
     for (const account of accounts ?? []) sync(account.id);
   });
 
-  // A sent mail is in Sent: a reply shows in its conversation.
+  // Sent mail filed, drafts uploaded or removed in the background: the lists follow.
   const queryClient = useQueryClient();
   useEffect(() => {
-    const stop = api.onMailSent(() => {
+    const stop = api.onCacheChanged(() => {
       for (const key of ["folders", "messages", "conversation", "search"]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }

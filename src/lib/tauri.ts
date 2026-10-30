@@ -14,6 +14,7 @@ import type { AccountSettings } from "./bindings/AccountSettings";
 import type { Address } from "./bindings/Address";
 import type { Conversation } from "./bindings/Conversation";
 import type { Folder } from "./bindings/Folder";
+import type { Draft } from "./bindings/Draft";
 import type { ImapSettings } from "./bindings/ImapSettings";
 import type { ListCursor } from "./bindings/ListCursor";
 import type { ListFilter } from "./bindings/ListFilter";
@@ -39,6 +40,8 @@ export type { ErrorKind } from "./bindings/ErrorKind";
 export type { Folder } from "./bindings/Folder";
 export type { FolderRole } from "./bindings/FolderRole";
 export type { Hint } from "./bindings/Hint";
+export type { ComposeMode } from "./bindings/ComposeMode";
+export type { Draft } from "./bindings/Draft";
 export type { ImapSettings } from "./bindings/ImapSettings";
 export type { ListCursor } from "./bindings/ListCursor";
 export type { ListFilter } from "./bindings/ListFilter";
@@ -104,10 +107,21 @@ export interface Backend {
   /** The name mail goes out under; empty takes the one from Sent again. */
   setSenderName(accountId: string, name: string): Promise<void>;
   /**
-   * Hands the mail to the account's outgoing server; resolves once the server took it. It is
-   * filed in Sent afterwards ({@link Backend.onMailSent}).
+   * Hands the mail to the account's outgoing server; resolves once the server took it. The
+   * draft it was written in (`draftKey`) goes. Filing in Sent follows
+   * ({@link Backend.onCacheChanged}).
    */
-  sendMessage(mail: OutgoingMail): Promise<void>;
+  sendMessage(mail: OutgoingMail, draftKey: string | null): Promise<void>;
+  /** Keeps the draft as it is now, on this device. */
+  saveDraft(draft: Draft): Promise<void>;
+  /** The drafts kept on this device, the latest change first. */
+  listDrafts(): Promise<Draft[]>;
+  /** Puts the draft into its account's drafts folder, in the background, if it changed. */
+  uploadDraft(key: string): Promise<void>;
+  /** Throws the draft away, here and on the server. */
+  discardDraft(key: string): Promise<void>;
+  /** A draft from the drafts folder (a cached message), to write on. */
+  openDraft(messageId: string): Promise<Draft>;
   /** Addresses matching what was typed into a recipient field, the ones written with most first. */
   suggestAddresses(query: string): Promise<Address[]>;
   /** Microsoft accounts: the browser sign-in again, for the account's own address. */
@@ -192,8 +206,11 @@ export interface Backend {
    * returns a function that stops listening.
    */
   onInboxChanged(handler: (accountId: string) => void): Promise<() => void>;
-  /** A sent mail is in Sent and Sent is synced, with the account id. */
-  onMailSent(handler: (accountId: string) => void): Promise<() => void>;
+  /**
+   * The cache changed in the background (a sent mail filed, a draft uploaded or removed), with
+   * the account id.
+   */
+  onCacheChanged(handler: (accountId: string) => void): Promise<() => void>;
 }
 
 const tauriBackend: Backend = {
@@ -239,10 +256,15 @@ const tauriBackend: Backend = {
   onSyncProgress: (handler) =>
     listen<SyncProgress>("sync-progress", (event) => handler(event.payload)),
   onInboxChanged: (handler) => listen<string>("inbox-changed", (event) => handler(event.payload)),
-  onMailSent: (handler) => listen<string>("mail-sent", (event) => handler(event.payload)),
+  onCacheChanged: (handler) => listen<string>("cache-changed", (event) => handler(event.payload)),
   changeSmtp: (accountId, smtp, password) => invoke("change_smtp", { accountId, smtp, password }),
   setSenderName: (accountId, name) => invoke("set_sender_name", { accountId, name }),
-  sendMessage: (mail) => invoke("send_message", { mail }),
+  sendMessage: (mail, draftKey) => invoke("send_message", { mail, draftKey }),
+  saveDraft: (draft) => invoke("save_draft", { draft }),
+  listDrafts: () => invoke("list_drafts"),
+  uploadDraft: (key) => invoke("upload_draft", { key }),
+  discardDraft: (key) => invoke("discard_draft", { key }),
+  openDraft: (messageId) => invoke("open_draft", { messageId }),
   suggestAddresses: (query) => invoke("suggest_addresses", { query }),
 };
 

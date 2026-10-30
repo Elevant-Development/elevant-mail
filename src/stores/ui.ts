@@ -12,26 +12,11 @@ import {
 } from "@/design/themes";
 import { defaultFontId, type FontId } from "@/design/fonts";
 import type { LanguageSetting } from "@/lib/i18n";
-import type { ComposeMode } from "@/lib/compose";
-import { type Address, type ListFilter, UNIFIED_INBOX } from "@/lib/tauri";
+import { type Draft, type ListFilter, UNIFIED_INBOX } from "@/lib/tauri";
 
 export type { ListFilter } from "@/lib/tauri";
 
-/** A mail being written. Kept while the app runs, also while the composer shows something else. */
-export interface Draft {
-  /** "new", or the mode and the message it answers or forwards: "reply:<id>". */
-  key: string;
-  mode: ComposeMode;
-  /** The message answered or forwarded. */
-  sourceId: string | null;
-  accountId: string;
-  to: Address[];
-  cc: Address[];
-  bcc: Address[];
-  subject: string;
-  /** The editor's content. */
-  html: string;
-}
+export type { Draft } from "@/lib/tauri";
 export type Mode = "dark" | "light" | "system";
 /** What the search on the servers found for a query, and which accounts it failed on. */
 export interface ServerHits {
@@ -79,7 +64,7 @@ interface UiState {
   selectionEnd: string | null;
   /** Messages the folder picker moves; null while it is closed. */
   moveDialogIds: string[] | null;
-  /** Mail being written, by key; lost when the app closes, for now. */
+  /** Mail being written, by key; kept by the backend too (Composer saves, AppShell loads). */
   drafts: Record<string, Draft>;
   /** The draft the reader column shows instead of a mail; null while none. */
   composeKey: string | null;
@@ -137,6 +122,8 @@ interface UiState {
   /** Hides the composer; the draft stays. */
   closeCompose: () => void;
   discardDraft: (key: string) => void;
+  /** The drafts kept from before, at start; open ones keep what was written since. */
+  loadDrafts: (drafts: Draft[]) => void;
   closeMoveDialog: () => void;
   askDeleteForever: (messageIds: string[] | null) => void;
   setSidebarOpen: (open: boolean) => void;
@@ -230,6 +217,10 @@ export const useUiStore = create<UiState>()(
           return draft ? { drafts: { ...state.drafts, [key]: { ...draft, ...changes } } } : state;
         }),
       closeCompose: () => set({ composeKey: null }),
+      loadDrafts: (loaded) =>
+        set((state) => ({
+          drafts: { ...Object.fromEntries(loaded.map((d) => [d.key, d])), ...state.drafts },
+        })),
       discardDraft: (key) =>
         set((state) => {
           const { [key]: _gone, ...drafts } = state.drafts;

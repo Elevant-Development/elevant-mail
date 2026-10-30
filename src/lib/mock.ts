@@ -10,6 +10,7 @@ import type {
   Address,
   Backend,
   Conversation,
+  Draft,
   Folder,
   FolderRole,
   Message,
@@ -850,8 +851,39 @@ async function mockBrowserSignIn() {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Who listens for sent mail reaching Sent (onMailSent). */
-const mailSentHandlers = new Set<(accountId: string) => void>();
+/** Who listens for changes made in the background (onCacheChanged). */
+const changeHandlers = new Set<(accountId: string) => void>();
+const announceChange = (accountId: string) =>
+  window.setTimeout(() => changeHandlers.forEach((handler) => handler(accountId)), 300);
+
+/** Drafts kept "on this device", and the id of each one's copy in the drafts folder. */
+const mockDrafts = new Map<string, Draft>();
+const draftCopies = new Map<string, string>();
+
+function removeMockMessage(id: string) {
+  const index = messages.findIndex((m) => m.id === id);
+  if (index === -1) return;
+  messages.splice(index, 1);
+  allMockMessages.splice(index, 1);
+}
+
+function addMockMessage(sample: MockMessage): Message {
+  allMockMessages.push(sample);
+  const message = {
+    ...mockMessage(sample, allMockMessages.length - 1, Date.now()),
+    id: `msg-new-${Date.now()}-${allMockMessages.length}`,
+  };
+  messages.push(message);
+  return message;
+}
+
+/** A draft's copy in its account's drafts folder goes. */
+function dropDraftCopy(key: string) {
+  const copy = draftCopies.get(key);
+  if (copy) removeMockMessage(copy);
+  draftCopies.delete(key);
+  recount();
+}
 
 /** Senders whose mail always shows its external images (image_senders). */
 const imageSenders = new Set<string>();
@@ -981,7 +1013,7 @@ export const mockBackend: Backend = {
     if (!current) throw { kind: "notFound", hint: null };
     accountSettings[accountId] = { ...current, senderName: name.trim() };
   },
-  sendMessage: async (mail) => {
+  sendMessage: async (mail, draftKey) => {
     await wait(800);
     const recipients = [...mail.to, ...mail.cc, ...mail.bcc];
     if (recipients.length === 0) throw { kind: "invalidInput", hint: "addRecipient" };
@@ -1004,11 +1036,74 @@ export const mockBackend: Backend = {
       body: mail.text,
       thread: source ? threadOf(source) : undefined,
     };
-    allMockMessages.push(sample);
-    messages.push(mockMessage(sample, allMockMessages.length - 1, Date.now()));
+    addMockMessage(sample);
+    if (draftKey) {
+      mockDrafts.delete(draftKey);
+      dropDraftCopy(draftKey);
+    }
     recount();
     // Like the backend: filed in Sent and synced a moment later.
-    window.setTimeout(() => mailSentHandlers.forEach((handler) => handler(mail.accountId)), 300);
+    announceChange(mail.accountId);
+  },
+  saveDraft: async (draft) => {
+    mockDrafts.set(draft.key, draft);
+  },
+  listDrafts: async () => [...mockDrafts.values()],
+  uploadDraft: async (key) => {
+    const draft = mockDrafts.get(key);
+    const empty =
+      !draft ||
+      (draft.to.length + draft.cc.length + draft.bcc.length === 0 &&
+        !draft.subject.trim() &&
+        !draft.text.trim());
+    if (!draft || empty) return;
+    dropDraftCopy(key);
+    const copy = addMockMessage({
+      account: draft.accountId,
+      role: "drafts",
+      from: me(draft.accountId),
+      to: draft.to,
+      cc: draft.cc,
+      subject: draft.subject,
+      ago: 0,
+      read: true,
+      body: draft.text,
+    });
+    draftCopies.set(key, copy.id);
+    recount();
+    announceChange(draft.accountId);
+  },
+  discardDraft: async (key) => {
+    const draft = mockDrafts.get(key);
+    mockDrafts.delete(key);
+    dropDraftCopy(key);
+    if (draft) announceChange(draft.accountId);
+  },
+  openDraft: async (messageId) => {
+    const kept = [...draftCopies].find(([, copy]) => copy === messageId)?.[0];
+    const draft = kept ? mockDrafts.get(kept) : undefined;
+    if (draft) return draft;
+    const message = messages.find((m) => m.id === messageId);
+    if (!message) throw { kind: "notFound", hint: null };
+    const text = message.bodyText ?? "";
+    const opened: Draft = {
+      key: `draft:${messageId}`,
+      mode: "new",
+      sourceId: null,
+      accountId: message.accountId,
+      to: message.to,
+      cc: message.cc,
+      bcc: [],
+      subject: message.subject ?? "",
+      html: text
+        .split("\n\n")
+        .map((block) => `<p>${block.replaceAll("<", "&lt;").replaceAll("\n", "<br>")}</p>`)
+        .join(""),
+      text,
+    };
+    mockDrafts.set(opened.key, opened);
+    draftCopies.set(opened.key, messageId);
+    return opened;
   },
   suggestAddresses: async (query) => {
     const needle = query.trim().toLowerCase();
@@ -1184,8 +1279,8 @@ export const mockBackend: Backend = {
   loadOlder: async () => ({ added: 0, updated: 0, removed: 0, newMail: [] }),
   onSyncProgress: async () => () => undefined,
   onInboxChanged: async () => () => undefined,
-  onMailSent: async (handler) => {
-    mailSentHandlers.add(handler);
-    return () => mailSentHandlers.delete(handler);
+  onCacheChanged: async (handler) => {
+    changeHandlers.add(handler);
+    return () => changeHandlers.delete(handler);
   },
 };

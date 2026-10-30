@@ -867,6 +867,21 @@ pub(crate) async fn sync_with_connector(
 }
 
 #[cfg(test)]
+pub(crate) async fn sync_folder_with_connector(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    folder_id: &str,
+    connector: &TlsConnector,
+) -> Result<SyncReport> {
+    let folder = folder_state(&db.conn(), folder_id)?.ok_or(Error::FolderNotFound)?;
+    let (settings, password) = credentials(db, secrets, &folder.account_id).await?;
+    let mut session = imap::open_session(&settings, &password, connector).await?;
+    let result = sync_folder_in(db, &mut session, &folder, Mode::Newest, &|_| {}).await;
+    let _ = session.logout().await;
+    result
+}
+
+#[cfg(test)]
 pub(crate) async fn load_older_with_connector(
     db: &Database,
     secrets: &dyn SecretStore,
