@@ -89,9 +89,10 @@ The bundles end up in `target/release/bundle/`:
 ## Releases
 
 1. Raise the version in `package.json`, `Cargo.toml` and `src-tauri/tauri.conf.json`.
-2. Commit, then tag: `git tag v0.3.0 && git push origin v0.3.0`.
-3. `.github/workflows/release.yml` builds the Linux and Windows installers into a draft release.
-   Test them, write the notes and publish the draft.
+2. Add the version's section to `CHANGELOG.md` (`## 0.3.0 – date`, below it `###` headings).
+3. Commit, then tag: `git tag -a v0.3.0 -m "Elevant Mail 0.3.0" && git push origin v0.3.0`.
+4. `.github/workflows/release.yml` builds the Linux and Windows installers into a draft release
+   whose text is that section, and fails without one. Test the installers and publish the draft.
 
 ## Troubleshooting
 

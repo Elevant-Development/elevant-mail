@@ -1,7 +1,8 @@
 name: Release
 
 # A tag like v0.3.0 builds the installers and attaches them to a draft release, which is
-# published by hand after a smoke test with real accounts.
+# published by hand after a smoke test with real accounts. The release text is the version's
+# section of CHANGELOG.md; without one the build fails.
 on:
   push:
     tags: ["v*"]
@@ -38,14 +39,36 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Release notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes="$(awk -v version="$version" '
+            /^## / { inside = ($2 == version) ; next }
+            inside { print }
+          ' CHANGELOG.md)"
+          if [ -z "${notes//[[:space:]]/}" ]; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "body<<END_OF_NOTES"
+            echo "$notes"
+            echo
+            echo "### Install"
+            echo
+            echo "Installers for Linux (.deb, .AppImage) and Windows (.exe)."
+            echo 'Not code-signed yet: Windows SmartScreen asks once ("More info" → "Run anyway").'
+            echo "END_OF_NOTES"
+          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: Elevant Mail ${{ github.ref_name }}
-          releaseBody: |
-            Installers for Linux (.deb, .AppImage) and Windows (.exe).
-            Not code-signed yet: Windows SmartScreen asks once ("More info" → "Run anyway").
+          releaseName: Elevant Mail ${{ steps.notes.outputs.version }}
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           args: --bundles ${{ matrix.bundles }}
