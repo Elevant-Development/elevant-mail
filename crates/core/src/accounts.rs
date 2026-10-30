@@ -2,6 +2,7 @@
 //! login, and a new login only after it worked; passwords go to the keyring, everything else to
 //! the database.
 
+use lettre::transport::smtp::client::TlsParameters;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use tokio_rustls::TlsConnector;
@@ -11,7 +12,8 @@ use crate::db::Database;
 use crate::ids::{new_id, now_millis};
 use crate::mail::folders::RemoteFolder;
 use crate::mail::imap::{self, ConnectionReport};
-use crate::mail::settings::{ImapSettings, Security};
+use crate::mail::presets::smtp_for;
+use crate::mail::settings::{ImapSettings, Security, SmtpSettings};
 use crate::model::Account;
 use crate::oauth::Tokens;
 use crate::secrets::{Secret, SecretKind, SecretStore};
@@ -53,6 +55,12 @@ pub enum SignInMethod {
 pub struct AccountSettings {
     pub sign_in: SignInMethod,
     pub imap: ImapSettings,
+    /// The outgoing server: as set ([`change_smtp`]), otherwise the one that goes with the
+    /// incoming server ([`smtp_for`]).
+    pub smtp: SmtpSettings,
+    /// The name mail goes out under: as set ([`set_sender_name`]), otherwise the one on the
+    /// account's own mail in Sent; empty if there is none.
+    pub sender_name: String,
     /// How many days back the cache keeps mail; `None` keeps everything ([`set_keep_days`]).
     pub keep_days: Option<u32>,
 }
@@ -180,7 +188,10 @@ pub(crate) fn save(
 /// Google shows app passwords in groups of four ("abcd efgh ijkl mnop") and expects them without
 /// the spaces; pasted as shown, the login would fail. Other passwords may contain spaces.
 fn normalize_password(host: &str, password: Secret) -> Secret {
-    if host.eq_ignore_ascii_case("imap.gmail.com") && password.expose().contains(' ') {
+    let gmail = ["imap.gmail.com", "smtp.gmail.com"]
+        .iter()
+        .any(|gmail| host.eq_ignore_ascii_case(gmail));
+    if gmail && password.expose().contains(' ') {
         Secret::new(password.expose().split_whitespace().collect::<String>())
     } else {
         password
@@ -316,31 +327,140 @@ pub fn list(conn: &Connection) -> Result<Vec<Account>> {
 }
 
 pub fn settings(conn: &Connection, account_id: &str) -> Result<AccountSettings> {
-    conn.query_row(
-        "SELECT imap_host, imap_port, imap_security, imap_username, auth_method, keep_days
-         FROM accounts WHERE id = ?1",
-        [account_id],
-        |row| {
-            let security: String = row.get(2)?;
-            let method: String = row.get(4)?;
-            Ok(AccountSettings {
-                sign_in: if method == "oauth2" {
-                    SignInMethod::Microsoft
-                } else {
-                    SignInMethod::Password
-                },
-                imap: ImapSettings {
+    let row = conn
+        .query_row(
+            "SELECT imap_host, imap_port, imap_security, imap_username, auth_method, keep_days,
+               email_address, smtp_host, smtp_port, smtp_security, smtp_username, sender_name
+             FROM accounts WHERE id = ?1",
+            [account_id],
+            |row| {
+                let security: String = row.get(2)?;
+                let method: String = row.get(4)?;
+                let imap = ImapSettings {
                     host: row.get(0)?,
                     port: row.get(1)?,
                     security: Security::from_db_str(&security),
                     username: row.get(3)?,
-                },
-                keep_days: row.get(5)?,
-            })
-        },
-    )
-    .optional()?
-    .ok_or(Error::AccountNotFound)
+                };
+                let email: String = row.get(6)?;
+                let smtp_host: Option<String> = row.get(7)?;
+                let smtp = match smtp_host {
+                    Some(host) => SmtpSettings {
+                        host,
+                        port: row.get(8)?,
+                        security: Security::from_db_str(
+                            &row.get::<_, Option<String>>(9)?.unwrap_or_default(),
+                        ),
+                        username: row
+                            .get::<_, Option<String>>(10)?
+                            .unwrap_or_else(|| imap.username.clone()),
+                    },
+                    None => smtp_for(&imap, &email),
+                };
+                let settings = AccountSettings {
+                    sign_in: if method == "oauth2" {
+                        SignInMethod::Microsoft
+                    } else {
+                        SignInMethod::Password
+                    },
+                    imap,
+                    smtp,
+                    sender_name: row.get::<_, Option<String>>(11)?.unwrap_or_default(),
+                    keep_days: row.get(5)?,
+                };
+                Ok((settings, email))
+            },
+        )
+        .optional()?;
+    let (mut settings, email) = row.ok_or(Error::AccountNotFound)?;
+    if settings.sender_name.is_empty() {
+        settings.sender_name = name_in_sent(conn, account_id, &email)?.unwrap_or_default();
+    }
+    Ok(settings)
+}
+
+/// The name the account's own mail in Sent goes out under, the latest first.
+fn name_in_sent(conn: &Connection, account_id: &str, email: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT m.from_name FROM messages m JOIN folders f ON f.id = m.folder_id
+             WHERE m.account_id = ?1 AND f.role = 'sent' AND lower(m.from_address) = lower(?2)
+               AND trim(coalesce(m.from_name, '')) <> ''
+             ORDER BY m.date_sent DESC LIMIT 1",
+            [account_id, email],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|name| name.trim().to_owned()))
+}
+
+/// New outgoing server settings, and a password for it where it differs from the IMAP one:
+/// signs in with them first and keeps the old ones if that fails.
+pub async fn change_smtp(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    smtp: SmtpSettings,
+    password: Option<Secret>,
+) -> Result<()> {
+    let tls = crate::mail::smtp::platform_tls(&smtp.host)?;
+    change_smtp_with(db, secrets, account_id, smtp, password, tls).await
+}
+
+pub(crate) async fn change_smtp_with(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    smtp: SmtpSettings,
+    password: Option<Secret>,
+    tls: TlsParameters,
+) -> Result<()> {
+    let smtp = SmtpSettings {
+        host: smtp.host.trim().to_owned(),
+        username: smtp.username.trim().to_owned(),
+        ..smtp
+    };
+    if smtp.host.is_empty() {
+        return Err(Error::InvalidHost);
+    }
+    let sign_in = settings(&db.conn(), account_id)?.sign_in;
+    let password = password.map(|password| normalize_password(&smtp.host, password));
+    let credential = match (&password, sign_in) {
+        (Some(password), SignInMethod::Password) => {
+            imap::Credential::Password(Secret::new(password.expose()))
+        }
+        (Some(_), SignInMethod::Microsoft) => return Err(Error::WrongSignInMethod),
+        (None, sign_in) => crate::mail::send::credential(secrets, account_id, sign_in).await?,
+    };
+    crate::mail::smtp::check_login_with(&smtp, &credential, tls).await?;
+    db.conn().execute(
+        "UPDATE accounts SET smtp_host = ?2, smtp_port = ?3, smtp_security = ?4, smtp_username = ?5
+         WHERE id = ?1",
+        params![
+            account_id,
+            smtp.host,
+            smtp.port,
+            smtp.security.as_db_str(),
+            smtp.username
+        ],
+    )?;
+    if let Some(password) = &password {
+        secrets.set(account_id, SecretKind::SmtpPassword, password)?;
+    }
+    Ok(())
+}
+
+/// The name mail goes out under; empty takes the one from Sent again.
+pub fn set_sender_name(conn: &Connection, account_id: &str, name: &str) -> Result<()> {
+    let name = name.trim();
+    let updated = conn.execute(
+        "UPDATE accounts SET sender_name = ?2 WHERE id = ?1",
+        params![account_id, (!name.is_empty()).then_some(name)],
+    )?;
+    if updated == 0 {
+        return Err(Error::AccountNotFound);
+    }
+    Ok(())
 }
 
 /// How far back the account keeps mail in the cache, in days; `None` keeps everything. Every
@@ -758,9 +878,35 @@ mod tests {
             AccountSettings {
                 sign_in: SignInMethod::Password,
                 imap: new_account().imap,
+                smtp: SmtpSettings {
+                    host: "smtp.example.org".into(),
+                    port: 465,
+                    security: Security::Tls,
+                    username: "alex@example.org".into(),
+                },
+                sender_name: String::new(),
                 keep_days: Some(90),
             }
         );
+
+        // The sender name: as set, otherwise the one on the account's mail in Sent.
+        db.conn()
+            .execute_batch(&format!(
+                "INSERT INTO folders (id, account_id, name, path, role)
+                 VALUES ('sent', '{id}', 'Sent Items', 'Sent Items', 'sent');
+                 INSERT INTO messages (id, account_id, folder_id, uid, from_name, from_address,
+                   date_sent, fetched_at)
+                 VALUES ('old', '{id}', 'sent', 1, 'Alex', 'alex@example.org', 1, 0),
+                        ('new', '{id}', 'sent', 2, 'Alex Berger', 'Alex@Example.org', 2, 0);",
+                id = password.id
+            ))
+            .unwrap();
+        let sender = || settings(&db.conn(), &password.id).unwrap().sender_name;
+        assert_eq!(sender(), "Alex Berger");
+        set_sender_name(&db.conn(), &password.id, "  A. Berger ").unwrap();
+        assert_eq!(sender(), "A. Berger");
+        set_sender_name(&db.conn(), &password.id, "").unwrap();
+        assert_eq!(sender(), "Alex Berger");
         set_keep_days(&db.conn(), &password.id, None).unwrap();
         assert_eq!(settings(&db.conn(), &password.id).unwrap().keep_days, None);
         set_keep_days(&db.conn(), &password.id, Some(0)).unwrap();

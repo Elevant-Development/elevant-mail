@@ -8,7 +8,8 @@ import type { ImapSettings, Security } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 /** Standard ports; switching the security moves the port along unless it was changed by hand. */
-const defaultPorts: Record<Security, number> = { tls: 993, startTls: 143 };
+const imapPorts: Record<Security, number> = { tls: 993, startTls: 143 };
+const smtpPorts: Record<Security, number> = { tls: 465, startTls: 587 };
 
 export function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
   return (
@@ -26,15 +27,23 @@ interface ServerFieldsProps {
   /** Read-only, not disabled, while busy: disabling would drop the keyboard focus. */
   readOnly: boolean;
   onChange: (settings: ImapSettings) => void;
+  /** The outgoing server (SMTP), with its standard ports; otherwise the incoming one. */
+  outgoing?: boolean;
 }
 
 /** IMAP server, port, encryption and user name. */
-export function ServerFields({ idPrefix, settings, readOnly, onChange }: ServerFieldsProps) {
+export function ServerFields({
+  idPrefix,
+  settings,
+  readOnly,
+  onChange,
+  outgoing = false,
+}: ServerFieldsProps) {
+  const ports = outgoing ? smtpPorts : imapPorts;
   const update = (patch: Partial<ImapSettings>) => onChange({ ...settings, ...patch });
 
   const changeSecurity = (security: Security) => {
-    const port =
-      settings.port === defaultPorts[settings.security] ? defaultPorts[security] : settings.port;
+    const port = settings.port === ports[settings.security] ? ports[security] : settings.port;
     update({ security, port });
   };
 

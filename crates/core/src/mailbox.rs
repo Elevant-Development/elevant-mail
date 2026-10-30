@@ -4,7 +4,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
 use rusqlite::types::Value;
-use rusqlite::{Connection, OptionalExtension, Row};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::Result;
 use crate::mail::sanitize::{HtmlView, sanitize};
@@ -462,6 +462,58 @@ pub fn search_messages(
     Ok(group(listed, replies, true))
 }
 
+/// Addresses offered while typing a recipient: senders of cached mail and the recipients of the
+/// user's own mail in Sent (those count more), whose name or address contains `query`; the
+/// ones written with most first. The user's own addresses are left out. A name comes from the
+/// latest mail with the address.
+pub fn suggest_addresses(conn: &Connection, query: &str, limit: u32) -> Result<Vec<Address>> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let pattern = format!(
+        "%{}%",
+        query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
+    let mut statement = conn.prepare_cached(
+        "WITH people (name, address, weight, at) AS (
+           SELECT from_name, lower(from_address), 1, date_sent FROM messages
+           WHERE from_address IS NOT NULL
+           UNION ALL
+           SELECT json_extract(j.value, '$.name'), lower(json_extract(j.value, '$.address')), 3,
+             m.date_sent
+           FROM messages m JOIN folders f ON f.id = m.folder_id,
+             json_each(coalesce(m.to_addresses, '[]')) j
+           WHERE f.role = 'sent'
+           UNION ALL
+           SELECT json_extract(j.value, '$.name'), lower(json_extract(j.value, '$.address')), 2,
+             m.date_sent
+           FROM messages m JOIN folders f ON f.id = m.folder_id,
+             json_each(coalesce(m.cc_addresses, '[]')) j
+           WHERE f.role = 'sent'
+         )
+         SELECT address, name, sum(weight) AS score, max(at) FROM people
+         WHERE (address LIKE ?1 ESCAPE '\\' OR lower(coalesce(name, '')) LIKE ?1 ESCAPE '\\')
+           AND address NOT IN (SELECT lower(email_address) FROM accounts)
+         GROUP BY address
+         ORDER BY score DESC, max(at) DESC
+         LIMIT ?2",
+    )?;
+    let found = statement
+        .query_map(params![pattern, limit], |row| {
+            let name: Option<String> = row.get(1)?;
+            Ok(Address {
+                name: name.filter(|name| !name.trim().is_empty()),
+                address: row.get(0)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(found)
+}
+
 /// For a hit in "Sent": the folder that holds the rest of its conversation, the inbox first. The
 /// reply shows there along with the mail it answers, as in the list.
 fn answered_in(conn: &Connection, hit: &Member) -> Result<Option<String>> {
@@ -639,7 +691,7 @@ pub fn get_message(
 ) -> Result<Option<OpenedMessage>> {
     let sql = format!(
         "SELECT {SUMMARY_COLUMNS}, m.to_addresses, m.cc_addresses, m.body_text, m.body_state,
-           m.body_html
+           m.body_html, m.reply_to
          FROM messages m WHERE m.id = ?1"
     );
     let row = conn
@@ -654,6 +706,7 @@ pub fn get_message(
                 summary: summary_from_row(row)?,
                 to: addresses(11)?,
                 cc: addresses(12)?,
+                reply_to: addresses(16)?,
                 body_text: row.get(13)?,
                 body_complete: row.get::<_, String>(14)? == "full",
                 body_html: None,
@@ -1114,6 +1167,41 @@ mod tests {
             listed(true, &[ListFilter::Unread], &["m9".into()]),
             ["m9", "m6", "m3"]
         );
+    }
+
+    #[test]
+    fn suggests_whom_the_user_writes_to() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed(&conn);
+        conn.execute_batch(
+            r#"INSERT INTO messages (id, account_id, folder_id, uid, from_name, from_address,
+                 to_addresses, date_sent, fetched_at)
+               VALUES
+                 ('to-jonas', 'acc', 'sent', 7, 'Alex', 'alex@example.org',
+                   '[{"name":"Jonas Weber","address":"Jonas@Example.org"}]', 9000, 0),
+                 ('from-jonas', 'acc', 'inbox', 8, NULL, 'jonas@example.org', NULL, 8000, 0),
+                 ('odd', 'acc', 'inbox', 9, '100% Rabatt', 'shop@example.net', NULL, 7000, 0);"#,
+        )
+        .unwrap();
+        let suggest = |query: &str| -> Vec<String> {
+            suggest_addresses(&conn, query, 5)
+                .unwrap()
+                .into_iter()
+                .map(|a| format!("{} <{}>", a.name.unwrap_or_default(), a.address))
+                .collect()
+        };
+        // The name comes from the latest mail with the address.
+        assert_eq!(suggest("jon"), ["Jonas Weber <jonas@example.org>"]);
+        assert_eq!(suggest("LENA"), ["Lena <lena@example.org>"]);
+        // Written to (Sent) ranks above only written by; the user's own address never shows.
+        assert_eq!(
+            suggest("example.org"),
+            ["Jonas Weber <jonas@example.org>", "Lena <lena@example.org>"]
+        );
+        assert_eq!(suggest("100%"), ["100% Rabatt <shop@example.net>"]);
+        assert!(suggest("0%x").is_empty());
+        assert!(suggest(" ").is_empty());
     }
 
     #[test]

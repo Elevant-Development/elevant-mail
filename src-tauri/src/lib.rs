@@ -40,6 +40,8 @@ pub fn run() {
             commands::accounts::update_account,
             commands::accounts::set_keep_days,
             commands::accounts::set_in_unified_inbox,
+            commands::accounts::set_sender_name,
+            commands::accounts::change_smtp,
             commands::accounts::change_login,
             commands::accounts::sign_in_again,
             commands::mailbox::list_folders,
@@ -65,6 +67,8 @@ pub fn run() {
             commands::links::open_link,
             commands::attachments::save_attachment,
             commands::attachments::open_attachment,
+            commands::compose::send_message,
+            commands::compose::suggest_addresses,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Elevant Mail");

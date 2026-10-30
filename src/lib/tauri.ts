@@ -11,6 +11,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { Account } from "./bindings/Account";
 import type { AccountChanges } from "./bindings/AccountChanges";
 import type { AccountSettings } from "./bindings/AccountSettings";
+import type { Address } from "./bindings/Address";
 import type { Conversation } from "./bindings/Conversation";
 import type { Folder } from "./bindings/Folder";
 import type { ImapSettings } from "./bindings/ImapSettings";
@@ -21,6 +22,8 @@ import type { Message } from "./bindings/Message";
 import type { MessageSummary } from "./bindings/MessageSummary";
 import type { MoveOutcome } from "./bindings/MoveOutcome";
 import type { NewAccount } from "./bindings/NewAccount";
+import type { OutgoingMail } from "./bindings/OutgoingMail";
+import type { SmtpSettings } from "./bindings/SmtpSettings";
 import type { SuggestedSettings } from "./bindings/SuggestedSettings";
 import type { SyncProgress } from "./bindings/SyncProgress";
 import type { SyncReport } from "./bindings/SyncReport";
@@ -44,6 +47,8 @@ export type { Message } from "./bindings/Message";
 export type { MessageSummary } from "./bindings/MessageSummary";
 export type { MoveOutcome } from "./bindings/MoveOutcome";
 export type { NewAccount } from "./bindings/NewAccount";
+export type { OutgoingMail } from "./bindings/OutgoingMail";
+export type { SmtpSettings } from "./bindings/SmtpSettings";
 export type { NewMail } from "./bindings/NewMail";
 export type { Provider } from "./bindings/Provider";
 export type { Security } from "./bindings/Security";
@@ -91,6 +96,20 @@ export interface Backend {
    * and changes nothing if that fails.
    */
   changeLogin(accountId: string, imap: ImapSettings, password: string | null): Promise<void>;
+  /**
+   * New outgoing server settings, and a password where it differs from the IMAP one; signs in
+   * with them first and keeps the old ones if that fails.
+   */
+  changeSmtp(accountId: string, smtp: SmtpSettings, password: string | null): Promise<void>;
+  /** The name mail goes out under; empty takes the one from Sent again. */
+  setSenderName(accountId: string, name: string): Promise<void>;
+  /**
+   * Hands the mail to the account's outgoing server; resolves once the server took it. It is
+   * filed in Sent afterwards ({@link Backend.onMailSent}).
+   */
+  sendMessage(mail: OutgoingMail): Promise<void>;
+  /** Addresses matching what was typed into a recipient field, the ones written with most first. */
+  suggestAddresses(query: string): Promise<Address[]>;
   /** Microsoft accounts: the browser sign-in again, for the account's own address. */
   signInAgain(accountId: string): Promise<void>;
   listFolders(): Promise<Folder[]>;
@@ -173,6 +192,8 @@ export interface Backend {
    * returns a function that stops listening.
    */
   onInboxChanged(handler: (accountId: string) => void): Promise<() => void>;
+  /** A sent mail is in Sent and Sent is synced, with the account id. */
+  onMailSent(handler: (accountId: string) => void): Promise<() => void>;
 }
 
 const tauriBackend: Backend = {
@@ -218,6 +239,11 @@ const tauriBackend: Backend = {
   onSyncProgress: (handler) =>
     listen<SyncProgress>("sync-progress", (event) => handler(event.payload)),
   onInboxChanged: (handler) => listen<string>("inbox-changed", (event) => handler(event.payload)),
+  onMailSent: (handler) => listen<string>("mail-sent", (event) => handler(event.payload)),
+  changeSmtp: (accountId, smtp, password) => invoke("change_smtp", { accountId, smtp, password }),
+  setSenderName: (accountId, name) => invoke("set_sender_name", { accountId, name }),
+  sendMessage: (mail) => invoke("send_message", { mail }),
+  suggestAddresses: (query) => invoke("suggest_addresses", { query }),
 };
 
 export const usesMockData = !isTauri();

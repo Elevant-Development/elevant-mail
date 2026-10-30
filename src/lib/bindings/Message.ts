@@ -2,7 +2,11 @@
 import type { Address } from "./Address";
 import type { Attachment } from "./Attachment";
 
-export type Message = { to: Array<Address>, cc: Array<Address>, bodyText: string | null, 
+export type Message = { to: Array<Address>, cc: Array<Address>, 
+/**
+ * Where the sender wants replies to go; empty: to the sender.
+ */
+replyTo: Array<Address>, bodyText: string | null, 
 /**
  * False for large mail fetched with headers only; the body is loaded when opened.
  */

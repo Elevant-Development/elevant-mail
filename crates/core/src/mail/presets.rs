@@ -9,7 +9,7 @@ use hickory_resolver::proto::rr::{RData, RecordType};
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::mail::settings::{ImapSettings, Provider, Security};
+use crate::mail::settings::{ImapSettings, Provider, Security, SmtpSettings};
 use crate::{Error, Result};
 
 const MX_TIMEOUT: Duration = Duration::from_secs(5);
@@ -105,6 +105,44 @@ fn suggestion(
     }
 }
 
+/// The outgoing server that goes with an account's incoming one: known providers by their IMAP
+/// host, otherwise `smtp.` in place of `imap.` (or the same host, as on self-hosted servers), with
+/// TLS on port 465. The user name is the IMAP one.
+pub fn smtp_for(imap: &ImapSettings, email: &str) -> SmtpSettings {
+    let imap_host = imap.host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let consumer_microsoft = email_domain(email).is_ok_and(|domain| {
+        let name = domain.split('.').next().unwrap_or_default();
+        matches!(name, "outlook" | "hotmail" | "live" | "msn")
+    });
+    let (host, port, security) = match Provider::from_imap_host(&imap_host) {
+        Some(Provider::Gmail) => ("smtp.gmail.com".to_owned(), 465, Security::Tls),
+        Some(Provider::Microsoft) if consumer_microsoft => {
+            ("smtp-mail.outlook.com".to_owned(), 587, Security::StartTls)
+        }
+        Some(Provider::Microsoft) => ("smtp.office365.com".to_owned(), 587, Security::StartTls),
+        Some(Provider::WebDe) => ("smtp.web.de".to_owned(), 587, Security::StartTls),
+        Some(Provider::Gmx) => ("mail.gmx.net".to_owned(), 587, Security::StartTls),
+        Some(Provider::Icloud) => ("smtp.mail.me.com".to_owned(), 587, Security::StartTls),
+        Some(Provider::Yahoo) => ("smtp.mail.yahoo.com".to_owned(), 465, Security::Tls),
+        None => {
+            let host = match imap_host.as_str() {
+                "secureimap.t-online.de" => "securesmtp.t-online.de".to_owned(),
+                other => match other.strip_prefix("imap.") {
+                    Some(rest) => format!("smtp.{rest}"),
+                    None => other.to_owned(),
+                },
+            };
+            (host, 465, Security::Tls)
+        }
+    };
+    SmtpSettings {
+        host,
+        port,
+        security,
+        username: imap.username.trim().to_owned(),
+    }
+}
+
 pub fn email_domain(email: &str) -> Result<String> {
     let (local, domain) = email.trim().rsplit_once('@').ok_or(Error::InvalidEmail)?;
     let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -179,6 +217,47 @@ mod tests {
         let outlook = suggest_settings(" Alex@Hotmail.de ").await.unwrap();
         assert_eq!(outlook.imap.host, "outlook.office365.com");
         assert!(outlook.needs_oauth);
+    }
+
+    #[test]
+    fn outgoing_servers_follow_the_incoming_one() {
+        let smtp = |host: &str, email: &str| {
+            let imap = ImapSettings {
+                host: host.into(),
+                port: 993,
+                security: Security::Tls,
+                username: email.into(),
+            };
+            let smtp = smtp_for(&imap, email);
+            assert_eq!(smtp.username, email);
+            (smtp.host, smtp.port, smtp.security)
+        };
+        assert_eq!(
+            smtp("imap.gmail.com", "alex@gmail.com"),
+            ("smtp.gmail.com".into(), 465, Security::Tls)
+        );
+        // Microsoft: Outlook.com and Microsoft 365 share the IMAP host, not the SMTP one.
+        assert_eq!(
+            smtp("outlook.office365.com", "alex@hotmail.de"),
+            ("smtp-mail.outlook.com".into(), 587, Security::StartTls)
+        );
+        assert_eq!(
+            smtp("outlook.office365.com", "alex@firma.example"),
+            ("smtp.office365.com".into(), 587, Security::StartTls)
+        );
+        assert_eq!(
+            smtp("imap.web.de", "alex@web.de"),
+            ("smtp.web.de".into(), 587, Security::StartTls)
+        );
+        assert_eq!(
+            smtp("imap.example.org", "alex@example.org"),
+            ("smtp.example.org".into(), 465, Security::Tls)
+        );
+        // Self-hosted: one host for both.
+        assert_eq!(
+            smtp("mail.example.org", "alex@example.org"),
+            ("mail.example.org".into(), 465, Security::Tls)
+        );
     }
 
     #[test]

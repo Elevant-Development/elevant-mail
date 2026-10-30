@@ -226,9 +226,9 @@ it does not understand.
 
 | Table             | Content                                                                                                                                                   |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accounts`        | Accounts with IMAP and (from phase 4) SMTP settings, sign-in method, colour, `keep_days` (how far back the cache keeps mail), `in_unified_inbox`. No passwords. |
+| `accounts`        | Accounts with IMAP and SMTP settings (SMTP NULL until changed: then the one that goes with the IMAP host), sign-in method, colour, `sender_name`, `keep_days` (how far back the cache keeps mail), `in_unified_inbox`. No passwords. |
 | `folders`         | Folders per account with SPECIAL-USE role, `uid_validity`, `uid_next`, `highest_modseq`, counts                                                           |
-| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to` and `references_header`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched; unique per folder and UID |
+| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to`, `references_header` and `reply_to`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched; unique per folder and UID |
 | `thread_keys`     | Every Message-ID a conversation has seen, per account, so replies find it                                                                                  |
 | `image_senders`   | Senders (address in lower case) whose mail shows its external images when opened                                                                           |
 | `attachments`     | Attachments per message with the MIME part to fetch them; small inline images with their bytes                                                           |
@@ -267,11 +267,12 @@ checks that they are current.
 | Area        | Commands                                                                                                                                 |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | App         | `app_status` (version, schema version, keyring available)                                                                                 |
-| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `set_keep_days`, `set_in_unified_inbox`, `change_login` (server settings, password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
+| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `set_keep_days`, `set_in_unified_inbox`, `set_sender_name`, `change_login` (server settings, password; checks the login first), `change_smtp` (outgoing server, its own password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
 | Folders     | `list_folders`                                                                                                                            |
 | Mail        | `list_messages` (a page of a folder or the unified inbox; with `threads` one row per conversation, `filters` from the filter bar, `after` for the next page), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images; they also show for senders in `image_senders`), `load_message_body`, `search_messages`, `list_image_senders`, `allow_images_from`, `forbid_images_from` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
 | Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
+| Writing     | `send_message` (returns once the SMTP server took it; filing in Sent follows, then the `mail-sent` event), `suggest_addresses` |
 | Links       | `open_link`                                                                                                                               |
 | Attachments | `save_attachment` (the system's save dialog via `tauri-plugin-dialog`, called from Rust only; the frontend gets no dialog or file permissions), `open_attachment` |
 | Sync        | `sync_account`, `sync_folder`, `load_older`, `search_server` (one account's folders on the server)                                        |
@@ -427,6 +428,11 @@ Decisions:
   on top; the newest and the unread ones are open, older ones folded to a line (sender, start,
   date) and open with a click. The user's own replies from "Sent" are part of it, marked "Sent".
   Opening marks the whole conversation read; the star goes on its newest message.
+- **Writing:** in the reader column, like a reply in Gmail or Mimestream, with the list beside it.
+  "New mail" sits on top of the sidebar (`c`); the reader has reply, reply all and forward
+  (`r`, `a`, `f`). Opening another mail puts the draft aside; its conversation then offers
+  "Continue writing". Recipients as chips with suggestions from the cache, Cc/Bcc on request, a
+  plain toolbar (bold, italic, underline, lists, quote, link), `Ctrl+Enter` sends.
 - **HTML mail in dark mode:** hybrid. Simple mail without its own design follows dark mode (the
   app's colours and reading font); designed mail (own background or text colours) sits on a light
   page. Switchable per mail: simple mail onto the light page, designed mail into a dark view with
@@ -496,10 +502,16 @@ can consent without an admin. Paging beyond 5,000 cached messages per folder cam
 
 ### Phase 4: sending
 
-- SMTP per account, with password and XOAUTH2
-- New message, reply, reply all, forward
-- Drafts saved locally (later also in the server's drafts folder)
-- Sent mail stored in the sent folder where the provider does not do it (Gmail does)
+- SMTP per account, with password and XOAUTH2 — done (`lettre`, TLS like IMAP, the client greets
+  as `[127.0.0.1]`). The outgoing server is suggested from the incoming one (known providers,
+  otherwise `smtp.` for `imap.` or the same host, port 465); a separate SMTP password is possible.
+- New message, reply, reply all, forward — done. Written in the reader column with a formatted
+  editor (TipTap, bundled); sent as HTML plus a plain-text version made from the editor's
+  document. Replies get In-Reply-To and References, follow Reply-To and quote the text below an
+  empty line; Bcc goes to the server but only into the copy for Sent.
+- Sent mail in Sent where the provider does not do it — done: a few seconds after sending the app
+  looks for the Message-ID in Sent and only then files the copy (`APPEND`, read).
+- Drafts kept while the app runs — done; saved locally and in the server's drafts folder: next
 - Text and HTML signatures
 - Sending attachments
 
@@ -646,4 +658,10 @@ Phase 3:
 19. **Settings → Reading:** accounts in the unified inbox, inbox at start, mark-as-read delay,
     images always from a sender — done
 
-Next: phase 4, sending.
+Phase 4:
+
+20. **Sending:** SMTP with password and Microsoft sign-in, sender name, writing in the reader
+    column with formatting, reply, reply all, forward, Sent filled where the server does not, address
+    suggestions from the cache — done
+
+Next: drafts that survive a restart, then attachments and signatures.

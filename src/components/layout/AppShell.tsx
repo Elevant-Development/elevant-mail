@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { AccountDialog } from "@/components/accounts/AccountDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { WelcomeScreen } from "@/components/accounts/WelcomeScreen";
+import { Composer } from "@/components/compose/Composer";
 import { DeleteForeverDialog } from "@/components/mail/DeleteForeverDialog";
 import { MessageList } from "@/components/mail/MessageList";
 import { MessageReader } from "@/components/mail/MessageReader";
@@ -32,6 +33,8 @@ export function AppShell() {
   const firstStart = accounts !== undefined && accounts.length === 0;
   const selectedMessageId = useUiStore((s) => s.selectedMessageId);
   const selectMessage = useUiStore((s) => s.selectMessage);
+  const composing = useUiStore((s) => s.composeKey !== null);
+  const closeCompose = useUiStore((s) => s.closeCompose);
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
 
@@ -58,8 +61,14 @@ export function AppShell() {
           <>
             <Sidebar className={cn("shrink-0", sidebarWidth)} />
             <MessageList className={cn("shrink-0", listWidth, panel)} />
-            <MessageReader className={cn("flex-1", panel)} />
+            {composing ? (
+              <Composer className={cn("flex-1", panel)} />
+            ) : (
+              <MessageReader className={cn("flex-1", panel)} />
+            )}
           </>
+        ) : composing ? (
+          <Composer className={cn("flex-1", panel)} onBack={closeCompose} />
         ) : selectedMessageId ? (
           <MessageReader className={cn("flex-1", panel)} onBack={() => selectMessage(null)} />
         ) : (

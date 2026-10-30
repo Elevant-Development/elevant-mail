@@ -1,5 +1,5 @@
 //! A tiny IMAP server for tests: greeting, STARTTLS, LOGIN, LIST, CREATE, EXAMINE, UID SEARCH,
-//! UID FETCH, UID STORE, UID MOVE and COPY, EXPUNGE, IDLE
+//! UID FETCH, UID STORE, UID MOVE and COPY, EXPUNGE, IDLE, APPEND, NOOP
 //! and LOGOUT on one INBOX, with a throwaway certificate for "localhost". Tests change the
 //! mailbox between syncs and can read the commands the client sent.
 
@@ -75,7 +75,7 @@ impl TestMessage {
     }
 
     /// Whether it meets all criteria of a `UID SEARCH`, as far as this server knows them:
-    /// ALL, UNSEEN, FLAGGED, SINCE, TEXT and FROM, after an optional CHARSET.
+    /// ALL, UNSEEN, FLAGGED, SINCE, TEXT, FROM and HEADER, after an optional CHARSET.
     fn matches(&self, criteria: &[String]) -> bool {
         let text = String::from_utf8_lossy(&self.raw).to_lowercase();
         let from = text
@@ -97,6 +97,12 @@ impl TestMessage {
                 "SINCE" => day(&self.arrived) >= day(&value()),
                 "TEXT" => text.contains(&value()),
                 "FROM" => from.contains(&value()),
+                "HEADER" => {
+                    let name = format!("{}:", value());
+                    let wanted = value();
+                    text.lines()
+                        .any(|line| line.starts_with(&name) && line.contains(&wanted))
+                }
                 _ => false,
             };
             if !met {
@@ -296,7 +302,9 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
         if stream.read_line(&mut line).await? == 0 {
             return Ok(());
         }
-        // Literals ("{6+}" and the bytes on the next line) become quoted strings.
+        // Literals ("{6+}" and the bytes on the next line) become quoted strings; APPEND takes
+        // the bytes of the last one as they are.
+        let mut last_literal = Vec::new();
         while let Some(start) = line
             .trim_end()
             .ends_with('}')
@@ -317,6 +325,7 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
             line.push('"');
             line.push_str(&String::from_utf8_lossy(&literal));
             line.push('"');
+            last_literal = literal;
             let mut rest = String::new();
             stream.read_line(&mut rest).await?;
             line.push_str(&rest);
@@ -453,6 +462,17 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
                     mailbox.messages.len()
                 )
                 .into_bytes()
+            }
+            "NOOP" => format!("{tag} OK done\r\n").into_bytes(),
+            // Into the one mailbox, whichever folder is named.
+            "APPEND" => {
+                let mut mailbox = mailbox.lock().unwrap();
+                let uid = mailbox.messages.iter().map(|m| m.uid).max().unwrap_or(0) + 1;
+                let mut message = TestMessage::new(uid);
+                message.seen = arguments.contains("\\Seen");
+                message.raw = last_literal;
+                mailbox.messages.push(message);
+                format!("{tag} OK APPEND completed\r\n").into_bytes()
             }
             "LOGOUT" => {
                 stream

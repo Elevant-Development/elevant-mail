@@ -200,7 +200,12 @@ fn folder_account(conn: &Connection, folder_id: &str) -> Result<Option<String>> 
         .optional()?)
 }
 
-fn role_folder(conn: &Connection, account_id: &str, role: FolderRole) -> Result<Option<String>> {
+/// The account's folder with this role, if the server has one.
+pub fn role_folder(
+    conn: &Connection,
+    account_id: &str,
+    role: FolderRole,
+) -> Result<Option<String>> {
     Ok(conn
         .query_row(
             "SELECT id FROM folders WHERE account_id = ?1 AND role = ?2",

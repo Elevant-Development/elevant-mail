@@ -4,6 +4,7 @@ import { Avatar } from "@/components/common/Avatar";
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
 import { Button } from "@/components/ui/button";
+import { useCompose } from "@/hooks/use-compose";
 import { useMessageActions } from "@/hooks/use-message-actions";
 import { useNow } from "@/hooks/use-now";
 import { useResolvedMode } from "@/hooks/use-resolved-mode";
@@ -331,7 +332,15 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
   } = useConversation(selectedMessageId);
   const { data: folders = [] } = useFolders();
   const { setRead, setFlagged, archive, trash } = useMessageActions();
+  const { respond } = useCompose();
   const now = useNow();
+  // A reply or forward begun in this conversation and put aside.
+  const openDraft = useUiStore((s) => s.openDraft);
+  const waiting = useUiStore((s) =>
+    Object.values(s.drafts).find(
+      (draft) => draft.sourceId !== null && conversation.some((m) => m.id === draft.sourceId),
+    ),
+  );
 
   // The conversation's messages in the opened folder, newest first: what the buttons act on.
   // While a reply that just arrived loads, the conversation shown is the one before it.
@@ -467,6 +476,22 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
         {newest && (
           <div className="ml-auto flex items-center gap-1">
             <IconButton
+              label={t("reader.reply")}
+              icon={<Icon name="reply" />}
+              onClick={() => void respond(newest.id, "reply")}
+            />
+            <IconButton
+              label={t("reader.replyAll")}
+              icon={<Icon name="replyAll" />}
+              onClick={() => void respond(newest.id, "replyAll")}
+            />
+            <IconButton
+              label={t("reader.forward")}
+              icon={<Icon name="forward" />}
+              onClick={() => void respond(newest.id, "forward")}
+            />
+            <span aria-hidden className="mx-1 h-4 w-px bg-border" />
+            <IconButton
               label={anyUnread ? t("reader.markRead") : t("reader.markUnread")}
               icon={<Icon name={anyUnread ? "mailOpen" : "mail"} />}
               onClick={() => void setRead(ids, anyUnread)}
@@ -503,6 +528,17 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
           </div>
         )}
       </div>
+      {waiting && (
+        <div className="flex shrink-0 items-center gap-3 border-b bg-muted/40 px-4 py-2 text-sm">
+          <Icon name="compose" className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">
+            {t("compose.draftWaiting", { title: t(`compose.title.${waiting.mode}`) })}
+          </span>
+          <Button variant="outline" size="sm" onClick={() => openDraft(waiting)}>
+            {t("compose.draftResume")}
+          </Button>
+        </div>
+      )}
       {/* READER_ATTRIBUTE: lets the shortcuts tell when the focus is in the reader. Focusable,
           so Enter can move there and the keyboard scrolls the mail. */}
       <div

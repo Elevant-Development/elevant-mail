@@ -4,6 +4,7 @@ pub mod accounts;
 pub mod actions;
 pub mod app;
 pub mod attachments;
+pub mod compose;
 pub mod links;
 pub mod mailbox;
 pub mod sync;

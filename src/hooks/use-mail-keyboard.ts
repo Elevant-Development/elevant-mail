@@ -11,6 +11,7 @@ import {
   LIST_ATTRIBUTE,
   READER_ATTRIBUTE,
 } from "@/lib/keyboard";
+import { useCompose } from "@/hooks/use-compose";
 import { useMessageActions } from "@/hooks/use-message-actions";
 import { useVisibleMessages } from "@/queries/messages";
 import { useUiStore } from "@/stores/ui";
@@ -28,12 +29,14 @@ interface MailKeyboardOptions {
  * far as it is loaded. Enter opens the first mail
  * or moves the focus into the reader, Escape goes back one level (and finally clears a search).
  * On the selection: u toggles read, s the star, e archives, # and Delete delete, v moves; z takes
- * the last archiving, deleting or moving back. / jumps to the search field. F6 and Shift+F6
- * move between search field, folders, list and reader.
+ * the last archiving, deleting or moving back. c writes a new mail; r, a and f answer, answer
+ * all or forward the open one. / jumps to the search field. F6 and Shift+F6 move between search
+ * field, folders, list and reader.
  */
 export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
   const { data: messages = [] } = useVisibleMessages();
   const { setRead, setFlagged, archive, trash, undo } = useMessageActions();
+  const { compose, respond } = useCompose();
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (!enabled || event.defaultPrevented || event.altKey) return;
@@ -113,6 +116,18 @@ export function useMailKeyboard({ enabled, isWide }: MailKeyboardOptions) {
       case "z":
         event.preventDefault();
         return void undo();
+      case "c":
+        event.preventDefault();
+        return compose();
+      case "r":
+      case "a":
+      case "f": {
+        // On the open mail; the newest of its conversation is what the reader answers.
+        if (selectedMessageId === null || selectedIds.length > 1) return;
+        event.preventDefault();
+        const modes = { r: "reply", a: "replyAll", f: "forward" } as const;
+        return void respond(selectedMessageId, modes[event.key]);
+      }
       case "j":
       case "J":
         return move(1);

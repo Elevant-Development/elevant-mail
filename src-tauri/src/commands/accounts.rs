@@ -1,6 +1,6 @@
 use elevant_mail_core::accounts::{self, AccountChanges, AccountSettings, NewAccount};
 use elevant_mail_core::mail::presets::{self, SuggestedSettings};
-use elevant_mail_core::mail::settings::ImapSettings;
+use elevant_mail_core::mail::settings::{ImapSettings, SmtpSettings};
 use elevant_mail_core::model::Account;
 use elevant_mail_core::secrets::Secret;
 use elevant_mail_core::{Error, oauth};
@@ -67,6 +67,39 @@ pub async fn set_keep_days(
         &account_id,
         days,
     )?)
+}
+
+/// The name mail goes out under; empty takes the one from Sent again.
+#[tauri::command]
+pub async fn set_sender_name(
+    state: State<'_, AppState>,
+    account_id: String,
+    name: String,
+) -> Result<(), CommandError> {
+    Ok(accounts::set_sender_name(
+        &state.db.conn(),
+        &account_id,
+        &name,
+    )?)
+}
+
+/// New outgoing server settings, and a password where it differs from the IMAP one: signs in
+/// with them first and keeps the old ones if that fails.
+#[tauri::command]
+pub async fn change_smtp(
+    state: State<'_, AppState>,
+    account_id: String,
+    smtp: SmtpSettings,
+    password: Option<String>,
+) -> Result<(), CommandError> {
+    Ok(accounts::change_smtp(
+        &state.db,
+        state.secrets.as_ref(),
+        &account_id,
+        smtp,
+        password.map(Secret::new),
+    )
+    .await?)
 }
 
 /// Takes the account's inbox into the unified inbox or out of it.

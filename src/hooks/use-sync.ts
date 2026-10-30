@@ -100,6 +100,17 @@ export function useBackgroundSync() {
     for (const account of accounts ?? []) sync(account.id);
   });
 
+  // A sent mail is in Sent: a reply shows in its conversation.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const stop = api.onMailSent(() => {
+      for (const key of ["folders", "messages", "conversation", "search"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    });
+    return () => void stop.then((unlisten) => unlisten());
+  }, [queryClient]);
+
   useEffect(() => {
     if (usesMockData) return;
     const listening = api.onSyncProgress((progress) => {

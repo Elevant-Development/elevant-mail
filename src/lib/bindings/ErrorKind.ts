@@ -3,4 +3,4 @@
 /**
  * What went wrong, in categories the UI can translate.
  */
-export type ErrorKind = "storage" | "storageTooNew" | "keyringUnavailable" | "credentialMissing" | "invalidInput" | "serverNotFound" | "connectionFailed" | "timeout" | "certificateInvalid" | "authenticationFailed" | "oAuthRequired" | "serverError" | "accountExists" | "notFound" | "signInCancelled" | "signInFailed" | "consentRequired" | "signInExpired" | "differentAccount" | "actionRefused" | "fileWrite" | "internal";
+export type ErrorKind = "storage" | "storageTooNew" | "keyringUnavailable" | "credentialMissing" | "invalidInput" | "serverNotFound" | "connectionFailed" | "timeout" | "certificateInvalid" | "authenticationFailed" | "oAuthRequired" | "serverError" | "accountExists" | "notFound" | "signInCancelled" | "signInFailed" | "consentRequired" | "signInExpired" | "differentAccount" | "actionRefused" | "fileWrite" | "recipientRejected" | "messageRejected" | "internal";

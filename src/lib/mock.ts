@@ -48,6 +48,8 @@ const accountSettings: Record<string, AccountSettings> = {
   "acc-private": {
     signIn: "password",
     imap: { host: "imap.example.org", port: 993, security: "tls", username: "alex@example.org" },
+    smtp: { host: "smtp.example.org", port: 465, security: "tls", username: "alex@example.org" },
+    senderName: "Alex Berger",
     keepDays: 90,
   },
   "acc-work": {
@@ -58,6 +60,13 @@ const accountSettings: Record<string, AccountSettings> = {
       security: "tls",
       username: "alex.berger@example.com",
     },
+    smtp: {
+      host: "smtp.office365.com",
+      port: 587,
+      security: "startTls",
+      username: "alex.berger@example.com",
+    },
+    senderName: "Alex Berger",
     keepDays: 365,
   },
 };
@@ -588,7 +597,11 @@ const allMockMessages = [...mockMessages, ...archiveFiller(1500), ...serverOnlyM
 
 function buildMessages(): Message[] {
   const now = Date.now();
-  return allMockMessages.map((m, index) => ({
+  return allMockMessages.map((m, index) => mockMessage(m, index, now));
+}
+
+function mockMessage(m: MockMessage, index: number, now: number): Message {
+  return {
     id: `msg-${index + 1}`,
     accountId: m.account,
     folderId: folderId(m.account, m.role),
@@ -596,6 +609,7 @@ function buildMessages(): Message[] {
     from: m.from,
     to: m.to ?? [me(m.account)],
     cc: m.cc ?? [],
+    replyTo: [],
     dateSent: now - m.ago,
     snippet: m.body.replace(/\s+/g, " ").slice(0, 160),
     isRead: m.read ?? false,
@@ -615,7 +629,7 @@ function buildMessages(): Message[] {
       size: file.size,
       canOpen: !/\.(exe|bat|cmd|ps1|sh|desktop|appimage|docm|xlsm)$/i.test(file.name),
     })),
-  }));
+  };
 }
 
 const messages = buildMessages();
@@ -836,6 +850,9 @@ async function mockBrowserSignIn() {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Who listens for sent mail reaching Sent (onMailSent). */
+const mailSentHandlers = new Set<(accountId: string) => void>();
+
 /** Senders whose mail always shows its external images (image_senders). */
 const imageSenders = new Set<string>();
 
@@ -884,7 +901,13 @@ export const mockBackend: Backend = {
       inUnifiedInbox: true,
     };
     accounts = [...accounts, added];
-    accountSettings[added.id] = { signIn: "password", imap: account.imap, keepDays: 90 };
+    accountSettings[added.id] = {
+      signIn: "password",
+      imap: account.imap,
+      smtp: { ...account.imap, host: account.imap.host.replace(/^imap\./, "smtp."), port: 465 },
+      senderName: "",
+      keepDays: 90,
+    };
     folders = [
       ...folders,
       ...folderRoles.map(({ role, name }) => roleFolder(added.id, role, name)),
@@ -894,7 +917,13 @@ export const mockBackend: Backend = {
   addMicrosoftAccount: async (account) => {
     await mockBrowserSignIn();
     const added = await mockBackend.addAccount(account, "");
-    accountSettings[added.id] = { signIn: "microsoft", imap: account.imap, keepDays: 90 };
+    accountSettings[added.id] = {
+      signIn: "microsoft",
+      imap: account.imap,
+      smtp: { ...account.imap, host: "smtp.office365.com", port: 587, security: "startTls" },
+      senderName: "",
+      keepDays: 90,
+    };
     return added;
   },
   cancelSignIn: async () => cancelMockSignIn(),
@@ -937,6 +966,64 @@ export const mockBackend: Backend = {
   },
   signInAgain: async () => {
     await mockBrowserSignIn();
+  },
+  changeSmtp: async (accountId, smtp, password) => {
+    await wait(700);
+    if (password === "falsch") {
+      throw { kind: "authenticationFailed", hint: "checkCredentials" };
+    }
+    const current = accountSettings[accountId];
+    if (!current) throw { kind: "notFound", hint: null };
+    accountSettings[accountId] = { ...current, smtp };
+  },
+  setSenderName: async (accountId, name) => {
+    const current = accountSettings[accountId];
+    if (!current) throw { kind: "notFound", hint: null };
+    accountSettings[accountId] = { ...current, senderName: name.trim() };
+  },
+  sendMessage: async (mail) => {
+    await wait(800);
+    const recipients = [...mail.to, ...mail.cc, ...mail.bcc];
+    if (recipients.length === 0) throw { kind: "invalidInput", hint: "addRecipient" };
+    if (recipients.some((r) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.address))) {
+      throw { kind: "invalidInput", hint: "checkRecipients" };
+    }
+    if (recipients.some((r) => r.address.toLowerCase().startsWith("nobody@"))) {
+      throw { kind: "recipientRejected", hint: "checkRecipients" };
+    }
+    const source = messages.find((m) => m.id === mail.inReplyTo);
+    const sample: MockMessage = {
+      account: mail.accountId,
+      role: "sent",
+      from: me(mail.accountId),
+      to: mail.to,
+      cc: mail.cc,
+      subject: mail.subject,
+      ago: 0,
+      read: true,
+      body: mail.text,
+      thread: source ? threadOf(source) : undefined,
+    };
+    allMockMessages.push(sample);
+    messages.push(mockMessage(sample, allMockMessages.length - 1, Date.now()));
+    recount();
+    // Like the backend: filed in Sent and synced a moment later.
+    window.setTimeout(() => mailSentHandlers.forEach((handler) => handler(mail.accountId)), 300);
+  },
+  suggestAddresses: async (query) => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return [];
+    const own = new Set(accounts.map((a) => a.emailAddress.toLowerCase()));
+    const found = new Map<string, Address>();
+    for (const m of [...messages].reverse()) {
+      const people = m.folderId.endsWith(":sent") ? [...m.to, ...m.cc] : [m.from];
+      for (const person of people) {
+        const key = person.address.toLowerCase();
+        const text = `${person.name ?? ""} ${key}`.toLowerCase();
+        if (!own.has(key) && !found.has(key) && text.includes(needle)) found.set(key, person);
+      }
+    }
+    return [...found.values()].slice(0, 8);
   },
   listFolders: async () => folders,
   listMessages: async (mailboxId, threads, filters, keep, after) => {
@@ -1097,4 +1184,8 @@ export const mockBackend: Backend = {
   loadOlder: async () => ({ added: 0, updated: 0, removed: 0, newMail: [] }),
   onSyncProgress: async () => () => undefined,
   onInboxChanged: async () => () => undefined,
+  onMailSent: async (handler) => {
+    mailSentHandlers.add(handler);
+    return () => mailSentHandlers.delete(handler);
+  },
 };

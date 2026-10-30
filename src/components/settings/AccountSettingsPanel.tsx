@@ -22,6 +22,8 @@ import {
 } from "@/queries/accounts";
 import { useSyncStore } from "@/stores/sync";
 
+import { SendingSettings } from "./SendingSettings";
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="grid gap-3 border-t pt-6">
@@ -74,6 +76,10 @@ export function AccountSettingsPanel({ account }: { account: Account }) {
         ) : (
           <Icon name="spinner" className="size-4 animate-spin text-muted-foreground" />
         )}
+      </Section>
+
+      <Section title={t("settings.account.sending")}>
+        {settings && <SendingSettings account={account} settings={settings} />}
       </Section>
 
       <Section title={t("settings.account.offline")}>

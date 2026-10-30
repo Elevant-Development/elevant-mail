@@ -4,6 +4,7 @@ import { AccountList } from "@/components/accounts/AccountList";
 import { RemoveAccountDialog } from "@/components/accounts/RemoveAccountDialog";
 import { Icon } from "@/components/common/Icon";
 import { Button } from "@/components/ui/button";
+import { useCompose } from "@/hooks/use-compose";
 import { useSyncActions } from "@/hooks/use-sync";
 import { useTreeFocus } from "@/hooks/use-tree-focus";
 import { unifiedInboxes, unifiedInboxLabel } from "@/lib/folders";
@@ -28,6 +29,7 @@ export function Sidebar({ className }: SidebarProps) {
   const setAccountDialogOpen = useUiStore((s) => s.setAccountDialogOpen);
   const [accountToRemove, setAccountToRemove] = useState<Account | null>(null);
   const { syncFolder } = useSyncActions();
+  const { compose } = useCompose();
   const treeRef = useRef<HTMLDivElement>(null);
   useTreeFocus(treeRef);
 
@@ -45,6 +47,12 @@ export function Sidebar({ className }: SidebarProps) {
 
   return (
     <nav className={cn("flex flex-col bg-sidebar text-sidebar-foreground", className)}>
+      <div className="px-2 pt-2">
+        <Button className="w-full justify-start" disabled={accounts.length === 0} onClick={compose}>
+          <Icon name="compose" />
+          {t("compose.new")}
+        </Button>
+      </div>
       <div
         ref={treeRef}
         // FOLDER_TREE_ATTRIBUTE and FOCUS_GROUP_ATTRIBUTE: one tab stop, F6 comes here.

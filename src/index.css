@@ -102,3 +102,29 @@
     background-clip: padding-box;
   }
 }
+
+/* The composer's text (TipTap): the reading font and spacing, quotes and lists like in mail. */
+@layer components {
+  .compose-editor {
+    @apply text-[15px] leading-relaxed;
+  }
+  .compose-editor p {
+    @apply my-0 min-h-[1lh];
+  }
+  .compose-editor ul {
+    @apply my-1 list-disc pl-6;
+  }
+  .compose-editor ol {
+    @apply my-1 list-decimal pl-6;
+  }
+  .compose-editor blockquote {
+    @apply my-2 border-l-2 border-border pl-3 text-muted-foreground;
+  }
+  .compose-editor a {
+    @apply text-primary underline underline-offset-2;
+  }
+  .compose-editor p.is-editor-empty:first-child::before {
+    @apply pointer-events-none float-left h-0 text-muted-foreground;
+    content: attr(data-placeholder);
+  }
+}

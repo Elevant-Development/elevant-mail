@@ -121,6 +121,21 @@ pub enum Error {
 
     #[error("could not hand it to the system: {0}")]
     OpenExternal(std::io::Error),
+
+    #[error("the outgoing server rejected the login")]
+    SmtpAuthenticationFailed { provider: Option<Provider> },
+
+    #[error("the mail has no recipient")]
+    NoRecipients,
+
+    #[error("not a valid recipient address: {0}")]
+    InvalidRecipient(String),
+
+    #[error("the outgoing server refused a recipient: {0}")]
+    RecipientRejected(String),
+
+    #[error("the outgoing server refused the mail: {0}")]
+    MessageRejected(String),
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -154,6 +169,10 @@ pub enum ErrorKind {
     ActionRefused,
     /// A file chosen by the user could not be written.
     FileWrite,
+    /// The outgoing server did not take a recipient; the mail was not sent.
+    RecipientRejected,
+    /// The outgoing server did not take the mail (too large, taken for spam, …).
+    MessageRejected,
     Internal,
 }
 
@@ -190,6 +209,11 @@ pub enum Hint {
     SignInAsAccount,
     /// Microsoft 365 switches IMAP off per mailbox (admin center → user → mail apps).
     EnableImapMicrosoft,
+    /// Microsoft 365 switches sending from mail apps (SMTP AUTH) off per mailbox or tenant.
+    EnableSmtpMicrosoft,
+    /// A typo in an address, or a recipient the server does not know.
+    CheckRecipients,
+    AddRecipient,
 }
 
 impl Error {
@@ -204,14 +228,20 @@ impl Error {
             | Error::InvalidLink
             | Error::InvalidColor
             | Error::NotOpenable
-            | Error::WrongSignInMethod => ErrorKind::InvalidInput,
+            | Error::WrongSignInMethod
+            | Error::NoRecipients
+            | Error::InvalidRecipient(_) => ErrorKind::InvalidInput,
             Error::HostNotFound => ErrorKind::ServerNotFound,
             Error::ConnectionFailed(_) | Error::TlsFailed(_) | Error::StartTlsUnsupported => {
                 ErrorKind::ConnectionFailed
             }
             Error::Timeout => ErrorKind::Timeout,
             Error::CertificateInvalid(_) => ErrorKind::CertificateInvalid,
-            Error::AuthenticationFailed { .. } => ErrorKind::AuthenticationFailed,
+            Error::AuthenticationFailed { .. } | Error::SmtpAuthenticationFailed { .. } => {
+                ErrorKind::AuthenticationFailed
+            }
+            Error::RecipientRejected(_) => ErrorKind::RecipientRejected,
+            Error::MessageRejected(_) => ErrorKind::MessageRejected,
             Error::OAuthRequired { .. } => ErrorKind::OAuthRequired,
             Error::SignInCancelled => ErrorKind::SignInCancelled,
             Error::SignInFailed(_) => ErrorKind::SignInFailed,
@@ -250,6 +280,14 @@ impl Error {
                 Some(Provider::Microsoft) => Hint::EnableImapMicrosoft,
                 None => Hint::CheckCredentials,
             }),
+            Error::SmtpAuthenticationFailed { provider } => Some(match provider {
+                Some(Provider::Gmail | Provider::Icloud | Provider::Yahoo) => Hint::UseAppPassword,
+                Some(Provider::WebDe | Provider::Gmx) => Hint::EnableImapAccess,
+                Some(Provider::Microsoft) => Hint::EnableSmtpMicrosoft,
+                None => Hint::CheckCredentials,
+            }),
+            Error::NoRecipients => Some(Hint::AddRecipient),
+            Error::InvalidRecipient(_) | Error::RecipientRejected(_) => Some(Hint::CheckRecipients),
             Error::OAuthRequired { .. } => Some(Hint::SignInWithMicrosoft),
             Error::ConsentRequired => Some(Hint::AskAdminForConsent),
             Error::SignInExpired => Some(Hint::SignInAgain),
@@ -271,6 +309,7 @@ impl Error {
             | Error::NotOpenable
             | Error::WrongSignInMethod
             | Error::ActionRefused
+            | Error::MessageRejected(_)
             | Error::OpenExternal(_) => None,
         }
     }

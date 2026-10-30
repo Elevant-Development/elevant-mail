@@ -39,6 +39,17 @@ pub struct ImapSettings {
     pub username: String,
 }
 
+/// The outgoing server. Like IMAP, only TLS from the start (465) or STARTTLS (587).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SmtpSettings {
+    pub host: String,
+    pub port: u16,
+    pub security: Security,
+    pub username: String,
+}
+
 /// Providers with known quirks, used for presets and for helpful error hints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

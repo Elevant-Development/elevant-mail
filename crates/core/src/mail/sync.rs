@@ -607,9 +607,9 @@ fn store_message(
         "INSERT INTO messages (id, account_id, folder_id, uid, message_id, in_reply_to,
            references_header, subject, from_name, from_address, to_addresses, cc_addresses,
            date_sent, date_received, size_bytes, snippet, is_read, is_flagged, has_attachments,
-           body_state, body_text, body_html, fetched_at, by_search)
+           body_state, body_text, body_html, fetched_at, by_search, reply_to)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-           ?19, ?20, ?21, ?22, ?23, ?24)
+           ?19, ?20, ?21, ?22, ?23, ?24, ?25)
          ON CONFLICT (folder_id, uid) DO UPDATE
            SET is_read = excluded.is_read, is_flagged = excluded.is_flagged,
              by_search = min(by_search, excluded.by_search)
@@ -639,6 +639,9 @@ fn store_message(
             message.body_html,
             now_millis(),
             by_search,
+            (!message.reply_to.is_empty())
+                .then(|| to_json(&message.reply_to))
+                .flatten(),
         ],
         |row| row.get(0),
     )?;

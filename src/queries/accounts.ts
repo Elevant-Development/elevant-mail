@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { type AccountChanges, api, type ImapSettings, type NewAccount } from "@/lib/tauri";
+import {
+  type AccountChanges,
+  api,
+  type ImapSettings,
+  type NewAccount,
+  type SmtpSettings,
+} from "@/lib/tauri";
 import { useSyncStore } from "@/stores/sync";
 
 export function useAccounts() {
@@ -65,6 +71,35 @@ export function useSetInUnifiedInbox() {
         queryClient.invalidateQueries({ queryKey: ["accounts"] }),
         queryClient.invalidateQueries({ queryKey: ["messages"] }),
       ]),
+  });
+}
+
+export function useSetSenderName() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, name }: { accountId: string; name: string }) =>
+      api.setSenderName(accountId, name),
+    onSuccess: (_, { accountId }) =>
+      queryClient.invalidateQueries({ queryKey: ["account-settings", accountId] }),
+  });
+}
+
+/** The outgoing server; only stored after a login with it worked. */
+export function useChangeSmtp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    /** `password: null` signs in with the stored one. */
+    mutationFn: ({
+      accountId,
+      smtp,
+      password,
+    }: {
+      accountId: string;
+      smtp: SmtpSettings;
+      password: string | null;
+    }) => api.changeSmtp(accountId, smtp, password),
+    onSuccess: (_, { accountId }) =>
+      queryClient.invalidateQueries({ queryKey: ["account-settings", accountId] }),
   });
 }
 

@@ -17,6 +17,8 @@ pub struct ParsedMessage {
     pub from: Option<Address>,
     pub to: Vec<Address>,
     pub cc: Vec<Address>,
+    /// Where replies go instead of the sender, if the mail says so.
+    pub reply_to: Vec<Address>,
     /// From the Date header, Unix milliseconds.
     pub date_sent: Option<i64>,
     pub snippet: String,
@@ -199,6 +201,7 @@ fn parse_headers_of(message: &mail_parser::Message<'_>) -> ParsedMessage {
             .and_then(mailbox),
         to: list(message.to()),
         cc: list(message.cc()),
+        reply_to: list(message.reply_to()),
         date_sent: message.date().map(|date| date.to_timestamp() * 1000),
         ..ParsedMessage::default()
     }
