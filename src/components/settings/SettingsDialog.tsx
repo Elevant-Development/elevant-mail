@@ -13,6 +13,7 @@ import { useUiStore } from "@/stores/ui";
 
 import { AccountSettingsPanel } from "./AccountSettingsPanel";
 import { NotificationSettings } from "./NotificationSettings";
+import { ReadingSettings } from "./ReadingSettings";
 
 function NavGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -109,6 +110,13 @@ export function SettingsDialog() {
               <span className="truncate">{t("appearance.open")}</span>
             </NavItem>
             <NavItem
+              selected={page?.section === "reading"}
+              onSelect={() => openSettings({ section: "reading" })}
+            >
+              <Icon name="mailOpen" />
+              <span className="truncate">{t("settings.reading")}</span>
+            </NavItem>
+            <NavItem
               selected={page?.section === "notifications"}
               onSelect={() => openSettings({ section: "notifications" })}
             >
@@ -123,6 +131,11 @@ export function SettingsDialog() {
             <div className="grid max-w-md gap-6">
               <h2 className="text-base font-medium">{t("appearance.open")}</h2>
               <AppearanceSettings />
+            </div>
+          ) : page?.section === "reading" ? (
+            <div className="grid max-w-md gap-6">
+              <h2 className="text-base font-medium">{t("settings.reading")}</h2>
+              <ReadingSettings />
             </div>
           ) : page?.section === "notifications" ? (
             <div className="grid max-w-md gap-6">

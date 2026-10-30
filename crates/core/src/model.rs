@@ -54,6 +54,8 @@ pub struct Account {
     pub email_address: String,
     /// CSS colour used to tell accounts apart.
     pub color: String,
+    /// Its inbox is part of the unified inbox.
+    pub in_unified_inbox: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -168,6 +170,8 @@ pub struct Message {
     pub html_styled: bool,
     /// External images in the HTML. They are left out unless the request allowed them.
     pub remote_image_count: u32,
+    /// The HTML shows them: allowed for this mail, or always for its sender.
+    pub remote_images_loaded: bool,
     /// Known once the full body is cached.
     pub attachments: Vec<Attachment>,
 }

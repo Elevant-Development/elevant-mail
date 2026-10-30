@@ -27,7 +27,8 @@ export type Density = "comfortable" | "compact";
 export type SettingsPage =
   | { section: "accounts"; accountId: string | null }
   | { section: "appearance" }
-  | { section: "notifications" };
+  | { section: "notifications" }
+  | { section: "reading" };
 
 interface UiState {
   mode: Mode;
@@ -42,6 +43,10 @@ interface UiState {
   notifications: boolean;
   /** Sender and subject in it; off, it only names the account. */
   notificationPreview: boolean;
+  /** The account whose inbox opens at start; null: all inboxes. */
+  startAccountId: string | null;
+  /** How long an opened mail stays open before it counts as read, in ms; null: never by itself. */
+  markReadDelay: number | null;
   /** The list shows conversations; off, every message is a row. */
   threads: boolean;
   /** Folder id or UNIFIED_INBOX. */
@@ -87,6 +92,8 @@ interface UiState {
   setLanguage: (language: LanguageSetting) => void;
   setNotifications: (on: boolean) => void;
   setNotificationPreview: (on: boolean) => void;
+  setStartAccount: (accountId: string | null) => void;
+  setMarkReadDelay: (delay: number | null) => void;
   setThreads: (on: boolean) => void;
   selectMailbox: (mailboxId: string) => void;
   selectMessage: (messageId: string | null) => void;
@@ -129,6 +136,8 @@ export const useUiStore = create<UiState>()(
       language: "system",
       notifications: true,
       notificationPreview: true,
+      startAccountId: null,
+      markReadDelay: 1000,
       threads: true,
       selectedMailboxId: UNIFIED_INBOX,
       selectedMessageId: null,
@@ -153,6 +162,8 @@ export const useUiStore = create<UiState>()(
       setDensity: (density) => set({ density }),
       setNotifications: (notifications) => set({ notifications }),
       setNotificationPreview: (notificationPreview) => set({ notificationPreview }),
+      setStartAccount: (startAccountId) => set({ startAccountId }),
+      setMarkReadDelay: (markReadDelay) => set({ markReadDelay }),
       setThreads: (threads) => set({ threads }),
       setLanguage: (language) => {
         set({ language });
@@ -281,6 +292,8 @@ export const useUiStore = create<UiState>()(
         language: state.language,
         notifications: state.notifications,
         notificationPreview: state.notificationPreview,
+        startAccountId: state.startAccountId,
+        markReadDelay: state.markReadDelay,
         threads: state.threads,
         collapsed: state.collapsed,
       }),

@@ -15,6 +15,7 @@ import { canArchive, deletesForGood } from "@/lib/moves";
 import { type Address, api, type MessageSummary } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useFolders } from "@/queries/folders";
+import { useSetImageSender } from "@/queries/image-senders";
 import { useConversation, useFullBody, useMessage } from "@/queries/messages";
 import { useUiStore } from "@/stores/ui";
 
@@ -79,17 +80,30 @@ function BodyError({ error, onRetry }: { error: unknown; onRetry: () => void }) 
   );
 }
 
-/** How long a mail has to stay open before it counts as read. */
-const MARK_READ_DELAY_MS = 1000;
+interface RemoteImagesBarProps {
+  count: number;
+  sender: string;
+  /** This mail's images, for the session. */
+  onLoad: () => void;
+  /** All mail from the sender, from now on (settings: Reading). */
+  onAlways: () => void;
+}
 
-function RemoteImagesBar({ count, onLoad }: { count: number; onLoad: () => void }) {
+function RemoteImagesBar({ count, sender, onLoad, onAlways }: RemoteImagesBarProps) {
   return (
-    <div className="mb-4 flex items-center gap-3 rounded-xl border bg-muted/40 px-3 py-2 font-sans text-xs text-muted-foreground">
+    <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-muted/40 px-3 py-2 font-sans text-xs text-muted-foreground">
       <Icon name="imageOff" className="size-4 shrink-0" />
-      <p className="min-w-0 flex-1">{t("reader.remoteImages", { count })}</p>
-      <Button variant="outline" size="sm" className="shrink-0" onClick={onLoad}>
-        {t("reader.remoteImages.load")}
-      </Button>
+      <p className="min-w-48 flex-1">{t("reader.remoteImages", { count })}</p>
+      <div className="flex min-w-0 gap-2">
+        <Button variant="outline" size="sm" className="shrink-0" onClick={onLoad}>
+          {t("reader.remoteImages.load")}
+        </Button>
+        {sender && (
+          <Button variant="ghost" size="sm" className="min-w-0" onClick={onAlways}>
+            <span className="truncate">{t("reader.remoteImages.always", { address: sender })}</span>
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -131,8 +145,8 @@ function MailView({
 }: MailViewProps) {
   const { data: message, isError } = useMessage(summary.id);
   const fullBody = useFullBody(message);
-  const imagesAllowed = useUiStore((s) => s.remoteImagesAllowed[summary.id] ?? false);
   const allowRemoteImages = useUiStore((s) => s.allowRemoteImages);
+  const setImageSender = useSetImageSender();
   const setSearchQuery = useUiStore((s) => s.setSearchQuery);
   const clearListFilters = useUiStore((s) => s.clearListFilters);
   const dark = useResolvedMode() === "dark";
@@ -184,10 +198,12 @@ function MailView({
   } else if (showsHtml && message.bodyHtml !== null) {
     body = (
       <>
-        {message.remoteImageCount > 0 && !imagesAllowed && (
+        {message.remoteImageCount > 0 && !message.remoteImagesLoaded && (
           <RemoteImagesBar
             count={message.remoteImageCount}
+            sender={message.from.address}
             onLoad={() => allowRemoteImages(message.id)}
+            onAlways={() => setImageSender.mutate({ address: message.from.address, allowed: true })}
           />
         )}
         <SafeHtmlMail
@@ -327,8 +343,8 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
   const anyFlagged = own.some((m) => m.isFlagged);
   const ids = selectedMessageId ? [selectedMessageId] : [];
 
-  // Opening marks as read after a moment, so moving through the list with j/k does not. Once
-  // per opening: marking it unread again (u) keeps it unread.
+  // Opening marks as read after a moment (settings: Reading), so moving through the list with j/k
+  // does not. Once per opening: marking it unread again (u) keeps it unread.
   const unreadId = anyUnread && !several && !isPlaceholderData ? selectedMessageId : null;
   const autoMarked = useRef<string | null>(null);
   const markRead = useEffectEvent((rowId: string) => {
@@ -338,11 +354,12 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
   useEffect(() => {
     if (autoMarked.current !== selectedMessageId) autoMarked.current = null;
   }, [selectedMessageId]);
+  const delay = useUiStore((s) => s.markReadDelay);
   useEffect(() => {
-    if (unreadId === null || autoMarked.current === unreadId) return;
-    const timer = window.setTimeout(() => markRead(unreadId), MARK_READ_DELAY_MS);
+    if (unreadId === null || delay === null || autoMarked.current === unreadId) return;
+    const timer = window.setTimeout(() => markRead(unreadId), delay);
     return () => window.clearTimeout(timer);
-  }, [unreadId]);
+  }, [unreadId, delay]);
 
   // Open or folded, per message and session. Seen for the first time, the newest and the unread
   // ones open; reading them later does not fold them away.

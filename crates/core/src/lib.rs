@@ -7,6 +7,7 @@ pub mod attachments;
 pub mod db;
 mod error;
 pub mod ids;
+pub mod image_senders;
 pub mod mail;
 pub mod mailbox;
 pub mod model;

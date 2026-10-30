@@ -54,6 +54,20 @@ export function useSetKeepDays() {
   });
 }
 
+/** The unified inbox, its count and its title follow at once. */
+export function useSetInUnifiedInbox() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, included }: { accountId: string; included: boolean }) =>
+      api.setInUnifiedInbox(accountId, included),
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["accounts"] }),
+        queryClient.invalidateQueries({ queryKey: ["messages"] }),
+      ]),
+  });
+}
+
 export function useUpdateAccount() {
   const queryClient = useQueryClient();
   return useMutation({

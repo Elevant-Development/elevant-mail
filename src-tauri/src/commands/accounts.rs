@@ -69,6 +69,20 @@ pub async fn set_keep_days(
     )?)
 }
 
+/// Takes the account's inbox into the unified inbox or out of it.
+#[tauri::command]
+pub async fn set_in_unified_inbox(
+    state: State<'_, AppState>,
+    account_id: String,
+    included: bool,
+) -> Result<(), CommandError> {
+    Ok(accounts::set_in_unified_inbox(
+        &state.db.conn(),
+        &account_id,
+        included,
+    )?)
+}
+
 /// New server settings or a new password: logs in with them first and keeps the old ones if that
 /// fails. Without a password the stored one is used.
 #[tauri::command]

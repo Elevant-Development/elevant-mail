@@ -4,4 +4,8 @@ export type Account = { id: string, displayName: string, emailAddress: string,
 /**
  * CSS colour used to tell accounts apart.
  */
-color: string, };
+color: string, 
+/**
+ * Its inbox is part of the unified inbox.
+ */
+inUnifiedInbox: boolean, };

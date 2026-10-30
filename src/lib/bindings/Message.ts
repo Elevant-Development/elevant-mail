@@ -20,6 +20,10 @@ htmlStyled: boolean,
  */
 remoteImageCount: number, 
 /**
+ * The HTML shows them: allowed for this mail, or always for its sender.
+ */
+remoteImagesLoaded: boolean, 
+/**
  * Known once the full body is cached.
  */
 attachments: Array<Attachment>, id: string, accountId: string, folderId: string, subject: string | null, from: Address, 

@@ -1,6 +1,5 @@
-import type { ReactNode } from "react";
-
 import { Icon, type IconName } from "@/components/common/Icon";
+import { Segmented } from "@/components/common/Segmented";
 import {
   type Appearance,
   contrasts,
@@ -22,45 +21,6 @@ const modes: { value: Mode; icon: IconName }[] = [
 ];
 
 const densities: Density[] = ["comfortable", "compact"];
-
-interface SegmentedProps<T extends string> {
-  label: string;
-  value: T;
-  options: { value: T; label: string; icon?: ReactNode }[];
-  onChange: (value: T) => void;
-}
-
-function Segmented<T extends string>({ label, value, options, onChange }: SegmentedProps<T>) {
-  return (
-    <div>
-      <h3 className="mb-2 text-xs font-medium text-muted-foreground">{label}</h3>
-      <div
-        role="radiogroup"
-        aria-label={label}
-        className="grid auto-cols-fr grid-flow-col gap-1 rounded-lg bg-muted p-1"
-      >
-        {options.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={value === option.value}
-            onClick={() => onChange(option.value)}
-            className={cn(
-              "flex h-7 items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors [&_svg]:size-3.5",
-              value === option.value
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {option.icon}
-            {option.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 /** Miniature of the window: canvas, sidebar with accent, list with selection, reader. */
 function ThemePreview({ theme, appearance }: { theme: Theme; appearance: Appearance }) {

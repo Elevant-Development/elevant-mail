@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useNow } from "@/hooks/use-now";
 import { useSyncActions } from "@/hooks/use-sync";
 import { isSignInError } from "@/lib/errors";
-import { mailboxTitle } from "@/lib/folders";
+import { mailboxTitle, unifiedInboxes } from "@/lib/folders";
 import { t } from "@/lib/i18n";
 import { focusListItem } from "@/lib/keyboard";
 import { type Conversation, type SyncProgress, UNIFIED_INBOX } from "@/lib/tauri";
@@ -241,13 +241,15 @@ export function MessageList({ className }: MessageListProps) {
 
   const title = searching ? t("search.title") : mailboxTitle(mailboxId, folders, accounts);
   // From the folders: the list may not have loaded all of it.
-  const unreadCount = (folder ? [folder] : folders.filter((f) => f.role === "inbox")).reduce(
+  const unreadCount = (folder ? [folder] : unifiedInboxes(folders, accounts)).reduce(
     (sum, f) => sum + f.unreadCount,
     0,
   );
   const accountColors = new Map(accounts.map((a) => [a.id, a.color]));
-  // Search results span all accounts, like the unified inbox.
-  const showAccountColor = (searching || mailboxId === UNIFIED_INBOX) && accounts.length > 1;
+  // Search results span all accounts, the unified inbox those in it.
+  const showAccountColor = searching
+    ? accounts.length > 1
+    : mailboxId === UNIFIED_INBOX && accounts.filter((a) => a.inUnifiedInbox).length > 1;
   const listedCount = messages.reduce((sum, row) => sum + row.messageIds.length, 0);
   // Older mail on the server, once the list shows all that is cached; not while filtering,
   // when the list shows less than is cached.

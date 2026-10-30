@@ -230,9 +230,9 @@ fn rows_sql(threads: bool, filters: &[ListFilter], after: bool) -> String {
     )
 }
 
-/// A page of the conversations of a folder, or of all inboxes for [`UNIFIED_INBOX`], newest
-/// first. A row is a conversation's newest message in the folder; the page brings along the rest
-/// of each conversation, however old.
+/// A page of the conversations of a folder, or of the unified inbox ([`UNIFIED_INBOX`]: the
+/// inboxes of the accounts in it), newest first. A row is a conversation's newest message in the
+/// folder; the page brings along the rest of each conversation, however old.
 pub fn list_messages(
     conn: &Connection,
     mailbox_id: &str,
@@ -245,9 +245,12 @@ pub fn list_messages(
         after,
     } = options;
     let folders: Vec<String> = if mailbox_id == UNIFIED_INBOX {
-        conn.prepare_cached("SELECT id FROM folders WHERE role = 'inbox'")?
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<_>>()?
+        conn.prepare_cached(
+            "SELECT f.id FROM folders f JOIN accounts a ON a.id = f.account_id
+             WHERE f.role = 'inbox' AND a.in_unified_inbox = 1",
+        )?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?
     } else {
         vec![mailbox_id.to_owned()]
     };
@@ -656,6 +659,7 @@ pub fn get_message(
                 body_html: None,
                 html_styled: false,
                 remote_image_count: 0,
+                remote_images_loaded: false,
                 attachments: Vec::new(),
             };
             Ok((message, row.get::<_, Option<String>>(15)?))
@@ -672,6 +676,7 @@ pub fn get_message(
         message.body_html = Some(safe.html);
         message.html_styled = safe.styled;
         message.remote_image_count = u32::try_from(safe.remote_images.len()).unwrap_or(u32::MAX);
+        message.remote_images_loaded = view.remote_images;
         remote_images = safe.remote_images;
     }
     Ok(Some(OpenedMessage {
@@ -1058,6 +1063,12 @@ mod tests {
         assert_eq!(listed.len(), 800);
         assert_eq!(listed[..4], ["w400", "m400", "w399", "m399"]);
         assert_eq!(listed[listed.len() - 2..], ["w1", "m1"]);
+
+        // An account taken out of the unified inbox keeps only its own inbox.
+        crate::accounts::set_in_unified_inbox(&conn, "work", false).unwrap();
+        let first = list_messages(&conn, UNIFIED_INBOX, ListOptions::default()).unwrap();
+        assert!(first.rows.iter().all(|row| row.latest.account_id == "acc"));
+        assert_eq!(rows(&conn, "work-inbox", false).len(), 300);
     }
 
     #[test]

@@ -6,6 +6,7 @@ import { Icon } from "@/components/common/Icon";
 import { Button } from "@/components/ui/button";
 import { useSyncActions } from "@/hooks/use-sync";
 import { useTreeFocus } from "@/hooks/use-tree-focus";
+import { unifiedInboxes, unifiedInboxLabel } from "@/lib/folders";
 import { t } from "@/lib/i18n";
 import { type Account, UNIFIED_INBOX } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
@@ -37,9 +38,10 @@ export function Sidebar({ className }: SidebarProps) {
     if (folder && folder.role !== "inbox") void syncFolder(folder);
   };
 
-  const unifiedUnread = folders
-    .filter((f) => f.role === "inbox")
-    .reduce((sum, f) => sum + f.unreadCount, 0);
+  const unifiedUnread = unifiedInboxes(folders, accounts).reduce(
+    (sum, f) => sum + f.unreadCount,
+    0,
+  );
 
   return (
     <nav className={cn("flex flex-col bg-sidebar text-sidebar-foreground", className)}>
@@ -53,7 +55,7 @@ export function Sidebar({ className }: SidebarProps) {
         {accounts.length > 1 && (
           <SidebarItem
             icon="unified"
-            label={t("sidebar.unifiedInbox")}
+            label={unifiedInboxLabel(accounts)}
             unreadCount={unifiedUnread}
             selected={selectedMailboxId === UNIFIED_INBOX}
             onSelect={() => selectMailbox(UNIFIED_INBOX)}

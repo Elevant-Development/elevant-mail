@@ -79,6 +79,24 @@ export const de = {
   "settings.notifications.try": "Ausprobieren",
   "settings.notifications.denied":
     "Das System erlaubt Elevant Mail keine Benachrichtigungen. Schalte sie in den Systemeinstellungen ein.",
+  "settings.reading": "Lesen",
+  "settings.reading.unified": "Im gemeinsamen Posteingang",
+  "settings.reading.unifiedHint":
+    "Diese Konten laufen in „Alle Posteingänge“ zusammen. Ohne Haken bleibt nur der eigene Posteingang des Kontos in der Seitenleiste.",
+  "settings.reading.start": "Beim Start öffnen",
+  "settings.reading.markRead": "Als gelesen markieren",
+  "settings.reading.markRead.now": "Sofort",
+  "settings.reading.markRead.second": "Nach 1 s",
+  "settings.reading.markRead.seconds": "Nach 3 s",
+  "settings.reading.markRead.never": "Nie",
+  "settings.reading.markReadHint":
+    "So lange muss eine Mail offen sein, bis sie als gelesen gilt. Mit einer kurzen Pause markiert das Durchblättern mit j und k nicht alles. Bei „Nie“ geht es nur mit u oder dem Knopf.",
+  "settings.reading.images": "Bilder immer laden von",
+  "settings.reading.imagesEmpty":
+    "Noch von niemandem. In einer Mail mit blockierten Bildern geht das über „Immer von …“.",
+  "settings.reading.imagesHint":
+    "Die externen Bilder dieser Absender erscheinen sofort. Dafür sehen sie, wann du ihre Mail öffnest.",
+  "settings.reading.imagesRemove": "{address} entfernen",
   "notify.newMail.one": "Neue Mail",
   "notify.newMail.other": "{count} neue Mails",
   "notify.from": "Von {names}",
@@ -216,6 +234,7 @@ export const de = {
   "filter.clear": "Filter aufheben",
 
   "sidebar.unifiedInbox": "Alle Posteingänge",
+  "sidebar.someInboxes": "Posteingänge",
   "sidebar.addAccount": "Konto hinzufügen",
 
   "folder.inbox": "Posteingang",
@@ -299,6 +318,7 @@ export const de = {
   "reader.remoteImages":
     "Externe Bilder blockiert ({count}), damit der Absender nicht sieht, wann du die Mail öffnest.",
   "reader.remoteImages.load": "Bilder laden",
+  "reader.remoteImages.always": "Immer von {address}",
   "reader.view.paper": "Helle Ansicht",
   "reader.view.dark": "Dunkle Ansicht",
   "conversation.count.one": "{count} Mail",

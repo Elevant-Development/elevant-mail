@@ -82,6 +82,8 @@ export interface Backend {
    * its newest 100; the next sync fetches what a longer period adds.
    */
   setKeepDays(accountId: string, days: number | null): Promise<void>;
+  /** Takes the account's inbox into the unified inbox or out of it. */
+  setInUnifiedInbox(accountId: string, included: boolean): Promise<void>;
   /** Name and colour; they change without a login. */
   updateAccount(accountId: string, changes: AccountChanges): Promise<Account>;
   /**
@@ -105,7 +107,10 @@ export interface Backend {
     keep: string[],
     after: ListCursor | null,
   ): Promise<ListPage>;
-  /** `remoteImages`: the user allowed the external images of this mail. */
+  /**
+   * `remoteImages`: the user allowed the external images of this mail. They also show where the
+   * user always allows them for the sender (`remoteImagesLoaded`).
+   */
   getMessage(messageId: string, remoteImages: boolean): Promise<Message | null>;
   /**
    * What the reader shows for a message, newest first: with `threads` its conversation in its
@@ -130,6 +135,10 @@ export interface Backend {
    * and returns the matching messages.
    */
   searchServer(accountId: string, query: string): Promise<string[]>;
+  /** Senders whose mail always shows its external images, alphabetically. */
+  listImageSenders(): Promise<string[]>;
+  allowImagesFrom(address: string): Promise<void>;
+  forbidImagesFrom(address: string): Promise<void>;
   /**
    * Set (not toggle) read or flagged state. The cache changes at once; returns the accounts
    * whose changes still have to go to the server ({@link Backend.pushActions}).
@@ -175,6 +184,8 @@ const tauriBackend: Backend = {
   removeAccount: (accountId) => invoke("remove_account", { accountId }),
   getAccountSettings: (accountId) => invoke("get_account_settings", { accountId }),
   setKeepDays: (accountId, days) => invoke("set_keep_days", { accountId, days }),
+  setInUnifiedInbox: (accountId, included) =>
+    invoke("set_in_unified_inbox", { accountId, included }),
   updateAccount: (accountId, changes) => invoke("update_account", { accountId, changes }),
   changeLogin: (accountId, imap, password) => invoke("change_login", { accountId, imap, password }),
   signInAgain: (accountId) => invoke("sign_in_again", { accountId }),
@@ -189,6 +200,9 @@ const tauriBackend: Backend = {
   loadOlder: (folderId) => invoke("load_older", { folderId }),
   searchMessages: (query, threads, also) => invoke("search_messages", { query, threads, also }),
   searchServer: (accountId, query) => invoke("search_server", { accountId, query }),
+  listImageSenders: () => invoke("list_image_senders"),
+  allowImagesFrom: (address) => invoke("allow_images_from", { address }),
+  forbidImagesFrom: (address) => invoke("forbid_images_from", { address }),
   setRead: (messageIds, read) => invoke("set_read", { messageIds, read }),
   setFlagged: (messageIds, flagged) => invoke("set_flagged", { messageIds, flagged }),
   pushActions: (accountId) => invoke("push_actions", { accountId }),

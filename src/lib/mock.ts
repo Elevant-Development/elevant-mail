@@ -33,12 +33,14 @@ let accounts: Account[] = [
     displayName: L("Privat", "Personal"),
     emailAddress: "alex@example.org",
     color: "oklch(0.72 0.13 250)",
+    inUnifiedInbox: true,
   },
   {
     id: "acc-work",
     displayName: L("Arbeit", "Work"),
     emailAddress: "alex.berger@example.com",
     color: "oklch(0.74 0.14 60)",
+    inUnifiedInbox: true,
   },
 ];
 
@@ -605,6 +607,7 @@ function buildMessages(): Message[] {
     bodyHtml: null,
     htmlStyled: m.html?.styled ?? false,
     remoteImageCount: m.html?.images?.length ?? 0,
+    remoteImagesLoaded: false,
     attachments: (m.files ?? []).map((file, n) => ({
       id: `att-${index + 1}-${n + 1}`,
       fileName: file.name,
@@ -833,6 +836,9 @@ async function mockBrowserSignIn() {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Senders whose mail always shows its external images (image_senders). */
+const imageSenders = new Set<string>();
+
 /** Rows per page, as in the backend (mailbox::list_messages). */
 const MOCK_PAGE_SIZE = 300;
 
@@ -875,6 +881,7 @@ export const mockBackend: Backend = {
       displayName: account.displayName || account.emailAddress,
       emailAddress: account.emailAddress,
       color: "oklch(0.72 0.14 150)",
+      inUnifiedInbox: true,
     };
     accounts = [...accounts, added];
     accountSettings[added.id] = { signIn: "password", imap: account.imap, keepDays: 90 };
@@ -905,6 +912,9 @@ export const mockBackend: Backend = {
     if (!current) throw { kind: "notFound", hint: null };
     accountSettings[accountId] = { ...current, keepDays: days };
   },
+  setInUnifiedInbox: async (accountId, included) => {
+    accounts = accounts.map((a) => (a.id === accountId ? { ...a, inUnifiedInbox: included } : a));
+  },
   updateAccount: async (accountId, changes) => {
     const current = accounts.find((a) => a.id === accountId);
     if (!current) throw { kind: "notFound", hint: null };
@@ -932,7 +942,11 @@ export const mockBackend: Backend = {
   listMessages: async (mailboxId, threads, filters, keep, after) => {
     const inMailbox = (
       mailboxId === UNIFIED_INBOX
-        ? messages.filter((m) => m.folderId.endsWith(":inbox"))
+        ? messages.filter(
+            (m) =>
+              m.folderId.endsWith(":inbox") &&
+              accounts.some((a) => a.id === m.accountId && a.inUnifiedInbox),
+          )
         : messages.filter((m) => m.folderId === mailboxId)
     ).filter(inFolderList);
     const matches = (row: Conversation) =>
@@ -972,14 +986,16 @@ export const mockBackend: Backend = {
       .sort((a, b) => b.dateSent - a.dateSent)
       .map(toSummary);
   },
-  getMessage: async (messageId, remoteImages) => {
+  getMessage: async (messageId, allowed) => {
     const index = messages.findIndex((m) => m.id === messageId);
     const message = messages[index];
     if (!message) return null;
     const html = allMockMessages[index]?.html;
+    const remoteImages = allowed || imageSenders.has(message.from.address.toLowerCase());
     return {
       ...message,
       bodyHtml: html && message.bodyComplete ? renderMockHtml(html, remoteImages) : null,
+      remoteImagesLoaded: remoteImages,
     };
   },
   searchMessages: async (query, threads, also) => {
@@ -1008,6 +1024,13 @@ export const mockBackend: Backend = {
         )
       : hits;
     return toConversations(shown, threads).slice(0, 300);
+  },
+  listImageSenders: async () => [...imageSenders].sort(),
+  allowImagesFrom: async (address) => {
+    imageSenders.add(address.trim().toLowerCase());
+  },
+  forbidImagesFrom: async (address) => {
+    imageSenders.delete(address.trim().toLowerCase());
   },
   searchServer: async (accountId, query) => {
     await wait(1400);

@@ -79,6 +79,23 @@ export const en: Record<MessageKey, string> = {
   "settings.notifications.try": "Try it",
   "settings.notifications.denied":
     "The system does not allow Elevant Mail to show notifications. Turn them on in the system settings.",
+  "settings.reading": "Reading",
+  "settings.reading.unified": "In the unified inbox",
+  "settings.reading.unifiedHint":
+    "These accounts come together in “All inboxes”. Unticked, an account keeps only its own inbox in the sidebar.",
+  "settings.reading.start": "Open at start",
+  "settings.reading.markRead": "Mark as read",
+  "settings.reading.markRead.now": "At once",
+  "settings.reading.markRead.second": "After 1 s",
+  "settings.reading.markRead.seconds": "After 3 s",
+  "settings.reading.markRead.never": "Never",
+  "settings.reading.markReadHint":
+    "How long a mail has to be open before it counts as read. With a short pause, moving through the list with j and k does not mark everything. With “Never” only u or the button does.",
+  "settings.reading.images": "Always load images from",
+  "settings.reading.imagesEmpty": "Nobody yet. In a mail with blocked images, use “Always from …”.",
+  "settings.reading.imagesHint":
+    "External images from these senders show at once. In return they see when you open their mail.",
+  "settings.reading.imagesRemove": "Remove {address}",
   "notify.newMail.one": "New message",
   "notify.newMail.other": "{count} new messages",
   "notify.from": "From {names}",
@@ -213,6 +230,7 @@ export const en: Record<MessageKey, string> = {
   "filter.clear": "Clear filters",
 
   "sidebar.unifiedInbox": "All inboxes",
+  "sidebar.someInboxes": "Inboxes",
   "sidebar.addAccount": "Add account",
 
   "folder.inbox": "Inbox",
@@ -295,6 +313,7 @@ export const en: Record<MessageKey, string> = {
   "reader.remoteImages":
     "External images blocked ({count}), so the sender cannot see when you open the mail.",
   "reader.remoteImages.load": "Load images",
+  "reader.remoteImages.always": "Always from {address}",
   "reader.view.paper": "Light view",
   "reader.view.dark": "Dark view",
   "conversation.count.one": "{count} message",

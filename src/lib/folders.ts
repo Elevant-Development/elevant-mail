@@ -132,9 +132,22 @@ export function unreadBelow(node: FolderNode): number {
   );
 }
 
+/** "All inboxes", or "Inboxes" while some accounts are left out of it (settings: Reading). */
+export function unifiedInboxLabel(accounts: Account[]): string {
+  return accounts.every((a) => a.inUnifiedInbox)
+    ? t("sidebar.unifiedInbox")
+    : t("sidebar.someInboxes");
+}
+
+/** The inboxes the unified inbox shows. */
+export function unifiedInboxes(folders: Folder[], accounts: Account[]): Folder[] {
+  const included = new Set(accounts.filter((a) => a.inUnifiedInbox).map((a) => a.id));
+  return folders.filter((f) => f.role === "inbox" && included.has(f.accountId));
+}
+
 /** Heading for the message list. Names the account when there is more than one. */
 export function mailboxTitle(mailboxId: string, folders: Folder[], accounts: Account[]): string {
-  if (mailboxId === UNIFIED_INBOX) return t("sidebar.unifiedInbox");
+  if (mailboxId === UNIFIED_INBOX) return unifiedInboxLabel(accounts);
   const folder = folders.find((f) => f.id === mailboxId);
   if (!folder) return "";
   const label = folderLabel(folder);

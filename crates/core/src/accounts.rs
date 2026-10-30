@@ -242,6 +242,7 @@ fn insert(
         display_name,
         email_address: new.email_address.clone(),
         color: color.to_owned(),
+        in_unified_inbox: true,
     })
 }
 
@@ -297,8 +298,8 @@ pub(crate) fn store_folders(
 
 pub fn list(conn: &Connection) -> Result<Vec<Account>> {
     let mut statement = conn.prepare(
-        "SELECT id, display_name, email_address, coalesce(color, ?1) FROM accounts
-         ORDER BY sort_order, created_at",
+        "SELECT id, display_name, email_address, coalesce(color, ?1), in_unified_inbox
+         FROM accounts ORDER BY sort_order, created_at",
     )?;
     let accounts = statement
         .query_map([ACCOUNT_COLORS[0]], |row| {
@@ -307,6 +308,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Account>> {
                 display_name: row.get(1)?,
                 email_address: row.get(2)?,
                 color: row.get(3)?,
+                in_unified_inbox: row.get(4)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -348,6 +350,18 @@ pub fn set_keep_days(conn: &Connection, account_id: &str, days: Option<u32>) -> 
     let updated = conn.execute(
         "UPDATE accounts SET keep_days = ?2 WHERE id = ?1",
         params![account_id, days.map(|days| days.clamp(1, 36_500))],
+    )?;
+    if updated == 0 {
+        return Err(Error::AccountNotFound);
+    }
+    Ok(())
+}
+
+/// Takes the account's inbox into the unified inbox or out of it.
+pub fn set_in_unified_inbox(conn: &Connection, account_id: &str, included: bool) -> Result<()> {
+    let updated = conn.execute(
+        "UPDATE accounts SET in_unified_inbox = ?2 WHERE id = ?1",
+        params![account_id, included],
     )?;
     if updated == 0 {
         return Err(Error::AccountNotFound);
@@ -756,6 +770,18 @@ mod tests {
         );
         assert!(matches!(
             set_keep_days(&db.conn(), "missing", Some(30)),
+            Err(Error::AccountNotFound)
+        ));
+
+        // In the unified inbox until taken out.
+        assert!(password.in_unified_inbox);
+        set_in_unified_inbox(&db.conn(), &password.id, false).unwrap();
+        let listed = list(&db.conn()).unwrap();
+        let included = |id: &str| listed.iter().find(|a| a.id == id).unwrap().in_unified_inbox;
+        assert!(!included(&password.id));
+        assert!(included(&microsoft.id));
+        assert!(matches!(
+            set_in_unified_inbox(&db.conn(), "missing", true),
             Err(Error::AccountNotFound)
         ));
         assert_eq!(

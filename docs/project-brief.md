@@ -181,8 +181,9 @@ In addition:
   CSP for `https:`. Instead Rust fetches a mail's images on click and serves them through its own
   Tauri protocol (`mail-asset://`, on Windows `http://mail-asset.localhost`). The same protocol
   serves inline images (`cid:`) from the cache; they are stored with the body, up to 1 MB each.
-- External images are blocked by default. They are allowed per mail for the running session,
-  later optionally per sender. Fetching runs without cookies or referrer, follows at most 5
+- External images are blocked by default. They are allowed per mail for the running session, or
+  always for a sender ("Always from …", table `image_senders`; the backend checks the sender when
+  a mail is opened). The list is under settings → Reading, where addresses can be removed. Fetching runs without cookies or referrer, follows at most 5
   redirects, accepts only `image/*` up to 10 MB and refuses `localhost`, private and carrier-grade
   NAT addresses, so a mail cannot send the app into the local network. CSS background images stay
   blocked even when images are allowed.
@@ -225,10 +226,11 @@ it does not understand.
 
 | Table             | Content                                                                                                                                                   |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accounts`        | Accounts with IMAP and (from phase 4) SMTP settings, sign-in method, colour, `keep_days` (how far back the cache keeps mail). No passwords.                |
+| `accounts`        | Accounts with IMAP and (from phase 4) SMTP settings, sign-in method, colour, `keep_days` (how far back the cache keeps mail), `in_unified_inbox`. No passwords. |
 | `folders`         | Folders per account with SPECIAL-USE role, `uid_validity`, `uid_next`, `highest_modseq`, counts                                                           |
 | `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to` and `references_header`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched; unique per folder and UID |
 | `thread_keys`     | Every Message-ID a conversation has seen, per account, so replies find it                                                                                  |
+| `image_senders`   | Senders (address in lower case) whose mail shows its external images when opened                                                                           |
 | `attachments`     | Attachments per message with the MIME part to fetch them; small inline images with their bytes                                                           |
 | `pending_actions` | Local changes that still have to reach the server; `due_at` holds a move back while it can be undone                                                       |
 | `messages_fts`    | Full-text index (FTS5) over subject, sender and text                                                                                                      |
@@ -265,9 +267,9 @@ checks that they are current.
 | Area        | Commands                                                                                                                                 |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | App         | `app_status` (version, schema version, keyring available)                                                                                 |
-| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `set_keep_days`, `change_login` (server settings, password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
+| Accounts    | `detect_settings` (presets, MX record), `add_account` (checks the login before saving), `add_microsoft_account`, `cancel_sign_in`, `list_accounts`, `get_account_settings`, `update_account` (name, colour), `set_keep_days`, `set_in_unified_inbox`, `change_login` (server settings, password; checks the login first), `sign_in_again` (Microsoft), `remove_account` |
 | Folders     | `list_folders`                                                                                                                            |
-| Mail        | `list_messages` (a page of a folder or the unified inbox; with `threads` one row per conversation, `filters` from the filter bar, `after` for the next page), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images), `load_message_body`, `search_messages` |
+| Mail        | `list_messages` (a page of a folder or the unified inbox; with `threads` one row per conversation, `filters` from the filter bar, `after` for the next page), `get_conversation` (what the reader shows for a row), `get_message` (with `remote_images` to allow a mail's external images; they also show for senders in `image_senders`), `load_message_body`, `search_messages`, `list_image_senders`, `allow_images_from`, `forbid_images_from` |
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
 | Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
 | Links       | `open_link`                                                                                                                               |
@@ -372,7 +374,7 @@ Elevant Mail should feel modern and calm, not like Thunderbird, Outlook 2010 or 
 - Compact rows, clear typography, subdued colours
 - Unread mail clearly highlighted. An opened message counts as read after one second, so moving
   through the list with `j`/`k` does not mark everything; once per opening, so `u` keeps it unread
-  afterwards. To become a setting.
+  afterwards. Settings → Reading: at once, after 1 s (default), after 3 s, or never by itself.
 - Avatars from initials, no external avatar services
 - Keyboard: `j`/`k` move (arrow keys too in the list; in the reader they scroll), `Enter` opens
   the first message or moves into the reader, `Esc` goes back one level (reader → list → no
@@ -485,7 +487,10 @@ can consent without an admin. Paging beyond 5,000 cached messages per folder cam
 - How far back the cache keeps mail, per account (1 month to everything, default 3 months) — done
 - Keyboard focus management — done. Tab reaches each part once (search, folders, list, reader),
   the arrow keys move within; F6 jumps between the parts; dialogs give the focus back
-- Settings: theme, density, default account, allow images per sender, mark-as-read delay
+- Settings → Reading — done: which accounts the unified inbox brings together (all by default;
+  with some left out it is called "Inboxes"), which inbox opens at start (the unified one or one
+  account's; from phase 4 also the default sender), the mark-as-read delay, the senders whose
+  images always load. Theme and density are in the appearance.
 - Conversations, switchable, on by default — done. Grouped by Message-ID headers, replies
   without them by subject; per folder, with the user's own replies from "Sent".
 
@@ -638,4 +643,7 @@ Phase 3:
 18. **Polish:** the list in pages of 300, filters in the database, one tab stop per part with the
     arrow keys in the folder tree, F6, focus back after dialogs — done
 
-Next: the remaining settings of phase 3 (default account, images per sender, mark-as-read delay).
+19. **Settings → Reading:** accounts in the unified inbox, inbox at start, mark-as-read delay,
+    images always from a sender — done
+
+Next: phase 4, sending.
