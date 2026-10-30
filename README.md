@@ -4,7 +4,7 @@
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
 A fast, private mail client for Linux and Windows. All your IMAP accounts in one window, with a
-unified inbox and a calm interface.
+unified inbox and a calm interface, for reading and writing mail.
 
 - **Free and open source.** No paywall, no subscription, no account with us.
 - **Private.** No cloud, no telemetry. The app talks to your mail servers and nothing else.
@@ -13,10 +13,10 @@ unified inbox and a calm interface.
 
 ![Elevant Mail with a conversation in the unified inbox of two accounts](docs/screenshots/main.jpg)
 
-> **Status: v0.3, reading only.** Elevant Mail reads, searches and organizes mail from several
-> accounts: conversations, filters, archiving and moving with undo, new mail right away. Writing
-> and sending mail comes next (see [Roadmap](#roadmap)). It is early software: please keep another
-> mail client around for now, and
+> **Status: v0.4, reads and sends.** Elevant Mail reads, searches, organizes and writes mail for
+> several accounts: conversations, filters, archiving with undo, replies and forwards with
+> formatting, drafts, attachments and signatures. It is early software: please keep another mail
+> client around for now, and
 > [tell us](https://github.com/Elevant-Development/elevant-mail/issues) what breaks.
 
 ## Features
@@ -26,6 +26,14 @@ unified inbox and a calm interface.
 - **Works with** self-hosted mail servers, Gmail, Microsoft 365, Outlook.com, web.de, GMX and any
   other IMAP provider. Server settings are suggested from your address.
 - **Sign in with Microsoft** for Microsoft 365 and Outlook.com, no password stored
+- **Writing:** new mail, reply, reply all and forward right next to the list, with bold, italic,
+  lists, quotes and links. Recipients come with suggestions from your mail; replies stay in
+  their conversation.
+- **Drafts** are saved as you type and kept in your account's drafts folder, so you can finish
+  them later or on your phone
+- **Attachments** with the paperclip or by dragging files onto the mail; forwarding takes the
+  original's files along
+- **Signatures** per account, written in the app or pasted as HTML with logo and table
 - **New mail right away** (IMAP IDLE) with a desktop notification, with or without sender and
   subject
 - **Conversations:** replies sit with the mail they answer, your own replies from Sent included.
@@ -48,6 +56,8 @@ unified inbox and a calm interface.
 - **Readable newsletters in dark mode:** designed mail sits on a light page, simple mail follows
   the dark theme, and you can switch per mail
 - **English and German.** The app follows your system language; more languages are welcome.
+
+![Writing a reply with formatting, signature and an attachment](docs/screenshots/compose.jpg)
 
 | Designed newsletter with images allowed        | Light mode with attachments               |
 | ---------------------------------------------- | ----------------------------------------- |
@@ -118,7 +128,9 @@ The interface language follows your system. To change it, open **Appearance** (t
 at the top right) and pick a language; the same menu has mode, colors, density and font.
 
 **Settings** (the gear icon at the top right) has the rest: per account its name, color, server
-settings, password and how far back mail stays on your computer; notifications; and under
+settings, password, how far back mail stays on your computer and, under **Sending**, the name
+your mail goes out under, the signature and the outgoing server (suggested from the incoming
+one); notifications; and under
 **Reading** which accounts the unified inbox brings together, which inbox opens at start, when an
 opened mail counts as read and whose images always load.
 
@@ -158,6 +170,10 @@ the app keeps offline.
 | `z`                  | Undo the last archiving, deleting or moving                           |
 | `/`                  | Search. `Enter` or `↓` jumps to the first result, `Esc` clears.       |
 | `F6`                 | Jump between search, folders, list and message (`Shift+F6` goes back) |
+| `c`                  | Write a new mail                                                      |
+| `r`, `a`, `f`        | Reply, reply to all, forward                                          |
+| `Ctrl+Enter`         | Send (while writing)                                                  |
+| `Ctrl+K`             | Add a link (while writing)                                            |
 
 `Ctrl`-click adds a message to the selection, `Shift`-click selects a range. `Tab` reaches each
 part of the window once; in the folder tree the arrow keys move, `→` opens a folder and `←`
@@ -191,20 +207,20 @@ Found a security problem? Please report it privately, see [SECURITY.md](SECURITY
 - v0.2: several accounts, unified inbox, folder tree, sign in with Microsoft, English and German
 - v0.3: archive, delete and move with undo; new mail right away and notifications; conversations;
   filters and search on the server; account and reading settings; large folders
+- v0.4: sending with password or sign-in via Microsoft; reply, reply all and forward with
+  formatting; drafts in the server's drafts folder; attachments; signatures
 
-**Next: sending**
+**Next: MCP server for AI agents**
 
-- New mail, reply, reply all, forward
-- Drafts, signatures, attachments
-- SMTP with password or sign-in via Microsoft
+- Optional and off by default, local only, read-only to start, so tools like Claude Code can
+  search your mail without their own access to your accounts
 
 **Then**
 
-- **MCP server for AI agents:** optional and off by default, local only, read-only to start, so
-  tools like Claude Code can search your mail without their own access to your accounts
 - **Optional AI help:** summaries and reply drafts with a provider you choose, including local
   models; nothing active without setup
-- **Calendar:** later, as its own area, after sending works
+- **Keep running in the tray,** so notifications arrive with the window closed
+- **Calendar:** later, as its own area
 
 The [project brief](docs/project-brief.md) has the details, the architecture and the decisions
 behind them.
@@ -219,7 +235,13 @@ mailbox (Microsoft 365 admin center → Users → Mail → Manage email apps).
 **Gmail says my password is wrong.** Gmail does not accept your normal password in mail apps. Use
 an app password (see [Getting started](#getting-started)).
 
-**Can I send mail?** Not yet. Sending is the next step.
+**Sending fails with Microsoft 365.** Your organization may have switched off sending from mail
+apps (SMTP AUTH). An admin switches it on for your mailbox: Microsoft 365 admin center → Users →
+Mail → Manage email apps → Authenticated SMTP.
+
+**My sent mail shows up twice in Sent.** It should not: the app only files a copy where the server
+does not do that by itself. If it happens, please
+[tell us](https://github.com/Elevant-Development/elevant-mail/issues) which provider you use.
 
 **Does it support POP3 or Exchange ActiveSync?** No, IMAP only. Microsoft 365 and Outlook.com work
 over IMAP with sign-in via Microsoft.

@@ -52,7 +52,7 @@ const accountSettings: Record<string, AccountSettings> = {
     imap: { host: "imap.example.org", port: 993, security: "tls", username: "alex@example.org" },
     smtp: { host: "smtp.example.org", port: 465, security: "tls", username: "alex@example.org" },
     senderName: "Alex Berger",
-    signature: "<p>Viele Grüße<br>Alex</p>",
+    signature: L("<p>Viele Grüße<br>Alex</p>", "<p>Best,<br>Alex</p>"),
     signatureHtml: false,
     keepDays: 90,
   },
@@ -71,7 +71,10 @@ const accountSettings: Record<string, AccountSettings> = {
       username: "alex.berger@example.com",
     },
     senderName: "Alex Berger",
-    signature: "<p>Beste Grüße<br>Alex Berger<br>Projektleitung</p>",
+    signature: L(
+      "<p>Beste Grüße<br>Alex Berger<br>Projektleitung</p>",
+      "<p>Kind regards<br>Alex Berger<br>Project lead</p>",
+    ),
     signatureHtml: false,
     keepDays: 365,
   },
@@ -1112,7 +1115,7 @@ export const mockBackend: Backend = {
   pickAttachments: async (draftKey) => {
     await wait(300);
     return attachMock(draftKey, [
-      { fileName: "Notizen.pdf", mimeType: "application/pdf", size: 48_210 },
+      { fileName: L("Notizen.pdf", "Notes.pdf"), mimeType: "application/pdf", size: 48_210 },
     ]);
   },
   attachDropped: async () => [],
