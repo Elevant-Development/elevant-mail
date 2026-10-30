@@ -451,4 +451,9 @@ export const en: Record<MessageKey, string> = {
   "error.hint.chooseExport": "Choose a file saved with “Export accounts”.",
   "error.kind.notAnExport": "The file contains no exported accounts.",
   "error.kind.wrongPassphrase": "The passphrase does not match.",
+  "drag.count.one": "1 message",
+  "drag.count.other": "{count} messages",
+  "layout.resizeSidebar": "Width of the folder sidebar",
+  "layout.resizeList": "Width of the message list",
+  "layout.resizeHint": "Drag to change the width, double-click to reset it",
 };

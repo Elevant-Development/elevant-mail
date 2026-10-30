@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { type CSSProperties, useEffect } from "react";
 
 import { AccountDialog } from "@/components/accounts/AccountDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
@@ -7,6 +7,7 @@ import { Composer } from "@/components/compose/Composer";
 import { DeleteForeverDialog } from "@/components/mail/DeleteForeverDialog";
 import { MessageList } from "@/components/mail/MessageList";
 import { MessageReader } from "@/components/mail/MessageReader";
+import { DragLabel } from "@/components/mail/DragLabel";
 import { MoveDialog } from "@/components/mail/MoveDialog";
 import { UndoToast } from "@/components/mail/UndoToast";
 import { UpdateCheckIntro } from "@/components/updates/UpdateNotice";
@@ -18,7 +19,8 @@ import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
 import { useUiStore } from "@/stores/ui";
 
-import { listWidth, sidebarWidth } from "./columns";
+import { ColumnResizer } from "./ColumnResizer";
+import { columnLimits, listWidth, sidebarWidth } from "./columns";
 import { Sidebar } from "./Sidebar";
 import { TitleBar } from "./TitleBar";
 
@@ -39,6 +41,15 @@ export function AppShell() {
   const closeCompose = useUiStore((s) => s.closeCompose);
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUiStore((s) => s.setSidebarOpen);
+  const columnWidths = useUiStore((s) => s.columnWidths);
+  // Read by the column classes of the panels and the title bar (columns.ts).
+  const widths = {
+    ...(columnWidths.sidebar !== null && { "--sidebar-width": `${columnWidths.sidebar}px` }),
+    // In a window made narrower since, the reader keeps its room.
+    ...(columnWidths.list !== null && {
+      "--list-width": `max(${columnLimits.list.min}px, min(${columnWidths.list}px, calc(100vw - var(--sidebar-width, 15rem) - ${columnLimits.readerMin + 40}px)))`,
+    }),
+  } as CSSProperties;
 
   const showOverlay = !isWide && sidebarOpen;
   useMailKeyboard({ enabled: !firstStart && !showOverlay, isWide });
@@ -56,7 +67,7 @@ export function AppShell() {
   }, [showOverlay, setSidebarOpen]);
 
   return (
-    <div className="flex h-full flex-col bg-canvas">
+    <div className="flex h-full flex-col bg-canvas" style={widths}>
       <TitleBar isWide={isWide} />
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         {firstStart ? (
@@ -64,7 +75,9 @@ export function AppShell() {
         ) : isWide ? (
           <>
             <Sidebar className={cn("shrink-0", sidebarWidth)} />
+            <ColumnResizer column="sidebar" />
             <MessageList className={cn("shrink-0", listWidth, panel)} />
+            <ColumnResizer column="list" />
             {composing ? (
               <Composer className={cn("flex-1", panel)} />
             ) : (
@@ -93,6 +106,7 @@ export function AppShell() {
       <AccountDialog />
       <SettingsDialog />
       <MoveDialog />
+      <DragLabel />
       <DeleteForeverDialog />
       <UndoToast />
       <UpdateCheckIntro />

@@ -132,3 +132,8 @@
     content: attr(data-placeholder);
   }
 }
+
+/* While mail is dragged onto a folder (use-mail-drag.ts). */
+:root[data-mail-drag] * {
+  cursor: grabbing !important;
+}

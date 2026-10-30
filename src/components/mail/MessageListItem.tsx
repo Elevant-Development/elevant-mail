@@ -1,4 +1,4 @@
-import type { MouseEvent } from "react";
+import type { MouseEvent, PointerEvent } from "react";
 
 import { Avatar } from "@/components/common/Avatar";
 import { Icon } from "@/components/common/Icon";
@@ -18,6 +18,8 @@ interface MessageListItemProps {
   ownAddresses: Set<string>;
   /** With the click, so Ctrl and Shift can add to the selection. */
   onSelect: (event: MouseEvent) => void;
+  /** Starts dragging the row (and the selection it is in) onto a folder. */
+  onPointerDown: (event: PointerEvent) => void;
   /** The list's one tab stop; the other rows are reached with the arrow keys. */
   tabbable: boolean;
 }
@@ -33,6 +35,7 @@ export function MessageListItem({
   accountColor,
   ownAddresses,
   onSelect,
+  onPointerDown,
   tabbable,
 }: MessageListItemProps) {
   const compact = useUiStore((s) => s.density === "compact");
@@ -48,6 +51,7 @@ export function MessageListItem({
       data-message-id={message.id}
       tabIndex={tabbable ? 0 : -1}
       onClick={onSelect}
+      onPointerDown={onPointerDown}
       aria-current={selected || undefined}
       className={cn(
         "relative flex w-full rounded-xl border border-transparent bg-row px-3 text-left",

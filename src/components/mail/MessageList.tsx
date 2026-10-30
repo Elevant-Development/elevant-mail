@@ -4,6 +4,7 @@ import { type MouseEvent, type ReactNode, useEffect, useEffectEvent, useMemo, us
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
 import { Button } from "@/components/ui/button";
+import { useMailDrag } from "@/hooks/use-mail-drag";
 import { useNow } from "@/hooks/use-now";
 import { useSyncActions } from "@/hooks/use-sync";
 import { isSignInError } from "@/lib/errors";
@@ -140,6 +141,8 @@ function MessageRows({
   });
   useEffect(() => revealSelection(), [focusedId]);
 
+  const startDrag = useMailDrag(messages);
+
   const select = (messageId: string, event: MouseEvent) => {
     if (event.shiftKey) {
       selectRange(
@@ -184,6 +187,7 @@ function MessageRows({
                 accountColor={accountColor(message.accountId)}
                 ownAddresses={ownAddresses}
                 onSelect={(event) => select(message.id, event)}
+                onPointerDown={(event) => startDrag(message.id, event)}
               />
             </li>
           );

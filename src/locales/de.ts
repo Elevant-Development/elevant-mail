@@ -458,4 +458,9 @@ export const de = {
   "error.hint.chooseExport": "Wähle eine Datei, die mit „Konten exportieren“ gespeichert wurde.",
   "error.kind.notAnExport": "Die Datei enthält keine exportierten Konten.",
   "error.kind.wrongPassphrase": "Die Passphrase passt nicht.",
+  "drag.count.one": "1 Mail",
+  "drag.count.other": "{count} Mails",
+  "layout.resizeSidebar": "Breite der Ordnerleiste",
+  "layout.resizeList": "Breite der Mailliste",
+  "layout.resizeHint": "Ziehen ändert die Breite, Doppelklick stellt sie zurück",
 } as const;

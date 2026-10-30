@@ -60,6 +60,7 @@ function FolderTree({ nodes, depth, selectedMailboxId, onSelectMailbox }: Folder
               unreadCount={unread}
               selected={folder?.id === selectedMailboxId}
               onSelect={folder ? () => onSelectMailbox(folder.id) : undefined}
+              dropFolderId={folder?.id}
               depth={depth}
               expanded={hasChildren ? !isCollapsed : undefined}
               onToggle={hasChildren ? () => setCollapsed(node.key, !isCollapsed) : undefined}

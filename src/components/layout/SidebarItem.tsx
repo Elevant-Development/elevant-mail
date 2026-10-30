@@ -1,7 +1,9 @@
 import { Badge } from "@/components/common/Badge";
 import { Icon, type IconName } from "@/components/common/Icon";
+import { DROP_FOLDER_ATTRIBUTE } from "@/hooks/use-mail-drag";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { useDragStore } from "@/stores/drag";
 
 interface SidebarItemProps {
   icon: IconName;
@@ -17,6 +19,8 @@ interface SidebarItemProps {
   /** Set when the row has subfolders: whether they show. */
   expanded?: boolean;
   onToggle?: () => void;
+  /** The folder mail dragged onto the row goes to; none for rows without mail. */
+  dropFolderId?: string;
 }
 
 /** Indent per tree level; the chevron column keeps rows aligned with and without subfolders. */
@@ -32,13 +36,19 @@ export function SidebarItem({
   depth = 0,
   expanded,
   onToggle,
+  dropFolderId,
 }: SidebarItemProps) {
   const expandable = expanded !== undefined && onToggle !== undefined;
+  const dropTarget = useDragStore(
+    (s) => dropFolderId !== undefined && s.drag?.overFolderId === dropFolderId,
+  );
   return (
     <div
+      {...(dropFolderId && { [DROP_FOLDER_ATTRIBUTE]: dropFolderId })}
       className={cn(
         "group/item flex h-9 items-center rounded-md text-sidebar-foreground transition-colors select-none hover:bg-sidebar-accent/70",
         selected && "bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent",
+        dropTarget && "bg-primary/15 ring-1 ring-primary ring-inset hover:bg-primary/15",
       )}
       style={{ paddingLeft: `${depth * INDENT_REM}rem` }}
     >

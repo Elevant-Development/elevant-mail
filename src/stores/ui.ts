@@ -26,6 +26,11 @@ export interface ServerHits {
 }
 export type Density = "comfortable" | "compact";
 /** A page of the settings window: an account (null: the first one), or the appearance. */
+export interface ColumnWidths {
+  sidebar: number | null;
+  list: number | null;
+}
+
 export type SettingsPage =
   | { section: "accounts"; accountId: string | null }
   | { section: "appearance" }
@@ -58,6 +63,8 @@ interface UiState {
   markReadDelay: number | null;
   /** The list shows conversations; off, every message is a row. */
   threads: boolean;
+  /** Widths the user dragged the sidebar and the list to, in px; null: the default. */
+  columnWidths: ColumnWidths;
   /** Folder id or UNIFIED_INBOX. */
   selectedMailboxId: string;
   /**
@@ -110,6 +117,7 @@ interface UiState {
   skipUpdate: (version: string) => void;
   setStartAccount: (accountId: string | null) => void;
   setMarkReadDelay: (delay: number | null) => void;
+  setColumnWidth: (column: keyof ColumnWidths, width: number | null) => void;
   setThreads: (on: boolean) => void;
   selectMailbox: (mailboxId: string) => void;
   selectMessage: (messageId: string | null) => void;
@@ -166,6 +174,7 @@ export const useUiStore = create<UiState>()(
       startAccountId: null,
       markReadDelay: 1000,
       threads: true,
+      columnWidths: { sidebar: null, list: null },
       selectedMailboxId: UNIFIED_INBOX,
       selectedMessageId: null,
       selectedIds: [],
@@ -196,6 +205,8 @@ export const useUiStore = create<UiState>()(
       skipUpdate: (version) => set({ skippedUpdate: version }),
       setStartAccount: (startAccountId) => set({ startAccountId }),
       setMarkReadDelay: (markReadDelay) => set({ markReadDelay }),
+      setColumnWidth: (column, width) =>
+        set((state) => ({ columnWidths: { ...state.columnWidths, [column]: width } })),
       setThreads: (threads) => set({ threads }),
       setLanguage: (language) => {
         set({ language });
@@ -353,6 +364,7 @@ export const useUiStore = create<UiState>()(
         startAccountId: state.startAccountId,
         markReadDelay: state.markReadDelay,
         threads: state.threads,
+        columnWidths: state.columnWidths,
         collapsed: state.collapsed,
       }),
       // Version 1 stored the design comparison and other theme ids; version 2 font pairings and
