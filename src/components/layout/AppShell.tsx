@@ -11,6 +11,7 @@ import { DragLabel } from "@/components/mail/DragLabel";
 import { MoveDialog } from "@/components/mail/MoveDialog";
 import { UndoToast } from "@/components/mail/UndoToast";
 import { UpdateCheckIntro } from "@/components/updates/UpdateNotice";
+import { useBackground } from "@/hooks/use-background";
 import { useDraftLeaving, useKeptDrafts } from "@/hooks/use-compose";
 import { useMailKeyboard } from "@/hooks/use-mail-keyboard";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -56,6 +57,7 @@ export function AppShell() {
   useStartMailbox();
   useKeptDrafts();
   useDraftLeaving();
+  useBackground();
 
   useEffect(() => {
     if (!showOverlay) return;

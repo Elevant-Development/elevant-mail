@@ -55,6 +55,10 @@ interface UiState {
   updateCheck: boolean;
   /** The first start explained the check above. */
   updateCheckExplained: boolean;
+  /** Closing the window keeps the app running behind its tray icon. */
+  keepRunning: boolean;
+  /** The first close told where the app went. */
+  backgroundExplained: boolean;
   /** A version the user put off with "Later"; not offered again. */
   skippedUpdate: string | null;
   /** The account whose inbox opens at start; null: all inboxes. */
@@ -115,6 +119,8 @@ interface UiState {
   setUpdateCheck: (on: boolean) => void;
   explainUpdateCheck: () => void;
   skipUpdate: (version: string) => void;
+  setKeepRunning: (on: boolean) => void;
+  explainBackground: () => void;
   setStartAccount: (accountId: string | null) => void;
   setMarkReadDelay: (delay: number | null) => void;
   setColumnWidth: (column: keyof ColumnWidths, width: number | null) => void;
@@ -171,6 +177,8 @@ export const useUiStore = create<UiState>()(
       updateCheck: true,
       updateCheckExplained: false,
       skippedUpdate: null,
+      keepRunning: true,
+      backgroundExplained: false,
       startAccountId: null,
       markReadDelay: 1000,
       threads: true,
@@ -203,6 +211,8 @@ export const useUiStore = create<UiState>()(
       setUpdateCheck: (updateCheck) => set({ updateCheck, updateCheckExplained: true }),
       explainUpdateCheck: () => set({ updateCheckExplained: true }),
       skipUpdate: (version) => set({ skippedUpdate: version }),
+      setKeepRunning: (keepRunning) => set({ keepRunning }),
+      explainBackground: () => set({ backgroundExplained: true }),
       setStartAccount: (startAccountId) => set({ startAccountId }),
       setMarkReadDelay: (markReadDelay) => set({ markReadDelay }),
       setColumnWidth: (column, width) =>
@@ -361,6 +371,8 @@ export const useUiStore = create<UiState>()(
         updateCheck: state.updateCheck,
         updateCheckExplained: state.updateCheckExplained,
         skippedUpdate: state.skippedUpdate,
+        keepRunning: state.keepRunning,
+        backgroundExplained: state.backgroundExplained,
         startAccountId: state.startAccountId,
         markReadDelay: state.markReadDelay,
         threads: state.threads,

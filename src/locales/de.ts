@@ -463,4 +463,15 @@ export const de = {
   "layout.resizeSidebar": "Breite der Ordnerleiste",
   "layout.resizeList": "Breite der Mailliste",
   "layout.resizeHint": "Ziehen ändert die Breite, Doppelklick stellt sie zurück",
+  "tray.open": "Elevant Mail öffnen",
+  "tray.quit": "Beenden",
+  "tray.unread.one": "Elevant Mail – 1 ungelesene Mail",
+  "tray.unread.other": "Elevant Mail – {count} ungelesene Mails",
+  "tray.hiddenNotice":
+    "Elevant Mail läuft im Hintergrund weiter und meldet neue Mails. Beenden über das Symbol im Tray.",
+  "settings.notifications.keepRunning": "Nach dem Schließen weiterlaufen",
+  "settings.notifications.keepRunningHint":
+    "Das Fenster verschwindet ins Tray, neue Mails werden weiter abgerufen und gemeldet. Beenden über das Tray-Menü.",
+  "settings.notifications.autostart": "Beim Anmelden starten",
+  "settings.notifications.autostartHint": "Startet mit dem System im Tray, ohne Fenster.",
 } as const;

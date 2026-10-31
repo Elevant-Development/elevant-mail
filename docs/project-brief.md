@@ -483,8 +483,9 @@ can consent without an admin. Paging beyond 5,000 cached messages per folder cam
 - Desktop notifications for new mail (`tauri-plugin-notification`) — done. Only for mail that
   arrived since the last sync and is unread, only while the window is not in front; one message
   by sender and subject, several by count and senders. Settings: on/off, and without sender and
-  subject (only the account). Keeping the app running in the tray after the window is closed
-  comes later.
+  subject (only the account). Closing the window keeps the app running behind a tray icon
+  (menu: open, new mail, quit), switchable, and it can start at login into the tray. Without a
+  tray on the system closing quits; a second start brings the running app's window back.
 - Archive, delete, move, also for several messages at once — done. Local at once, the server
   after a 10-second undo window (`crates/core/src/moves.rs`): `UID MOVE`, without MOVE `UID COPY`
   plus `\Deleted` and `UID EXPUNGE` (plain `EXPUNGE` without UIDPLUS). Archiving goes to the

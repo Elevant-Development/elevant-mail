@@ -7,7 +7,8 @@ use tauri::{AppHandle, Emitter, Url, WebviewWindowBuilder};
 /// Sent to the frontend with the address when a link in a mail is clicked.
 pub const LINK_EVENT: &str = "mail-link";
 
-pub fn create_main(app: &AppHandle) -> tauri::Result<()> {
+/// `visible: false` when started at login: the tray opens it.
+pub fn create_main(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     let config = app
         .config()
         .app
@@ -17,6 +18,7 @@ pub fn create_main(app: &AppHandle) -> tauri::Result<()> {
         .expect("tauri.conf.json defines the main window");
     let links = app.clone();
     WebviewWindowBuilder::from_config(app, config)?
+        .visible(visible)
         // The mail frame opens every link in a new window (`<base target="_blank">`). None ever
         // opens in the app: the frontend shows the address and hands it to the system browser.
         .on_new_window(move |url, _features| {

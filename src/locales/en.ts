@@ -456,4 +456,15 @@ export const en: Record<MessageKey, string> = {
   "layout.resizeSidebar": "Width of the folder sidebar",
   "layout.resizeList": "Width of the message list",
   "layout.resizeHint": "Drag to change the width, double-click to reset it",
+  "tray.open": "Open Elevant Mail",
+  "tray.quit": "Quit",
+  "tray.unread.one": "Elevant Mail – 1 unread message",
+  "tray.unread.other": "Elevant Mail – {count} unread messages",
+  "tray.hiddenNotice":
+    "Elevant Mail keeps running in the background and tells you about new mail. Quit it from its tray icon.",
+  "settings.notifications.keepRunning": "Keep running after closing",
+  "settings.notifications.keepRunningHint":
+    "The window goes to the tray; new mail is still fetched and announced. Quit from the tray menu.",
+  "settings.notifications.autostart": "Start at login",
+  "settings.notifications.autostartHint": "Starts with the system in the tray, without a window.",
 };

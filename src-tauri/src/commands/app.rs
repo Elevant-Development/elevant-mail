@@ -1,5 +1,6 @@
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_autostart::ManagerExt;
 
 use crate::error::CommandError;
 use crate::state::AppState;
@@ -28,4 +29,24 @@ pub fn app_status(state: State<'_, AppState>) -> Result<AppStatus, CommandError>
 pub async fn check_for_update() -> Result<Option<elevant_mail_core::updates::Update>, CommandError>
 {
     Ok(elevant_mail_core::updates::check().await?)
+}
+
+/// Whether the app starts at login (into the tray, without its window).
+#[tauri::command]
+pub fn autostart_enabled(app: AppHandle) -> bool {
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, CommandError> {
+    let launcher = app.autolaunch();
+    let result = if enabled {
+        launcher.enable()
+    } else {
+        launcher.disable()
+    };
+    if let Err(error) = result {
+        tracing::warn!(%error, enabled, "could not change starting at login");
+    }
+    Ok(launcher.is_enabled().unwrap_or(false))
 }

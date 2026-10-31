@@ -79,6 +79,14 @@ export const UNDO_WINDOW_MS = 10_000;
 /** Where the backend serves mail images (`mail-asset://`; on Windows `http://mail-asset.localhost`). */
 export const ASSET_SOURCES = "mail-asset: http://mail-asset.localhost";
 
+/** The tray menu's words; the tooltip carries the unread count. */
+export interface TrayTexts {
+  open: string;
+  compose: string;
+  quit: string;
+  tooltip: string;
+}
+
 export interface Backend {
   listAccounts(): Promise<Account[]>;
   detectSettings(email: string): Promise<SuggestedSettings>;
@@ -258,6 +266,19 @@ export interface Backend {
    * the account id.
    */
   onCacheChanged(handler: (accountId: string) => void): Promise<() => void>;
+  /**
+   * Whether closing the window keeps the app running behind its tray icon, and the tray menu's
+   * words in the interface language.
+   */
+  configureBackground(keepRunning: boolean, texts: TrayTexts): Promise<void>;
+  /** "New mail" was chosen in the tray menu; returns a function that stops listening. */
+  onTrayCompose(handler: () => void): Promise<() => void>;
+  /** Closing hid the window instead of quitting; returns a function that stops listening. */
+  onWindowHidden(handler: () => void): Promise<() => void>;
+  /** Whether the app starts at login, into the tray. */
+  autostartEnabled(): Promise<boolean>;
+  /** Switches starting at login; resolves with what the system now has. */
+  setAutostart(enabled: boolean): Promise<boolean>;
 }
 
 const tauriBackend: Backend = {
@@ -310,6 +331,12 @@ const tauriBackend: Backend = {
     listen<SyncProgress>("sync-progress", (event) => handler(event.payload)),
   onInboxChanged: (handler) => listen<string>("inbox-changed", (event) => handler(event.payload)),
   onCacheChanged: (handler) => listen<string>("cache-changed", (event) => handler(event.payload)),
+  configureBackground: (keepRunning, texts) =>
+    invoke("configure_background", { keepRunning, texts }),
+  onTrayCompose: (handler) => listen("tray-compose", () => handler()),
+  onWindowHidden: (handler) => listen("window-hidden", () => handler()),
+  autostartEnabled: () => invoke("autostart_enabled"),
+  setAutostart: (enabled) => invoke("set_autostart", { enabled }),
   changeSmtp: (accountId, smtp, password) => invoke("change_smtp", { accountId, smtp, password }),
   setSenderName: (accountId, name) => invoke("set_sender_name", { accountId, name }),
   setSignature: (accountId, html, pasted) => invoke("set_signature", { accountId, html, pasted }),

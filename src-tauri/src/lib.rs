@@ -5,6 +5,7 @@ mod commands;
 mod error;
 mod protocol;
 mod state;
+mod tray;
 mod watch;
 mod window;
 
@@ -15,12 +16,22 @@ pub fn run() {
     init_logging();
 
     tauri::Builder::default()
+        // First, so a second start only brings the running app's window back.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show(app);
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![tray::HIDDEN_ARG]),
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let state = state::AppState::init(app.handle())?;
             app.manage(state);
-            window::create_main(app.handle())?;
+            let hidden = std::env::args().any(|arg| arg == tray::HIDDEN_ARG);
+            window::create_main(app.handle(), !hidden)?;
+            tray::init(app.handle());
             let state = app.state::<state::AppState>();
             for account in elevant_mail_core::accounts::list(&state.db.conn())? {
                 state.watchers.start(app.handle(), &account.id);
@@ -28,17 +39,28 @@ pub fn run() {
             Ok(())
         })
         // Files dropped onto the window: kept for `attach_dropped`, never named by the frontend.
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
                 window
                     .state::<state::AppState>()
                     .set_dropped_files(paths.clone());
             }
+            // Closing keeps the app running in the tray, if there is one and the user wants it:
+            // the window is hidden then, and the close is called off.
+            tauri::WindowEvent::CloseRequested { api, .. }
+                if tray::hide_instead_of_close(window) =>
+            {
+                api.prevent_close();
+            }
+            _ => {}
         })
         .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
         .invoke_handler(tauri::generate_handler![
             commands::app::app_status,
             commands::app::check_for_update,
+            commands::app::autostart_enabled,
+            commands::app::set_autostart,
+            tray::configure_background,
             commands::accounts::detect_settings,
             commands::accounts::add_account,
             commands::accounts::add_microsoft_account,

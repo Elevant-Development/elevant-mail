@@ -48,6 +48,7 @@ let accounts: Account[] = [
 ];
 
 let mockImport = { unlocked: false };
+let mockAutostart = false;
 
 function mockImportPreview(): ImportPreview {
   const here = accounts.map((a) => a.emailAddress);
@@ -1417,6 +1418,14 @@ export const mockBackend: Backend = {
       return mockBackend.addMicrosoftAccount(account);
     }
     return mockBackend.addAccount(account, found.hasAccess ? "" : (password ?? ""));
+  },
+  configureBackground: async () => undefined,
+  onTrayCompose: async () => () => undefined,
+  onWindowHidden: async () => () => undefined,
+  autostartEnabled: async () => mockAutostart,
+  setAutostart: async (enabled) => {
+    mockAutostart = enabled;
+    return enabled;
   },
   closeAccountFile: async () => {
     mockImport = { unlocked: false };

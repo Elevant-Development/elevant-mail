@@ -1,3 +1,4 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Icon } from "@/components/common/Icon";
@@ -6,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { notificationsAllowed, showNotification } from "@/lib/desktop-notify";
 import { t } from "@/lib/i18n";
+import { api } from "@/lib/tauri";
 import { useUiStore } from "@/stores/ui";
 
 function Setting({
@@ -51,6 +53,14 @@ export function NotificationSettings() {
   const preview = useUiStore((s) => s.notificationPreview);
   const setNotifications = useUiStore((s) => s.setNotifications);
   const setPreview = useUiStore((s) => s.setNotificationPreview);
+  const keepRunning = useUiStore((s) => s.keepRunning);
+  const setKeepRunning = useUiStore((s) => s.setKeepRunning);
+  const queryClient = useQueryClient();
+  const autostart = useQuery({ queryKey: ["autostart"], queryFn: api.autostartEnabled });
+  const setAutostart = useMutation({
+    mutationFn: api.setAutostart,
+    onSuccess: (enabled) => queryClient.setQueryData(["autostart"], enabled),
+  });
   const updateCheck = useUiStore((s) => s.updateCheck);
   const setUpdateCheck = useUiStore((s) => s.setUpdateCheck);
   const [denied, setDenied] = useState(false);
@@ -83,6 +93,21 @@ export function NotificationSettings() {
         onChange={setPreview}
       />
       {denied && <Notice tone="error" text={t("settings.notifications.denied")} />}
+      <Setting
+        id="settings-keep-running"
+        label={t("settings.notifications.keepRunning")}
+        hint={t("settings.notifications.keepRunningHint")}
+        checked={keepRunning}
+        onChange={setKeepRunning}
+      />
+      <Setting
+        id="settings-autostart"
+        label={t("settings.notifications.autostart")}
+        hint={t("settings.notifications.autostartHint")}
+        checked={autostart.data ?? false}
+        disabled={autostart.isPending || setAutostart.isPending}
+        onChange={(on) => setAutostart.mutate(on)}
+      />
       <Setting
         id="settings-update-check"
         label={t("settings.notifications.updates")}

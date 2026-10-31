@@ -21,6 +21,17 @@ impl From<Error> for CommandError {
     }
 }
 
+/// The shell itself failed (window, tray): nothing the user can fix.
+impl From<tauri::Error> for CommandError {
+    fn from(error: tauri::Error) -> Self {
+        tracing::error!(error = %error_chain(&error), "command failed");
+        Self {
+            kind: ErrorKind::Internal,
+            hint: None,
+        }
+    }
+}
+
 /// "outer: inner: root cause", for one readable log line.
 fn error_chain(error: &dyn std::error::Error) -> String {
     let mut chain = error.to_string();

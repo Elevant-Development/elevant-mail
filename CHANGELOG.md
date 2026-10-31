@@ -3,6 +3,13 @@
 What changed in each version of Elevant Mail. The release workflow takes a version's section as
 the text of its GitHub release, so every version gets its entry before it is tagged.
 
+## Unreleased
+
+### New
+
+- **Keeps running in the tray.** Closing the window hides it behind a tray icon, and new mail is still fetched and announced; the tray menu opens the window, starts a new mail or quits. The first close says where the app went. Settings → Notifications switches it off, and can start the app at login, in the tray without a window.
+- **One app at a time.** Starting it again brings the running app's window back.
+
 ## 0.5.0 – 2026-10-30
 
 Elevant Mail 0.5 lets you sort mail by dragging it and the window take the shape you like, and it keeps Microsoft accounts on Windows.
