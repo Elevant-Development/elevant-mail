@@ -20,6 +20,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0012_draft_attachments.sql"),
     include_str!("migrations/0013_signatures.sql"),
     include_str!("migrations/0014_html_signatures.sql"),
+    include_str!("migrations/0015_agent_access.sql"),
 ];
 
 /// Schema version after all migrations of this build have run.

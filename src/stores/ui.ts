@@ -35,6 +35,7 @@ export type SettingsPage =
   | { section: "accounts"; accountId: string | null }
   | { section: "appearance" }
   | { section: "notifications" }
+  | { section: "agents" }
   | { section: "reading" }
   | { section: "transfer" };
 

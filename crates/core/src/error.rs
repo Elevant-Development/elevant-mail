@@ -145,6 +145,9 @@ pub enum Error {
 
     #[error("the passphrase does not open the file")]
     WrongPassphrase,
+
+    #[error("access for AI agents is switched off in Elevant Mail")]
+    AgentAccessOff,
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -250,7 +253,8 @@ impl Error {
             | Error::WrongSignInMethod
             | Error::NoRecipients
             | Error::InvalidRecipient(_)
-            | Error::AttachmentsTooLarge => ErrorKind::InvalidInput,
+            | Error::AttachmentsTooLarge
+            | Error::AgentAccessOff => ErrorKind::InvalidInput,
             Error::NotAnExport => ErrorKind::NotAnExport,
             Error::WrongPassphrase => ErrorKind::WrongPassphrase,
             Error::HostNotFound => ErrorKind::ServerNotFound,
@@ -335,6 +339,7 @@ impl Error {
             | Error::WrongSignInMethod
             | Error::ActionRefused
             | Error::MessageRejected(_)
+            | Error::AgentAccessOff
             | Error::OpenExternal(_) => None,
         }
     }

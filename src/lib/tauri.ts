@@ -12,6 +12,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Account } from "./bindings/Account";
 import type { AccountChanges } from "./bindings/AccountChanges";
 import type { AccountSettings } from "./bindings/AccountSettings";
+import type { AgentLogEntry } from "./bindings/AgentLogEntry";
+import type { AgentSettings } from "./bindings/AgentSettings";
 import type { Address } from "./bindings/Address";
 import type { Conversation } from "./bindings/Conversation";
 import type { Folder } from "./bindings/Folder";
@@ -37,6 +39,9 @@ import { mockBackend } from "./mock";
 export type { Account } from "./bindings/Account";
 export type { AccountChanges } from "./bindings/AccountChanges";
 export type { AccountSettings } from "./bindings/AccountSettings";
+export type { AgentAccount } from "./bindings/AgentAccount";
+export type { AgentLogEntry } from "./bindings/AgentLogEntry";
+export type { AgentSettings } from "./bindings/AgentSettings";
 export type { Attachment } from "./bindings/Attachment";
 export type { Conversation } from "./bindings/Conversation";
 export type { Address } from "./bindings/Address";
@@ -85,6 +90,12 @@ export interface TrayTexts {
   compose: string;
   quit: string;
   tooltip: string;
+}
+
+/** How an agent starts the MCP server: the app's program with `mcp`. */
+export interface AgentLaunch {
+  program: string;
+  args: string[];
 }
 
 export interface Backend {
@@ -236,6 +247,15 @@ export interface Backend {
   openLink(url: string): Promise<void>;
   /** A newer published version, if there is one (one request to GitHub's API). */
   checkForUpdate(): Promise<Update | null>;
+  /** Whether AI agents may read mail over MCP, and which accounts. */
+  getAgentSettings(): Promise<AgentSettings>;
+  setAgentAccess(enabled: boolean): Promise<void>;
+  setAgentAccountAccess(accountId: string, allowed: boolean): Promise<void>;
+  /** What agents read, newest first. */
+  listAgentLog(limit: number): Promise<AgentLogEntry[]>;
+  clearAgentLog(): Promise<void>;
+  /** The program and arguments an agent starts the MCP server with. */
+  agentLaunch(): Promise<AgentLaunch>;
   /**
    * Asks where to save, then writes all accounts there; with a passphrase their passwords and
    * sign-ins too, encrypted. False when the dialog was cancelled.
@@ -321,6 +341,13 @@ const tauriBackend: Backend = {
   openAttachment: (attachmentId) => invoke("open_attachment", { attachmentId }),
   openLink: (url) => invoke("open_link", { url }),
   checkForUpdate: () => invoke("check_for_update"),
+  getAgentSettings: () => invoke("get_agent_settings"),
+  setAgentAccess: (enabled) => invoke("set_agent_access", { enabled }),
+  setAgentAccountAccess: (accountId, allowed) =>
+    invoke("set_agent_account_access", { accountId, allowed }),
+  listAgentLog: (limit) => invoke("list_agent_log", { limit }),
+  clearAgentLog: () => invoke("clear_agent_log"),
+  agentLaunch: () => invoke("agent_launch"),
   exportAccounts: (passphrase) => invoke("export_accounts", { passphrase }),
   openAccountFile: () => invoke("open_account_file"),
   unlockAccountFile: (passphrase) => invoke("unlock_account_file", { passphrase }),

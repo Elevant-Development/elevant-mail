@@ -533,7 +533,11 @@ can consent without an admin. Paging beyond 5,000 cached messages per folder cam
   `draft_attachments`, with their bytes), go into its server copy and go with it; forwarding takes
   the forwarded mail's files along. Together at most 18 MB (about 25 MB once encoded).
 
-### Phase 5: MCP server for AI agents (planned)
+### Phase 5: MCP server for AI agents
+
+Reading is done (`crates/core/src/agents.rs`, `crates/mcp`): the app's program with `mcp` is the
+server (stdio, newline-delimited JSON-RPC, no SDK), switched on and shared per account under
+Settings → AI agents, every call logged (table `agent_log`, newest 1000). Writing tools are next.
 
 Elevant Mail offers the local mail store over the Model Context Protocol, so AI agents (Claude
 Code and other MCP clients) can search and read mail without their own IMAP access.

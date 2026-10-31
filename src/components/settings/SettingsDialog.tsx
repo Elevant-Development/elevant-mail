@@ -12,6 +12,7 @@ import { useAccounts } from "@/queries/accounts";
 import { useUiStore } from "@/stores/ui";
 
 import { AccountSettingsPanel } from "./AccountSettingsPanel";
+import { AgentSettings } from "./AgentSettings";
 import { AccountTransfer } from "./AccountTransfer";
 import { NotificationSettings } from "./NotificationSettings";
 import { ReadingSettings } from "./ReadingSettings";
@@ -131,6 +132,13 @@ export function SettingsDialog() {
               <Icon name="bell" />
               <span className="truncate">{t("settings.notifications")}</span>
             </NavItem>
+            <NavItem
+              selected={page?.section === "agents"}
+              onSelect={() => openSettings({ section: "agents" })}
+            >
+              <Icon name="agents" />
+              <span className="truncate">{t("settings.agents")}</span>
+            </NavItem>
           </NavGroup>
         </nav>
 
@@ -149,6 +157,11 @@ export function SettingsDialog() {
             <div className="grid max-w-md gap-6">
               <h2 className="text-base font-medium">{t("settings.transfer")}</h2>
               <AccountTransfer />
+            </div>
+          ) : page?.section === "agents" ? (
+            <div className="grid max-w-md gap-6">
+              <h2 className="text-base font-medium">{t("settings.agents")}</h2>
+              <AgentSettings />
             </div>
           ) : page?.section === "notifications" ? (
             <div className="grid max-w-md gap-6">

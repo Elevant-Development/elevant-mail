@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "src-tauri"]
+members = ["crates/core", "crates/mcp", "src-tauri"]
 
 [workspace.package]
 version = "0.5.0"
@@ -17,6 +17,7 @@ argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
 elevant-mail-core = { path = "crates/core" }
+elevant-mail-mcp = { path = "crates/mcp" }
 futures = "0.3"
 hickory-resolver = "0.26"
 keyring = "4.2"

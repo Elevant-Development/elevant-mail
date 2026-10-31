@@ -4,6 +4,7 @@
 import {
   Archive,
   ArrowLeft,
+  Bot,
   ArrowRightLeft,
   Bell,
   Bold,
@@ -67,6 +68,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const icons = {
+  agents: Bot,
   alert: CircleAlert,
   archive: Archive,
   back: ArrowLeft,

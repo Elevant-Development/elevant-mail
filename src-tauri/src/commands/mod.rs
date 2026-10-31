@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod actions;
+pub mod agents;
 pub mod app;
 pub mod attachments;
 pub mod compose;

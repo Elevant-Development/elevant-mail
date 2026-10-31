@@ -15,6 +15,9 @@ use tokio::sync::oneshot;
 
 use crate::watch::Watchers;
 
+/// The mail cache in the app's data folder; `elevant-mail mcp` opens the same file.
+pub const DATABASE_FILE: &str = "elevant-mail.sqlite3";
+
 pub struct AppState {
     pub db: Database,
     pub secrets: Box<dyn SecretStore>,
@@ -41,7 +44,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn init(app: &AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
-        let db_path = app.path().app_data_dir()?.join("elevant-mail.sqlite3");
+        let db_path = app.path().app_data_dir()?.join(DATABASE_FILE);
         let db = Database::open(&db_path)?;
         tracing::info!(
             path = %db_path.display(),

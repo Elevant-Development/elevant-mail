@@ -58,6 +58,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app::app_status,
             commands::app::check_for_update,
+            commands::agents::get_agent_settings,
+            commands::agents::set_agent_access,
+            commands::agents::set_agent_account_access,
+            commands::agents::list_agent_log,
+            commands::agents::clear_agent_log,
+            commands::agents::agent_launch,
             commands::app::autostart_enabled,
             commands::app::set_autostart,
             tray::configure_background,
@@ -121,6 +127,35 @@ pub fn run() {
         .expect("failed to start Elevant Mail");
 }
 
+/// Serves AI agents over MCP until stdin ends; the exit code. Logs go to stderr, stdout carries
+/// the protocol. The database is the app's own, found where Tauri keeps it.
+pub fn run_mcp() -> i32 {
+    init_logging();
+    let Some(path) = dirs::data_dir().map(|dir| dir.join(IDENTIFIER).join(state::DATABASE_FILE))
+    else {
+        tracing::error!("no data folder for the mail cache");
+        return 1;
+    };
+    let db = match elevant_mail_core::Database::open(&path) {
+        Ok(db) => db,
+        Err(error) => {
+            tracing::error!(%error, path = %path.display(), "could not open the mail cache");
+            return 1;
+        }
+    };
+    let stdin = std::io::stdin().lock();
+    match elevant_mail_mcp::serve(&db, stdin, std::io::stdout().lock()) {
+        Ok(()) => 0,
+        Err(error) => {
+            tracing::error!(%error, "MCP connection failed");
+            1
+        }
+    }
+}
+
+/// tauri.conf.json's identifier: Tauri keeps the app's data in a folder of this name.
+const IDENTIFIER: &str = "dev.elevant.mail";
+
 /// Logs to stderr. The level comes from `ELEVANT_MAIL_LOG` (e.g. `debug`), default `info`.
 /// Credentials never reach a log line: see `elevant_mail_core::redact`.
 fn init_logging() {
@@ -129,5 +164,19 @@ fn init_logging() {
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        // Never stdout: in `mcp` mode it carries the protocol.
+        .with_writer(std::io::stderr)
+        // Colours only for a person at a terminal, not in an agent's log.
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .init();
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_mcp_server_finds_the_apps_data_folder() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["identifier"], super::IDENTIFIER);
+    }
 }

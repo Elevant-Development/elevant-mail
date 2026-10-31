@@ -17,6 +17,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 elevant-mail-core.workspace = true
+elevant-mail-mcp.workspace = true
+# The app's data folder for `elevant-mail mcp`, which runs without Tauri: the same as Tauri's.
+dirs = "6"
 open.workspace = true
 percent-encoding.workspace = true
 serde.workspace = true

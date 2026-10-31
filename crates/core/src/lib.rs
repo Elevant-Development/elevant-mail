@@ -3,6 +3,7 @@
 
 pub mod accounts;
 pub mod actions;
+pub mod agents;
 pub mod attachments;
 pub mod db;
 mod error;

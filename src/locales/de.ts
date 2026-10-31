@@ -474,4 +474,31 @@ export const de = {
     "Das Fenster verschwindet ins Tray, neue Mails werden weiter abgerufen und gemeldet. Beenden über das Tray-Menü.",
   "settings.notifications.autostart": "Beim Anmelden starten",
   "settings.notifications.autostartHint": "Startet mit dem System im Tray, ohne Fenster.",
+  "settings.agents": "KI-Agenten",
+  "agents.intro":
+    "KI-Agenten wie Claude Code können über MCP deine Mails durchsuchen und lesen, ohne eigenen Zugang zu deinen Konten. Sie lesen nur, was auf diesem Rechner gespeichert ist, und bekommen keine Passwörter. Senden, Löschen oder Verschieben können sie nicht.",
+  "agents.enabled": "Zugriff für KI-Agenten",
+  "agents.enabledHint":
+    "Ausgeschaltet bekommt kein Agent etwas zu sehen, auch wenn er eingerichtet ist.",
+  "agents.accounts": "Freigegebene Konten",
+  "agents.noneShared":
+    "Noch kein Konto freigegeben. Agenten sehen erst etwas, wenn du hier eines einschaltest.",
+  "agents.connect": "Agent verbinden",
+  "agents.connectHint":
+    "Der Agent startet Elevant Mail als MCP-Server. Die App muss dafür nicht offen sein.",
+  "agents.claudeCode": "Claude Code (im Terminal)",
+  "agents.otherClients": "Andere MCP-Clients",
+  "agents.copy": "Kopieren",
+  "agents.copied": "Kopiert",
+  "agents.log": "Protokoll",
+  "agents.log.empty": "Noch kein Zugriff.",
+  "agents.log.clear": "Leeren",
+  "agents.log.refused": "abgewiesen",
+  "agents.log.results.one": "1 Ergebnis",
+  "agents.log.results.other": "{count} Ergebnisse",
+  "agents.tool.listAccounts": "Konten aufgelistet",
+  "agents.tool.listFolders": "Ordner aufgelistet",
+  "agents.tool.listMessages": "Ordner gelesen",
+  "agents.tool.searchMessages": "Gesucht",
+  "agents.tool.readMessage": "Mail gelesen",
 } as const;

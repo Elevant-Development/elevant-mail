@@ -8,6 +8,7 @@ import type {
   Account,
   AccountSettings,
   Address,
+  AgentLogEntry,
   Backend,
   Conversation,
   Draft,
@@ -81,6 +82,38 @@ function mockImportPreview(): ImportPreview {
     })),
   };
 }
+
+/** Agent access, with a few accesses as they would be logged. */
+const mockAgents = {
+  enabled: false,
+  shared: new Set<string>(),
+  log: [
+    {
+      at: Date.now() - 2 * MINUTE,
+      client: "claude-code",
+      tool: "read_message",
+      detail: L("Agenda für Donnerstag", "Agenda for Thursday"),
+      results: 1,
+      refused: false,
+    },
+    {
+      at: Date.now() - 3 * MINUTE,
+      client: "claude-code",
+      tool: "search_messages",
+      detail: "from:martin is:unread",
+      results: 2,
+      refused: false,
+    },
+    {
+      at: Date.now() - 40 * MINUTE,
+      client: "claude-code",
+      tool: "list_folders",
+      detail: "",
+      results: 0,
+      refused: true,
+    },
+  ] as AgentLogEntry[],
+};
 
 const accountSettings: Record<string, AccountSettings> = {
   "acc-private": {
@@ -1378,6 +1411,28 @@ export const mockBackend: Backend = {
   onSyncProgress: async () => () => undefined,
   onInboxChanged: async () => () => undefined,
   // Sample data has no updates; set "mock-update" in localStorage to see the notice.
+  getAgentSettings: async () => ({
+    enabled: mockAgents.enabled,
+    accounts: accounts.map((a) => ({
+      accountId: a.id,
+      displayName: a.displayName,
+      emailAddress: a.emailAddress,
+      color: a.color,
+      allowed: mockAgents.shared.has(a.id),
+    })),
+  }),
+  setAgentAccess: async (enabled) => {
+    mockAgents.enabled = enabled;
+  },
+  setAgentAccountAccess: async (accountId, allowed) => {
+    if (allowed) mockAgents.shared.add(accountId);
+    else mockAgents.shared.delete(accountId);
+  },
+  listAgentLog: async (limit) => mockAgents.log.slice(0, limit),
+  clearAgentLog: async () => {
+    mockAgents.log = [];
+  },
+  agentLaunch: async () => ({ program: "/home/alex/.local/bin/elevant-mail", args: ["mcp"] }),
   checkForUpdate: async () =>
     localStorage.getItem("mock-update")
       ? {

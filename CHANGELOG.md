@@ -9,6 +9,7 @@ the text of its GitHub release, so every version gets its entry before it is tag
 
 - **Keeps running in the tray.** Closing the window hides it behind a tray icon, and new mail is still fetched and announced; the tray menu opens the window, starts a new mail or quits. The first close says where the app went. Settings → Notifications switches it off, and can start the app at login, in the tray without a window.
 - **One app at a time.** Starting it again brings the running app's window back.
+- **Mail for AI agents (MCP).** Agents such as Claude Code can search and read the mail of the accounts you share with them, from the copy on your computer and without passwords: `elevant-mail mcp` is the server, Settings → AI agents switches it on, shows the command to connect Claude Code and logs every access. Read-only; off until you switch it on.
 
 ## 0.5.0 – 2026-10-30
 
