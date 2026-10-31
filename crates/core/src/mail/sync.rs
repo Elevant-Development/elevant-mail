@@ -443,14 +443,15 @@ async fn load_body_in(
     let tx = conn.transaction()?;
     tx.execute(
         "UPDATE messages SET body_text = ?2, body_html = ?3, snippet = ?4, has_attachments = ?5,
-           body_state = 'full'
+           calendar = ?6, body_state = 'full'
          WHERE id = ?1",
         params![
             message_id,
             message.body_text,
             message.body_html,
             message.snippet,
-            message.has_attachments
+            message.has_attachments,
+            message.calendar,
         ],
     )?;
     crate::attachments::store(
@@ -607,9 +608,9 @@ fn store_message(
         "INSERT INTO messages (id, account_id, folder_id, uid, message_id, in_reply_to,
            references_header, subject, from_name, from_address, to_addresses, cc_addresses,
            date_sent, date_received, size_bytes, snippet, is_read, is_flagged, has_attachments,
-           body_state, body_text, body_html, fetched_at, by_search, reply_to)
+           body_state, body_text, body_html, fetched_at, by_search, reply_to, calendar)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-           ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+           ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
          ON CONFLICT (folder_id, uid) DO UPDATE
            SET is_read = excluded.is_read, is_flagged = excluded.is_flagged,
              by_search = min(by_search, excluded.by_search)
@@ -642,6 +643,7 @@ fn store_message(
             (!message.reply_to.is_empty())
                 .then(|| to_json(&message.reply_to))
                 .flatten(),
+            message.calendar,
         ],
         |row| row.get(0),
     )?;

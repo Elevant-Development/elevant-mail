@@ -7,6 +7,8 @@ use crate::model::Address;
 const SNIPPET_LENGTH: usize = 200;
 /// Inline images up to this size are cached with the body; larger ones are left out.
 const INLINE_IMAGE_LIMIT: usize = 1024 * 1024;
+/// An invitation's calendar part is a few KB; larger ones are not kept.
+const CALENDAR_LIMIT: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedMessage {
@@ -31,6 +33,8 @@ pub struct ParsedMessage {
     /// Files offered for download; embedded images are not among them.
     pub attachments: Vec<AttachmentPart>,
     pub has_attachments: bool,
+    /// The iCalendar part of an invitation (`text/calendar`), as text.
+    pub calendar: Option<String>,
 }
 
 /// An attachment as listed: the bytes are fetched again from the server when needed.
@@ -78,6 +82,7 @@ pub fn parse_message(raw: &[u8]) -> ParsedMessage {
         // Signature logos and other embedded images do not earn the paperclip.
         has_attachments: !attachments.is_empty(),
         attachments,
+        calendar: calendar(&message),
         ..parse_headers_of(&message)
     }
 }
@@ -96,6 +101,8 @@ fn attachments(message: &mail_parser::Message<'_>) -> Vec<AttachmentPart> {
         .attachments()
         // An image the HTML shows (`cid:`) is part of the text, not a download.
         .filter(|part| !(part.is_inline() && part.content_id().is_some()))
+        // An invitation's calendar part without a file name shows as the invitation instead.
+        .filter(|part| !(is_calendar(part) && part.attachment_name().is_none()))
         .map(|part| AttachmentPart {
             part_id: part.id().to_string(),
             filename: part
@@ -107,6 +114,23 @@ fn attachments(message: &mail_parser::Message<'_>) -> Vec<AttachmentPart> {
             size: u64::try_from(part.decoded_len()).unwrap_or(u64::MAX),
         })
         .collect()
+}
+
+fn is_calendar(part: &mail_parser::MessagePart<'_>) -> bool {
+    matches!(
+        mime_type_of(part).as_str(),
+        "text/calendar" | "application/ics"
+    )
+}
+
+/// The first calendar part: Outlook and others send it next to the text, some only as an
+/// `invite.ics` attachment.
+fn calendar(message: &mail_parser::Message<'_>) -> Option<String> {
+    message
+        .parts()
+        .find(|part| is_calendar(part) && part.decoded_len() <= CALENDAR_LIMIT)
+        .map(|part| String::from_utf8_lossy(&part.decoded()).into_owned())
+        .filter(|text| text.contains("BEGIN:VCALENDAR"))
 }
 
 fn inline_images(message: &mail_parser::Message<'_>) -> Vec<InlineImage> {
@@ -303,6 +327,27 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n";
         let parsed = parse_message(raw);
         assert!(parsed.attachments.is_empty(), "{:?}", parsed.attachments);
         assert!(!parsed.has_attachments);
+    }
+
+    #[test]
+    fn keeps_the_calendar_part_of_an_invitation() {
+        let raw = b"From: a@example.org\r\nSubject: Planung\r\n\
+Content-Type: multipart/mixed; boundary=\"m\"\r\n\r\n\
+--m\r\nContent-Type: multipart/alternative; boundary=\"a\"\r\n\r\n\
+--a\r\nContent-Type: text/plain\r\n\r\nPlanung\r\n\
+--a\r\nContent-Type: text/calendar; method=REQUEST; charset=utf-8\r\n\r\n\
+BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n--a--\r\n\
+--m\r\nContent-Type: application/ics; name=\"invite.ics\"\r\n\
+Content-Disposition: attachment; filename=\"invite.ics\"\r\n\r\n\
+BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n--m--\r\n";
+        let parsed = parse_message(raw);
+        assert!(parsed.calendar.unwrap().starts_with("BEGIN:VCALENDAR"));
+        // The named file stays a download, the part next to the text does not.
+        assert_eq!(parsed.attachments.len(), 1, "{:?}", parsed.attachments);
+        assert_eq!(
+            parsed.attachments[0].filename.as_deref(),
+            Some("invite.ics")
+        );
     }
 
     #[test]

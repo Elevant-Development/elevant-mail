@@ -37,6 +37,11 @@ const MICROSOFT_TOKEN: &str = "https://login.microsoftonline.com/common/oauth2/v
 const MICROSOFT_SCOPES: &str = "https://outlook.office.com/IMAP.AccessAsUser.All \
 https://outlook.office.com/SMTP.Send offline_access openid email";
 
+/// Calendars over Microsoft Graph. Asked for at sign-in, so one consent covers mail and calendar;
+/// a token for it comes from the same refresh token ([`graph_token`]), since one token serves
+/// only one resource.
+pub const GRAPH_CALENDARS: &str = "https://graph.microsoft.com/Calendars.ReadWrite";
+
 /// How long the browser sign-in may take before the app stops waiting.
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const TOKEN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -49,7 +54,10 @@ pub struct Endpoints {
     pub client_id: String,
     pub authorize_url: String,
     pub token_url: String,
+    /// What the tokens of [`access_token`] are for: mail.
     pub scopes: String,
+    /// Asked for consent at sign-in as well; tokens for these come with [`token_for`].
+    pub extra_consent: String,
 }
 
 impl Endpoints {
@@ -59,6 +67,7 @@ impl Endpoints {
             authorize_url: MICROSOFT_AUTHORIZE.into(),
             token_url: MICROSOFT_TOKEN.into(),
             scopes: MICROSOFT_SCOPES.into(),
+            extra_consent: GRAPH_CALENDARS.into(),
         }
     }
 }
@@ -102,7 +111,10 @@ pub async fn sign_in(
         .append_pair("response_type", "code")
         .append_pair("redirect_uri", &redirect_uri)
         .append_pair("response_mode", "query")
-        .append_pair("scope", &endpoints.scopes)
+        .append_pair(
+            "scope",
+            format!("{} {}", endpoints.scopes, endpoints.extra_consent).trim(),
+        )
         .append_pair("state", &state)
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")
@@ -126,21 +138,37 @@ pub async fn sign_in(
     request_tokens(&endpoints.token_url, &form).await
 }
 
-/// A new access token from a refresh token.
+/// A new access token from a refresh token, for mail.
 pub async fn refresh(endpoints: &Endpoints, refresh_token: &Secret) -> Result<Tokens> {
+    refresh_for(endpoints, refresh_token, &endpoints.scopes).await
+}
+
+async fn refresh_for(endpoints: &Endpoints, refresh_token: &Secret, scope: &str) -> Result<Tokens> {
     let form = [
         ("client_id", endpoints.client_id.as_str()),
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token.expose()),
-        ("scope", endpoints.scopes.as_str()),
+        ("scope", scope),
     ];
     request_tokens(&endpoints.token_url, &form).await
 }
 
-/// The cached access token of an account, renewed with its refresh token when it is (almost)
-/// expired. A rotated refresh token replaces the old one in the keyring.
+/// The cached access token of an account for mail, renewed with its refresh token when it is
+/// (almost) expired. A rotated refresh token replaces the old one in the keyring.
 pub async fn access_token(secrets: &dyn SecretStore, account_id: &str) -> Result<Secret> {
     access_token_with(&Endpoints::microsoft(), secrets, account_id).await
+}
+
+/// The access token for the account's calendars over Microsoft Graph.
+/// [`Error::CalendarAccessMissing`] where the account signed in before the app asked for them.
+pub async fn graph_token(secrets: &dyn SecretStore, account_id: &str) -> Result<Secret> {
+    token_for(
+        &Endpoints::microsoft(),
+        secrets,
+        account_id,
+        GRAPH_CALENDARS,
+    )
+    .await
 }
 
 pub(crate) async fn access_token_with(
@@ -148,7 +176,18 @@ pub(crate) async fn access_token_with(
     secrets: &dyn SecretStore,
     account_id: &str,
 ) -> Result<Secret> {
-    if let Some(token) = cached(account_id) {
+    token_for(endpoints, secrets, account_id, &endpoints.scopes.clone()).await
+}
+
+/// An access token for `scope`, cached per account and scope.
+pub(crate) async fn token_for(
+    endpoints: &Endpoints,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    scope: &str,
+) -> Result<Secret> {
+    let key = cache_key(endpoints, account_id, scope);
+    if let Some(token) = cached(&key) {
         return Ok(token);
     }
     let refresh_token = secrets
@@ -157,12 +196,27 @@ pub(crate) async fn access_token_with(
             Error::SecretNotFound => Error::SignInExpired,
             other => other,
         })?;
-    let tokens = refresh(endpoints, &refresh_token).await?;
+    let tokens = refresh_for(endpoints, &refresh_token, scope)
+        .await
+        .map_err(|error| match error {
+            // Signed in before the app asked for this: allowed with the next sign-in.
+            Error::ConsentRequired if scope != endpoints.scopes => Error::CalendarAccessMissing,
+            other => other,
+        })?;
     if let Some(rotated) = &tokens.refresh_token {
         secrets.set(account_id, SecretKind::OAuthRefreshToken, rotated)?;
     }
-    remember(account_id, &tokens);
+    remember(&key, &tokens);
     Ok(tokens.access_token)
+}
+
+/// Mail's tokens are kept under the account's id, others under the id and their scope.
+fn cache_key(endpoints: &Endpoints, account_id: &str, scope: &str) -> String {
+    if scope == endpoints.scopes {
+        account_id.to_owned()
+    } else {
+        format!("{account_id} {scope}")
+    }
 }
 
 type TokenCache = Mutex<HashMap<String, (Arc<Secret>, i64)>>;
@@ -182,11 +236,13 @@ pub fn remember(account_id: &str, tokens: &Tokens) {
         );
 }
 
+/// Drops the account's tokens, for mail and the rest.
 pub fn forget(account_id: &str) {
+    let prefix = format!("{account_id} ");
     ACCESS_TOKENS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .remove(account_id);
+        .retain(|key, _| key != account_id && !key.starts_with(&prefix));
 }
 
 fn cached(account_id: &str) -> Option<Secret> {
@@ -330,7 +386,10 @@ async fn request_tokens(token_url: &str, form: &[(&str, &str)]) -> Result<Tokens
         .map_err(|error| Error::SignInFailed(error.to_string()))?;
     if let Some(error) = body.error {
         let description = body.error_description.unwrap_or_default();
-        return Err(if error == "invalid_grant" {
+        return Err(if description.contains("AADSTS65001") {
+            // A scope nobody consented to yet.
+            Error::ConsentRequired
+        } else if error == "invalid_grant" {
             // Refresh token expired, revoked, or the password changed: sign in again.
             Error::SignInExpired
         } else {
@@ -452,6 +511,10 @@ mod tests {
                             (400, r#"{"error":"invalid_grant"}"#.to_owned())
                         }
                     }
+                    Some("refresh_token") if form.get("refresh_token").map(String::as_str) == Some("no-calendars") => (
+                        400,
+                        r#"{"error":"invalid_grant","error_description":"AADSTS65001: The user or administrator has not consented"}"#.to_owned(),
+                    ),
                     Some("refresh_token") if form.get("refresh_token").map(String::as_str) == Some("refresh-1") => (
                         200,
                         r#"{"access_token":"access-2","refresh_token":"refresh-2","expires_in":3600}"#.to_owned(),
@@ -476,6 +539,7 @@ mod tests {
             authorize_url: "https://login.example.org/authorize".into(),
             token_url: server.url.clone(),
             scopes: "imap offline_access".into(),
+            extra_consent: "calendars".into(),
         }
     }
 
@@ -604,6 +668,35 @@ mod tests {
         forget(&account);
         let expired = access_token_with(&endpoints(&server), &secrets, &account).await;
         assert!(matches!(expired, Err(Error::SignInExpired)));
+    }
+
+    #[tokio::test]
+    async fn calendars_have_their_own_token_and_consent() {
+        let server = token_server().await;
+        let secrets = MemoryStore::default();
+        let account = crate::ids::new_id();
+        let refresh = |token: &str| {
+            secrets
+                .set(&account, SecretKind::OAuthRefreshToken, &Secret::new(token))
+                .unwrap();
+        };
+        refresh("refresh-1");
+        let calendars = token_for(&endpoints(&server), &secrets, &account, "calendars")
+            .await
+            .unwrap();
+        assert_eq!(calendars.expose(), "access-2");
+        // Kept apart from the mail token: mail still asks the server.
+        refresh("no-calendars");
+        assert!(matches!(
+            access_token_with(&endpoints(&server), &secrets, &account).await,
+            Err(Error::ConsentRequired)
+        ));
+        // An account that signed in before the app asked for calendars.
+        forget(&account);
+        assert!(matches!(
+            token_for(&endpoints(&server), &secrets, &account, "calendars").await,
+            Err(Error::CalendarAccessMissing)
+        ));
     }
 
     #[test]

@@ -122,6 +122,16 @@ pub fn run() {
             commands::compose::discard_draft,
             commands::compose::open_draft,
             commands::compose::suggest_addresses,
+            commands::calendar::list_calendars,
+            commands::calendar::set_calendar_visible,
+            commands::calendar::list_occurrences,
+            commands::calendar::get_event,
+            commands::calendar::save_event,
+            commands::calendar::delete_event,
+            commands::calendar::sync_calendars,
+            commands::calendar::caldav_status,
+            commands::calendar::set_caldav,
+            commands::calendar::answer_invitation,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Elevant Mail");

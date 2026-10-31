@@ -714,6 +714,7 @@ pub fn get_message(
                 remote_image_count: 0,
                 remote_images_loaded: false,
                 attachments: Vec::new(),
+                invitation: None,
             };
             Ok((message, row.get::<_, Option<String>>(15)?))
         })
@@ -723,6 +724,7 @@ pub fn get_message(
     };
 
     message.attachments = crate::attachments::list(conn, message_id)?;
+    message.invitation = crate::calendar::invitation::for_message(conn, message_id)?;
     let mut remote_images = Vec::new();
     if let Some(raw_html) = raw_html {
         let safe = sanitize(&raw_html, message_id, view);

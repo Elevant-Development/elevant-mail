@@ -176,6 +176,8 @@ pub struct Message {
     pub remote_images_loaded: bool,
     /// Known once the full body is cached.
     pub attachments: Vec<Attachment>,
+    /// The invitation, cancellation or answer the mail carries as a calendar part.
+    pub invitation: Option<crate::calendar::invitation::Invitation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]

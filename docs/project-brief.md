@@ -7,7 +7,7 @@ Status: 2026-10-29 · v0.2 (reading with several accounts)
 Elevant Mail is a free, open-source desktop mail client for **Linux (Ubuntu/Debian)** and
 **Windows**: modern, fast and light on resources, for several IMAP accounts with a unified inbox.
 It is not an enterprise client and not a full Thunderbird replacement. Mail comes first; a calendar
-may follow later as its own area (see "Later: calendar").
+follows as its own area (see "Calendar").
 
 Not negotiable:
 
@@ -43,7 +43,9 @@ provider's own domain (`autoconfig.<domain>`, DNS SRV per RFC 6186).
   only grant consent): public client without a secret, multi-tenant, authority `common` (also
   covers personal Outlook.com accounts), redirect `http://localhost` (loopback), PKCE
 - Delegated permissions: `https://outlook.office.com/IMAP.AccessAsUser.All`,
-  `https://outlook.office.com/SMTP.Send`, `offline_access`, `openid`, `email`
+  `https://outlook.office.com/SMTP.Send`, `offline_access`, `openid`, `email`, and for the
+  calendar `https://graph.microsoft.com/Calendars.ReadWrite` (asked for at sign-in; its token
+  comes from the same refresh token)
 - Flow: open the system browser → redirect to a local port → fetch tokens → refresh token into
   the system keyring
 - The client ID is in the code (usual for public clients). Later it can be overridden in the
@@ -228,7 +230,11 @@ it does not understand.
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `accounts`        | Accounts with IMAP and SMTP settings (SMTP NULL until changed: then the one that goes with the IMAP host), sign-in method, colour, `sender_name`, `signature`, `keep_days` (how far back the cache keeps mail), `in_unified_inbox`. No passwords. |
 | `folders`         | Folders per account with SPECIAL-USE role, `uid_validity`, `uid_next`, `highest_modseq`, counts                                                           |
-| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to`, `references_header` and `reply_to`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched; unique per folder and UID |
+| `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to`, `references_header` and `reply_to`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched, `calendar` for an invitation's iCalendar part; unique per folder and UID |
+| `invitation_replies` | What the user answered to an invitation, per account, event UID and occurrence, with the invitation's `SEQUENCE` it answered |
+| `accounts` (CalDAV) | `caldav_url` (where the account's calendars are, found or set), `caldav_enabled`, `caldav_checked_at` (when looking found nothing) |
+| `calendars`       | Calendars per account (`account_id` NULL: the calendar on this computer, id `local`), colour, read-only, shown or hidden, the server's id and sync token once synced, `can_invite` (its server sends invitations; NULL until asked) |
+| `events`          | Events with their iCalendar text as the source of truth, beside it title, place, first start and end, all-day and series flags for the views; the server's id and ETag, `pending` for a change still on its way |
 | `thread_keys`     | Every Message-ID a conversation has seen, per account, so replies find it                                                                                  |
 | `drafts`          | Mail being written: recipients, subject, HTML and text, the Message-ID of its copy in the drafts folder, when it changed and when it was uploaded |
 | `draft_attachments` | Files attached to a draft, with their bytes; they go with the draft |
@@ -275,6 +281,7 @@ checks that they are current.
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
 | Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
 | Writing     | `send_message` (returns once the SMTP server took it; filing in Sent and removing the draft follow, then `cache-changed`), `save_draft`, `list_drafts`, `upload_draft`, `discard_draft`, `open_draft` (from the drafts folder), `pick_attachments`, `attach_dropped`, `detach_attachment`, `list_attachments`, `forward_attachments`, `suggest_addresses` |
+| Calendar    | `list_calendars`, `set_calendar_visible`, `list_occurrences` (the dates of all events in a range, series expanded), `get_event`, `save_event` (new or changed), `delete_event` (a series with all its dates), `sync_calendars` (CalDAV, one at a time per account), `caldav_status`, `set_caldav` (on or off, the server's address; checked first), `answer_invitation` (sends the iTIP answer to the organizer; returns once the SMTP server took it) |
 | Links       | `open_link`                                                                                                                               |
 | Attachments | `save_attachment` (the system's save dialog via `tauri-plugin-dialog`, called from Rust only; the frontend gets no dialog or file permissions), `open_attachment` |
 | Sync        | `sync_account`, `sync_folder`, `load_older`, `search_server` (one account's folders on the server)                                        |
@@ -574,16 +581,95 @@ Optional AI help in the app, with a freely chosen provider. Nothing is active wi
 - **Mail content is untrusted:** instructions in a mail must not steer the AI (prompt
   injection); actions only after the user confirms.
 
-### Later: calendar
+### Calendar (in progress)
 
-A calendar as its own area next to mail, after sending works.
+A calendar as its own area next to mail. Local first like mail: events are cached in SQLite, the
+interface reads only from the cache. Decided on 2026-10-31:
 
-- Earlier, in phase 3 or 4: show invitations (`.ics`) in the reader; accepting and declining needs
-  sending (phase 4)
-- Sources: CalDAV (self-hosted, for example Mailcow with SOGo), Microsoft 365 and Outlook.com via
-  Microsoft Graph (`Calendars.ReadWrite`), Google via OAuth. Google's calendar scope is
-  "sensitive" and needs Google's app verification; unlike Gmail there is no app password route.
-- Local first like mail: events are cached in SQLite, the interface reads only from the cache
+- **Where:** its own area; a narrow column of icons at the left edge switches between mail and
+  calendar (`Ctrl+1`, `Ctrl+2`) and takes the areas still to come, such as contacts. Day, week and
+  month view; the sidebar lists the calendars per account with a colour and a checkbox.
+- **Sources first:** CalDAV (self-hosted such as Mailcow with SOGo, Nextcloud, Posteo,
+  mailbox.org, iCloud; found via `/.well-known/caldav` on the mail host, same password as IMAP) and
+  Microsoft 365/Outlook.com via Microsoft Graph with the existing sign-in. Graph needs the
+  delegated permission `Calendars.ReadWrite` on the app registration and one "sign in again" per
+  account, since the scope is new. Google later: its calendar scope is "sensitive" and needs
+  Google's app verification; unlike Gmail there is no app password route.
+- **Reading and writing** from the start: creating, changing and deleting events take effect
+  locally at once and go to the server through a queue, like mail actions.
+- iCalendar parsing, time zones (also Windows names such as "W. Europe Standard Time") and
+  recurrences come from `calcard` (Stalwart, Apache-2.0 OR MIT).
+
+Steps:
+
+1. **Invitations in the reader** — done. A mail's calendar part (`text/calendar` or an `.ics`
+   attachment, up to 256 KB) is cached with its body (`messages.calendar`); the reader shows when,
+   where, who and how a series repeats above the text (`crates/core/src/calendar/invitation.rs`).
+   Invitations get Accept, Maybe and Decline: an iTIP `METHOD:REPLY` mail goes to the organizer
+   over the account's SMTP server, in the invitation's thread, and is not filed in Sent. The
+   answer is kept per event (`invitation_replies`), so a later copy of the invitation shows it;
+   when the organizer changed the event since (higher `SEQUENCE`), the buttons come back.
+   Cancellations and answers from attendees show as such. Microsoft accounts answer by mail for
+   now; with Graph (step 4) they answer through it.
+2. **Calendar area** — done. The icon column at the left edge switches to it; day, week and month
+   view (`src/components/calendar/`), the week starting where the user lives. The sidebar lists
+   the calendars per account with a box to show or hide each. A click on an event opens it, a
+   click on an empty slot or "New event" starts one; the dialog sets title, start and end (or
+   whole days), repetition (daily, weekly, monthly, yearly), calendar, place and description.
+   Changing a series changes all its dates, deleting one deletes them all. Keys: `t` today, `←`/`→`
+   or `j`/`k`, `d`/`w`/`m`, `n` new event. Events are stored as iCalendar
+   (`crates/core/src/calendar/events.rs`), written in the system's time zone with its
+   `VTIMEZONE`, so a series keeps its local time across clock changes; series are expanded when a
+   range is asked for. Until the sources come, events go into a calendar on this computer.
+   `calcard` 0.3 expands a series whose start is given in UTC (`DTSTART:…Z`, as Google writes
+   it) in the default time zone; the app names such a start `TZID=UTC` before expanding.
+3. **CalDAV**, reading and writing — done (`crates/core/src/calendar/caldav.rs`, `sync.rs`). For
+   accounts with a password; the same user name and password sign in. The calendars are looked
+   for at a few providers that keep them elsewhere (mailbox.org, Posteo, iCloud), then at
+   `/.well-known/caldav` on the mail server and on the address's domain (RFC 6764), following
+   `current-user-principal` to the `calendar-home-set`; nothing else is asked. Found nothing, the
+   app looks again a day later; the account settings (Calendar) switch it off or take the
+   server's address. Calendars for tasks only are left out; read-only ones are marked. An account's calendars show in
+   the account's colour (the server's colour is kept for later, when calendars can get their own). A sync
+   sends the changes made here first (`PUT` with `If-None-Match: *` for new events, `If-Match`
+   with the ETag for changed ones, `DELETE` with `If-Match`), then skips calendars whose
+   `getctag`/`sync-token` did not change, lists the others' ETags and fetches what is new or
+   changed with `calendar-multiget`; events gone there go here. The server wins: a change here
+   to an event changed there since (`412`) is dropped for the server's version. Syncs run at
+   start, every 5 minutes with mail, and right after a change. Moving an event to another
+   calendar deletes it in the old one and creates it in the new one. Plain HTTP only to this
+   computer, for the tests against the CalDAV server in the test process
+   (`caldav_test_server.rs`).
+4. **Microsoft Graph**, reading and writing — done (`crates/core/src/calendar/graph.rs`). The
+   Microsoft sign-in asks for `Calendars.ReadWrite` on Graph as well, so one consent covers mail
+   and calendar; since a token serves one resource, the Graph token comes from the same refresh
+   token, cached apart. Accounts that signed in before get `CalendarAccessMissing` and a button
+   "Allow calendars" that signs in once more. Each sync lists a calendar's single events and series
+   masters with their `changeKey` and fetches the changed ones; a master read on its own brings
+   its changed dates (`exceptionOccurrences`) and cancelled ones (`cancelledOccurrences`). Times
+   are asked for in UTC and put back into the zone the event was made in
+   (`originalStartTimeZone`, Windows names too), so whole series are kept as iCalendar like CalDAV
+   ones: pattern and range as `RRULE`, changed dates as `RECURRENCE-ID`, cancelled ones as
+   `EXDATE`. Writing goes back as JSON in the system's zone (`POST`, `PATCH` with
+   `If-Match`, `DELETE`); a series' rule goes along where Graph can say it, otherwise it stays as
+   it is on the server. After a write the event is fetched again, so the cache holds the server's
+   version. Invitations of Microsoft accounts are answered over Graph (`accept`,
+   `tentativelyAccept`, `decline`) where the event is in their calendar; Exchange then tells the
+   organizer. Tests run against a Graph stand-in in the test process (`graph_test_server.rs`).
+5. **Invitations and calendar together** — done. The invitation card names other events at that
+   time (up to three, all-day ones left out) and says when the event is in the user's calendars
+   already, with a link to it. Accepting or answering maybe by mail puts the event into the
+   account's first writable calendar (or the one on this computer), as the organizer sent it with
+   the user's answer and `SCHEDULE-AGENT=CLIENT` on the organizer, so a server that schedules by
+   itself does not answer a second time; declining takes it out. A cancellation offers to remove
+   it. Microsoft accounts answering over Graph leave this to Exchange. Events with attendees: the
+   calendar's server sends invitations, changes and cancellations (decided on 2026-10-31), so the
+   app only writes `ORGANIZER` (the account) and `ATTENDEE` lines. Exchange always does this;
+   CalDAV servers do where their `DAV` header names `calendar-auto-schedule` (RFC 6638), asked
+   once with an `OPTIONS` (`calendars.can_invite`, NULL until asked). Elsewhere, and in the
+   calendar on this computer, the event dialog has no attendees. Attendees invited before keep
+   their entries and answers when the list changes; on an invitation from someone else the
+   organizer's list stays as it is.
 
 ## Tests
 

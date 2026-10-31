@@ -1,6 +1,8 @@
 import { type CSSProperties, useEffect } from "react";
 
 import { AccountDialog } from "@/components/accounts/AccountDialog";
+import { CalendarView } from "@/components/calendar/CalendarView";
+import { EventDialog } from "@/components/calendar/EventDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { WelcomeScreen } from "@/components/accounts/WelcomeScreen";
 import { Composer } from "@/components/compose/Composer";
@@ -18,10 +20,12 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { useStartMailbox } from "@/hooks/use-start-mailbox";
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
+import { useCalendarStore } from "@/stores/calendar";
 import { useUiStore } from "@/stores/ui";
 
 import { ColumnResizer } from "./ColumnResizer";
-import { columnLimits, listWidth, sidebarWidth } from "./columns";
+import { columnLimits, listWidth, railWidth, sidebarWidth } from "./columns";
+import { NavRail } from "./NavRail";
 import { Sidebar } from "./Sidebar";
 import { TitleBar } from "./TitleBar";
 
@@ -48,12 +52,13 @@ export function AppShell() {
     ...(columnWidths.sidebar !== null && { "--sidebar-width": `${columnWidths.sidebar}px` }),
     // In a window made narrower since, the reader keeps its room.
     ...(columnWidths.list !== null && {
-      "--list-width": `max(${columnLimits.list.min}px, min(${columnWidths.list}px, calc(100vw - var(--sidebar-width, 15rem) - ${columnLimits.readerMin + 40}px)))`,
+      "--list-width": `max(${columnLimits.list.min}px, min(${columnWidths.list}px, calc(100vw - var(--sidebar-width, 15rem) - 3.5rem - ${columnLimits.readerMin + 40}px)))`,
     }),
   } as CSSProperties;
 
+  const calendar = useCalendarStore((s) => s.area === "calendar");
   const showOverlay = !isWide && sidebarOpen;
-  useMailKeyboard({ enabled: !firstStart && !showOverlay, isWide });
+  useMailKeyboard({ enabled: !firstStart && !showOverlay && !calendar, isWide });
   useStartMailbox();
   useKeptDrafts();
   useDraftLeaving();
@@ -72,8 +77,19 @@ export function AppShell() {
     <div className="flex h-full flex-col bg-canvas" style={widths}>
       <TitleBar isWide={isWide} />
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
+        {!firstStart && <NavRail className={cn("shrink-0", railWidth)} />}
         {firstStart ? (
           <WelcomeScreen />
+        ) : calendar ? (
+          <>
+            {isWide && (
+              <>
+                <Sidebar className={cn("shrink-0", sidebarWidth)} />
+                <ColumnResizer column="sidebar" />
+              </>
+            )}
+            <CalendarView className={cn("flex-1", panel)} />
+          </>
         ) : isWide ? (
           <>
             <Sidebar className={cn("shrink-0", sidebarWidth)} />
@@ -107,6 +123,7 @@ export function AppShell() {
       )}
       <AccountDialog />
       <SettingsDialog />
+      <EventDialog />
       <MoveDialog />
       <DragLabel />
       <DeleteForeverDialog />

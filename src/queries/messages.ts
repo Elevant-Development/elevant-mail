@@ -1,13 +1,20 @@
 import {
   keepPreviousData,
   useInfiniteQuery,
+  useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { useMemo } from "react";
 
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { api, type Conversation, type ListCursor, type Message } from "@/lib/tauri";
+import {
+  api,
+  type Conversation,
+  type InvitationAnswer,
+  type ListCursor,
+  type Message,
+} from "@/lib/tauri";
 import { type ListFilter, useUiStore } from "@/stores/ui";
 
 /**
@@ -53,6 +60,22 @@ export function useMessage(messageId: string | null) {
     // Allowing images refetches; keep showing the mail meanwhile.
     placeholderData: (previous) => (previous?.id === messageId ? previous : undefined),
     enabled: messageId !== null,
+  });
+}
+
+/**
+ * Answers the invitation in a mail. The answer counts for the event, so every mail about it
+ * shows it, also an update that came before.
+ */
+export function useAnswerInvitation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (answer: InvitationAnswer) => api.answerInvitation(answer),
+    // An accepted event went into a calendar, a declined one out.
+    onSuccess: () =>
+      Promise.all(
+        ["message", "occurrences"].map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+      ),
   });
 }
 

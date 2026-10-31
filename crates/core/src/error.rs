@@ -148,6 +148,21 @@ pub enum Error {
 
     #[error("access for AI agents is switched off in Elevant Mail")]
     AgentAccessOff,
+
+    #[error("the event no longer exists")]
+    EventNotFound,
+
+    #[error("the calendar can only be read")]
+    CalendarReadOnly,
+
+    #[error("the event ends before it starts")]
+    InvalidEventTime,
+
+    #[error("no calendars were found at this address")]
+    CalendarsNotFound,
+
+    #[error("the account has not allowed the app to its calendars yet")]
+    CalendarAccessMissing,
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -189,6 +204,10 @@ pub enum ErrorKind {
     NotAnExport,
     /// The passphrase does not open the exported sign-ins.
     WrongPassphrase,
+    /// A server address the user gave has no calendars (CalDAV).
+    CalendarsNotFound,
+    /// A Microsoft account signed in before the app asked for its calendars: sign in again.
+    CalendarAccessMissing,
     Internal,
 }
 
@@ -254,7 +273,9 @@ impl Error {
             | Error::NoRecipients
             | Error::InvalidRecipient(_)
             | Error::AttachmentsTooLarge
-            | Error::AgentAccessOff => ErrorKind::InvalidInput,
+            | Error::AgentAccessOff
+            | Error::CalendarReadOnly
+            | Error::InvalidEventTime => ErrorKind::InvalidInput,
             Error::NotAnExport => ErrorKind::NotAnExport,
             Error::WrongPassphrase => ErrorKind::WrongPassphrase,
             Error::HostNotFound => ErrorKind::ServerNotFound,
@@ -280,7 +301,10 @@ impl Error {
             Error::AccountNotFound
             | Error::FolderNotFound
             | Error::MessageNotFound
-            | Error::AttachmentNotFound => ErrorKind::NotFound,
+            | Error::AttachmentNotFound
+            | Error::EventNotFound => ErrorKind::NotFound,
+            Error::CalendarsNotFound => ErrorKind::CalendarsNotFound,
+            Error::CalendarAccessMissing => ErrorKind::CalendarAccessMissing,
             Error::FileWrite(_) => ErrorKind::FileWrite,
             Error::Keyring(_) | Error::TlsSetup(_) | Error::OpenExternal(_) => ErrorKind::Internal,
         }
@@ -293,9 +317,10 @@ impl Error {
             Error::KeyringUnavailable(_) => Some(Hint::UnlockKeyring),
             Error::SecretNotFound => Some(Hint::EnterPasswordAgain),
             Error::InvalidEmail => Some(Hint::CheckEmailAddress),
-            Error::InvalidHost | Error::HostNotFound | Error::CertificateInvalid(_) => {
-                Some(Hint::CheckServerAddress)
-            }
+            Error::InvalidHost
+            | Error::HostNotFound
+            | Error::CertificateInvalid(_)
+            | Error::CalendarsNotFound => Some(Hint::CheckServerAddress),
             Error::ConnectionFailed(_) | Error::TlsFailed(_) | Error::StartTlsUnsupported => {
                 Some(Hint::CheckPortAndSecurity)
             }
@@ -319,7 +344,7 @@ impl Error {
             Error::InvalidRecipient(_) | Error::RecipientRejected(_) => Some(Hint::CheckRecipients),
             Error::OAuthRequired { .. } => Some(Hint::SignInWithMicrosoft),
             Error::ConsentRequired => Some(Hint::AskAdminForConsent),
-            Error::SignInExpired => Some(Hint::SignInAgain),
+            Error::SignInExpired | Error::CalendarAccessMissing => Some(Hint::SignInAgain),
             Error::DifferentAccount => Some(Hint::SignInAsAccount),
             Error::SignInCancelled | Error::SignInFailed(_) => None,
             Error::Database(_)
@@ -340,6 +365,9 @@ impl Error {
             | Error::ActionRefused
             | Error::MessageRejected(_)
             | Error::AgentAccessOff
+            | Error::EventNotFound
+            | Error::CalendarReadOnly
+            | Error::InvalidEventTime
             | Error::OpenExternal(_) => None,
         }
     }

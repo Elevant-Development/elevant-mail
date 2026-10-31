@@ -21,6 +21,13 @@ import type { Draft } from "./bindings/Draft";
 import type { DraftAttachment } from "./bindings/DraftAttachment";
 import type { ImapSettings } from "./bindings/ImapSettings";
 import type { ImportPreview } from "./bindings/ImportPreview";
+import type { InvitationAnswer } from "./bindings/InvitationAnswer";
+import type { Calendar } from "./bindings/Calendar";
+import type { CaldavStatus } from "./bindings/CaldavStatus";
+import type { CalendarSyncReport } from "./bindings/CalendarSyncReport";
+import type { EventDetails } from "./bindings/EventDetails";
+import type { EventInput } from "./bindings/EventInput";
+import type { Occurrence } from "./bindings/Occurrence";
 import type { ListCursor } from "./bindings/ListCursor";
 import type { ListFilter } from "./bindings/ListFilter";
 import type { ListPage } from "./bindings/ListPage";
@@ -73,6 +80,18 @@ export type { SyncReport } from "./bindings/SyncReport";
 export type { Update } from "./bindings/Update";
 export type { ImportedAccount } from "./bindings/ImportedAccount";
 export type { ImportPreview } from "./bindings/ImportPreview";
+export type { Answer } from "./bindings/Answer";
+export type { Attendee } from "./bindings/Attendee";
+export type { Invitation } from "./bindings/Invitation";
+export type { InvitationAnswer } from "./bindings/InvitationAnswer";
+export type { Participation } from "./bindings/Participation";
+export type { Recurrence } from "./bindings/Recurrence";
+export type { Calendar } from "./bindings/Calendar";
+export type { CaldavStatus } from "./bindings/CaldavStatus";
+export type { EventDetails } from "./bindings/EventDetails";
+export type { EventInput } from "./bindings/EventInput";
+export type { Frequency } from "./bindings/Frequency";
+export type { Occurrence } from "./bindings/Occurrence";
 export type { SyncStage } from "./bindings/SyncStage";
 
 /** Mailbox id that shows the inboxes of all accounts together (same value in Rust). */
@@ -144,6 +163,26 @@ export interface Backend {
    * ({@link Backend.onCacheChanged}).
    */
   sendMessage(mail: OutgoingMail, draftKey: string | null): Promise<void>;
+  /** Sends the answer to an invitation to its organizer; resolves once the server took it. */
+  answerInvitation(answer: InvitationAnswer): Promise<void>;
+  /** The calendars of all accounts, and the one on this computer last. */
+  listCalendars(): Promise<Calendar[]>;
+  setCalendarVisible(calendarId: string, visible: boolean): Promise<void>;
+  /**
+   * The dates of all events that overlap `from..to` (Unix milliseconds), series expanded, hidden
+   * calendars included.
+   */
+  listOccurrences(from: number, to: number): Promise<Occurrence[]>;
+  getEvent(eventId: string): Promise<EventDetails>;
+  /** A new event or the changes to one; resolves with its id. */
+  saveEvent(event: EventInput): Promise<string>;
+  /** A series goes with all its dates. */
+  deleteEvent(eventId: string): Promise<void>;
+  /** Sends the calendar changes made here and takes the server's (CalDAV). */
+  syncCalendars(accountId: string): Promise<CalendarSyncReport>;
+  caldavStatus(accountId: string): Promise<CaldavStatus>;
+  /** Switches an account's calendars on or off; a server address is checked first. */
+  setCaldav(accountId: string, enabled: boolean, url: string | null): Promise<CaldavStatus>;
   /** Keeps the draft as it is now, on this device. */
   saveDraft(draft: Draft): Promise<void>;
   /** The drafts kept on this device, the latest change first. */
@@ -368,6 +407,17 @@ const tauriBackend: Backend = {
   setSenderName: (accountId, name) => invoke("set_sender_name", { accountId, name }),
   setSignature: (accountId, html, pasted) => invoke("set_signature", { accountId, html, pasted }),
   sendMessage: (mail, draftKey) => invoke("send_message", { mail, draftKey }),
+  answerInvitation: (answer) => invoke("answer_invitation", { answer }),
+  listCalendars: () => invoke("list_calendars"),
+  setCalendarVisible: (calendarId, visible) =>
+    invoke("set_calendar_visible", { calendarId, visible }),
+  listOccurrences: (from, to) => invoke("list_occurrences", { from, to }),
+  getEvent: (eventId) => invoke("get_event", { eventId }),
+  saveEvent: (event) => invoke("save_event", { event }),
+  deleteEvent: (eventId) => invoke("delete_event", { eventId }),
+  syncCalendars: (accountId) => invoke("sync_calendars", { accountId }),
+  caldavStatus: (accountId) => invoke("caldav_status", { accountId }),
+  setCaldav: (accountId, enabled, url) => invoke("set_caldav", { accountId, enabled, url }),
   saveDraft: (draft) => invoke("save_draft", { draft }),
   listDrafts: () => invoke("list_drafts"),
   uploadDraft: (key) => invoke("upload_draft", { key }),

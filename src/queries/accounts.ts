@@ -108,7 +108,11 @@ export function useUpdateAccount() {
   return useMutation({
     mutationFn: ({ accountId, changes }: { accountId: string; changes: AccountChanges }) =>
       api.updateAccount(accountId, changes),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["accounts"] }),
+    // The account's calendars take its colour along.
+    onSuccess: () =>
+      Promise.all(
+        ["accounts", "calendars"].map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+      ),
   });
 }
 

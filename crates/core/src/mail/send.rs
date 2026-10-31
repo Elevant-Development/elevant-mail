@@ -248,7 +248,7 @@ fn mailbox(name: &str, address: &str) -> std::result::Result<Mailbox, ()> {
 
 /// In-Reply-To and References for an answer to the cached message `id`: its Message-ID, after
 /// the ones it refers to itself. `None` for mail without a Message-ID.
-fn thread_headers(conn: &Connection, id: &str) -> Result<Option<(String, String)>> {
+pub(crate) fn thread_headers(conn: &Connection, id: &str) -> Result<Option<(String, String)>> {
     let row: Option<(Option<String>, Option<String>)> = conn
         .query_row(
             "SELECT message_id, references_header FROM messages WHERE id = ?1",
@@ -519,6 +519,171 @@ mod tests {
         .unwrap();
         assert!(!filed);
         assert_eq!(setup.imap.mailbox.lock().unwrap().messages.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn an_invitation_is_answered_to_its_organizer() {
+        use crate::calendar::invitation::{self, Answer, InvitationAnswer, tests::OUTLOOK};
+        let setup = setup().await;
+        set_sender_name(&setup.db.conn(), &setup.account_id, "Alex Berger").unwrap();
+        let id = setup.cached_id(2);
+        let invite = |ics: &str| {
+            setup
+                .db
+                .conn()
+                .execute(
+                    "UPDATE messages SET calendar = ?2 WHERE id = ?1",
+                    rusqlite::params![id, ics],
+                )
+                .unwrap();
+        };
+        invite(OUTLOOK);
+        let shown = invitation::for_message(&setup.db.conn(), &id)
+            .unwrap()
+            .unwrap();
+        assert!(shown.can_answer);
+        assert_eq!(shown.answer, None);
+
+        let answer = InvitationAnswer {
+            message_id: id.clone(),
+            answer: Answer::Accepted,
+            subject: "Zugesagt: Planung Herbstfest".into(),
+            text: "Ich nehme teil.".into(),
+        };
+        invitation::answer_with(&setup.db, &setup.secrets, &answer, None, setup.smtp.tls())
+            .await
+            .unwrap();
+        let mails = setup.smtp.mails();
+        assert_eq!(mails.len(), 1);
+        assert_eq!(mails[0].recipients, ["lena@example.org"]);
+        let data = &mails[0].data;
+        assert!(
+            data.contains(r#"From: "Alex Berger" <alex@example.org>"#),
+            "{data}"
+        );
+        assert!(data.contains(r#"To: "Lena Fischer" <lena@example.org>"#));
+        assert!(data.contains("Subject: Zugesagt: Planung Herbstfest"));
+        assert!(data.contains("In-Reply-To: <2@example.org>"));
+        assert!(data.contains("text/calendar; method=REPLY"), "{data}");
+        assert!(data.contains("METHOD:REPLY"), "{data}");
+        assert!(data.contains("PARTSTAT=ACCEPTED"), "{data}");
+        // Answers are not filed in Sent.
+        assert_eq!(setup.imap.mailbox.lock().unwrap().messages.len(), 3);
+
+        let shown = invitation::for_message(&setup.db.conn(), &id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(shown.answer, Some(Answer::Accepted));
+        assert!(!shown.changed_since_answer);
+        // Accepted: in the calendar (the one on this computer: the account has none), with the
+        // answer filled in, and without the server answering again.
+        let entry = shown.in_calendar.clone().unwrap();
+        assert_eq!(entry.calendar_id, crate::calendar::events::LOCAL_CALENDAR);
+        let filed: String = setup
+            .db
+            .conn()
+            .query_row(
+                "SELECT ics FROM events WHERE id = ?1",
+                [&entry.event_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(filed.contains("PARTSTAT=ACCEPTED"), "{filed}");
+        assert!(filed.contains("SCHEDULE-AGENT=CLIENT"), "{filed}");
+        assert!(!filed.contains("METHOD:"), "{filed}");
+        // Another event at that time shows as a conflict; the invitation's own copy does not.
+        crate::calendar::events::save_event(
+            &setup.db.conn(),
+            &crate::calendar::events::EventInput {
+                id: None,
+                calendar_id: crate::calendar::events::LOCAL_CALENDAR.into(),
+                title: "Zahnarzt".into(),
+                location: String::new(),
+                description: String::new(),
+                start: shown.start + 30 * 60_000,
+                end: shown.start + 90 * 60_000,
+                all_day: false,
+                repeat: None,
+                attendees: Vec::new(),
+            },
+        )
+        .unwrap();
+        let shown = invitation::for_message(&setup.db.conn(), &id)
+            .unwrap()
+            .unwrap();
+        let conflicts: Vec<_> = shown
+            .conflicts
+            .iter()
+            .filter_map(|c| c.title.as_deref())
+            .collect();
+        assert_eq!(conflicts, ["Zahnarzt"]);
+        // The organizer moved the event: the answer was to the version before.
+        invite(&OUTLOOK.replace("SEQUENCE:2", "SEQUENCE:3"));
+        let shown = invitation::for_message(&setup.db.conn(), &id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(shown.answer, Some(Answer::Accepted));
+        assert!(shown.changed_since_answer);
+        // Declined after all: out of the calendar again.
+        let decline = InvitationAnswer {
+            answer: Answer::Declined,
+            ..answer
+        };
+        invitation::answer_with(&setup.db, &setup.secrets, &decline, None, setup.smtp.tls())
+            .await
+            .unwrap();
+        let shown = invitation::for_message(&setup.db.conn(), &id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(shown.in_calendar, None);
+    }
+
+    #[tokio::test]
+    async fn microsoft_accounts_answer_over_graph() {
+        use crate::calendar::graph::Graph;
+        use crate::calendar::graph_test_server::{self, TOKEN};
+        use crate::calendar::invitation::{self, Answer, InvitationAnswer, tests::OUTLOOK};
+        let setup = setup().await;
+        let id = setup.cached_id(2);
+        setup
+            .db
+            .conn()
+            .execute(
+                "UPDATE messages SET calendar = ?2 WHERE id = ?1",
+                rusqlite::params![id, OUTLOOK],
+            )
+            .unwrap();
+        let server = graph_test_server::start().await;
+        let event = server.store().put(
+            "cal-1",
+            serde_json::json!({ "iCalUId": "040000008200E00074C5B7101A82E008", "subject": "Planung" }),
+        );
+        let graph = Graph::new(&server.base(), Secret::new(TOKEN)).unwrap();
+        let answer = InvitationAnswer {
+            message_id: id.clone(),
+            answer: Answer::Tentative,
+            subject: "Vielleicht: Planung".into(),
+            text: "Vielleicht.".into(),
+        };
+        invitation::answer_with(
+            &setup.db,
+            &setup.secrets,
+            &answer,
+            Some(&graph),
+            setup.smtp.tls(),
+        )
+        .await
+        .unwrap();
+        // Exchange tells the organizer; no mail goes out.
+        assert_eq!(
+            server.store().answers,
+            [(event, "tentativelyAccept".to_owned())]
+        );
+        assert!(setup.smtp.mails().is_empty());
+        let shown = invitation::for_message(&setup.db.conn(), &id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(shown.answer, Some(Answer::Tentative));
     }
 
     #[tokio::test]

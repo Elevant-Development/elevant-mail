@@ -22,6 +22,7 @@ import { useUiStore } from "@/stores/ui";
 
 import { AttachmentList } from "./AttachmentList";
 import { EmptyState } from "./EmptyState";
+import { InvitationCard } from "./InvitationCard";
 import { LinkAddress } from "./LinkAddress";
 import { type DeceptiveLink, LinkWarningDialog } from "./LinkWarningDialog";
 import { type MailLook, SafeHtmlMail } from "./SafeHtmlMail";
@@ -266,6 +267,14 @@ function MailView({
           />
         </div>
       </div>
+      {message?.invitation && (
+        <InvitationCard
+          messageId={message.id}
+          accountId={message.accountId}
+          invitation={message.invitation}
+          subject={message.subject}
+        />
+      )}
       {message && message.attachments.length > 0 && (
         <AttachmentList attachments={message.attachments} />
       )}

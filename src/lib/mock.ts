@@ -9,6 +9,7 @@ import type {
   AccountSettings,
   Address,
   AgentLogEntry,
+  Answer,
   Backend,
   Conversation,
   Draft,
@@ -16,12 +17,14 @@ import type {
   Folder,
   ImportPreview,
   FolderRole,
+  Invitation,
   Message,
   MessageSummary,
   MoveOutcome,
   SuggestedSettings,
 } from "./tauri";
 import { language, locale } from "./i18n";
+import { mockCalendar } from "./mock-calendar";
 import { UNIFIED_INBOX } from "./tauri";
 
 const MINUTE = 60 * 1000;
@@ -202,6 +205,8 @@ interface MockMessage {
   thread?: string;
   /** Only on the "server": found by searchServer, never in a folder's list. */
   serverOnly?: boolean;
+  /** The invitation the mail carries, with dates counted from now. */
+  invitation?: (now: number) => Invitation;
 }
 
 interface MockFile {
@@ -252,6 +257,39 @@ const me = (accountId: string): Address => {
   const account = accounts.find((a) => a.id === accountId)!;
   return { name: "Alex Berger", address: account.emailAddress };
 };
+
+/** The next `weekday` (0 Monday … 6 Sunday) after today, at the given local time. */
+function nextWeekday(now: number, weekday: number, hours: number, minutes = 0): number {
+  const date = new Date(now);
+  const ahead = ((weekday - ((date.getDay() + 6) % 7) + 6) % 7) + 1;
+  date.setDate(date.getDate() + ahead);
+  date.setHours(hours, minutes, 0, 0);
+  return date.getTime();
+}
+
+/** Midnight UTC of the local day `days` from now: how the backend gives all-day dates. */
+function utcDay(now: number, days: number): number {
+  const date = new Date(now + days * DAY);
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+const jonas: Address = { name: "Jonas Weber", address: "jonas.weber@example.com" };
+const mira: Address = { name: "Mira Koch", address: "mira.koch@example.com" };
+const lena: Address = { name: "Lena Fischer", address: "lena.fischer@example.org" };
+
+const invitationDefaults = {
+  title: null,
+  location: null,
+  allDay: false,
+  recurrence: null,
+  organizer: null,
+  attendees: [],
+  answer: null,
+  changedSinceAnswer: false,
+  canAnswer: false,
+  inCalendar: null,
+  conflicts: [],
+} satisfies Partial<Invitation>;
 
 const mockMessages: MockMessage[] = [
   {
@@ -611,6 +649,147 @@ const mockMessages: MockMessage[] = [
       "Hi Alex,\n\nhere is the first draft of the test plan for release 0.1: installation, first start, adding an account, sync. Please check whether anything is missing.\n\nTim",
     ),
   },
+  {
+    account: "acc-work",
+    role: "inbox",
+    from: jonas,
+    subject: L("Einladung: Planung Herbstfest", "Invitation: Autumn party planning"),
+    ago: 25 * MINUTE,
+    body: L(
+      "Hallo zusammen,\n\nlasst uns das Herbstfest in vier kurzen Runden planen, jeweils dienstags. Agenda folgt.\n\nJonas",
+      "Hi all,\n\nlet's plan the autumn party in four short rounds, on Tuesdays. Agenda to follow.\n\nJonas",
+    ),
+    invitation: (now) => {
+      const start = nextWeekday(now, 1, 10);
+      return {
+        ...invitationDefaults,
+        method: "request",
+        title: L("Planung Herbstfest", "Autumn party planning"),
+        location: L("Raum 2.14", "Room 2.14"),
+        start,
+        end: start + HOUR,
+        recurrence: { frequency: "weekly", interval: 1, weekdays: [1], count: 4, until: null },
+        conflicts: [
+          {
+            title: L("Bewerbungsgespräch", "Job interview"),
+            start: start + HOUR / 2,
+            end: start + 1.5 * HOUR,
+          },
+        ],
+        organizer: jonas,
+        attendees: [
+          { address: me("acc-work"), status: "needsAction", optional: false },
+          { address: mira, status: "accepted", optional: false },
+          {
+            address: { name: "Paul Schmitt", address: "paul.schmitt@example.com" },
+            status: "tentative",
+            optional: true,
+          },
+        ],
+        canAnswer: true,
+      };
+    },
+  },
+  {
+    account: "acc-work",
+    role: "inbox",
+    from: mira,
+    subject: L("Zugesagt: Sprint-Review", "Accepted: Sprint review"),
+    ago: 3 * HOUR,
+    read: true,
+    body: L("Ich nehme an „Sprint-Review“ teil.", "I will attend “Sprint review”."),
+    invitation: (now) => {
+      const start = nextWeekday(now, 3, 14);
+      return {
+        ...invitationDefaults,
+        method: "reply",
+        title: L("Sprint-Review", "Sprint review"),
+        start,
+        end: start + HOUR,
+        organizer: me("acc-work"),
+        attendees: [{ address: mira, status: "accepted", optional: false }],
+      };
+    },
+  },
+  {
+    account: "acc-work",
+    role: "inbox",
+    from: { name: "Dr. Anna Lindner", address: "lindner@kanzlei.example.net" },
+    subject: L("Abgesagt: Abstimmung Vertrag", "Cancelled: Contract review"),
+    ago: 5 * HOUR,
+    read: true,
+    body: L(
+      "Leider muss ich den Termin absagen. Ich melde mich mit einem neuen Vorschlag.",
+      "Sorry, I have to cancel. I'll get back to you with a new date.",
+    ),
+    invitation: (now) => {
+      const start = nextWeekday(now, 3, 9);
+      return {
+        ...invitationDefaults,
+        method: "cancel",
+        title: L("Abstimmung Vertrag", "Contract review"),
+        location: L("Videokonferenz", "Video call"),
+        start,
+        end: start + 30 * MINUTE,
+        organizer: { name: "Dr. Anna Lindner", address: "lindner@kanzlei.example.net" },
+      };
+    },
+  },
+  {
+    account: "acc-private",
+    role: "inbox",
+    from: lena,
+    subject: L("Hüttenwochenende – neuer Termin", "Cabin weekend – new date"),
+    ago: 2 * HOUR,
+    body: L(
+      "Hi Alex,\n\nwir haben das Hüttenwochenende um eine Woche verschoben, die Hütte war vorher schon belegt. Passt es dir trotzdem?\n\nLena",
+      "Hi Alex,\n\nwe moved the cabin weekend by a week, the cabin was booked before. Does it still work for you?\n\nLena",
+    ),
+    invitation: (now) => {
+      const start = utcDay(now, 12);
+      return {
+        ...invitationDefaults,
+        method: "request",
+        title: L("Hüttenwochenende", "Cabin weekend"),
+        location: L("Berghütte am Grünten, Allgäu", "Mountain hut on the Grünten, Allgäu"),
+        start,
+        end: start + 3 * DAY,
+        allDay: true,
+        organizer: lena,
+        attendees: [
+          { address: me("acc-private"), status: "accepted", optional: false },
+          {
+            address: { name: "Sam Becker", address: "sam@example.org" },
+            status: "accepted",
+            optional: false,
+          },
+          {
+            address: { name: "Kim Yilmaz", address: "kim@example.org" },
+            status: "needsAction",
+            optional: false,
+          },
+          {
+            address: { name: "Noah Wagner", address: "noah@example.org" },
+            status: "declined",
+            optional: false,
+          },
+          {
+            address: { name: "Eva Braun", address: "eva@example.org" },
+            status: "accepted",
+            optional: false,
+          },
+          {
+            address: { name: "Tom Krüger", address: "tom@example.org" },
+            status: "needsAction",
+            optional: true,
+          },
+        ],
+        answer: "accepted",
+        changedSinceAnswer: true,
+        canAnswer: true,
+      };
+    },
+  },
 ];
 
 /** Years of old project mail in one folder, so the virtualized list has something to scroll. */
@@ -707,6 +886,7 @@ function mockMessage(m: MockMessage, index: number, now: number): Message {
       size: file.size,
       canOpen: !/\.(exe|bat|cmd|ps1|sh|desktop|appimage|docm|xlsm)$/i.test(file.name),
     })),
+    invitation: m.invitation?.(now) ?? null,
   };
 }
 
@@ -972,6 +1152,8 @@ function dropDraftCopy(key: string) {
 
 /** Senders whose mail always shows its external images (image_senders). */
 const imageSenders = new Set<string>();
+/** Answers given to invitations, by mail. */
+const invitationAnswers = new Map<string, Answer>();
 
 /** Rows per page, as in the backend (mailbox::list_messages). */
 const MOCK_PAGE_SIZE = 300;
@@ -1000,6 +1182,7 @@ function suggest(email: string): SuggestedSettings {
 }
 
 export const mockBackend: Backend = {
+  ...mockCalendar((accountId) => accounts.find((a) => a.id === accountId)?.color),
   listAccounts: async () => accounts,
   detectSettings: async (email) => {
     await wait(400);
@@ -1114,6 +1297,12 @@ export const mockBackend: Backend = {
     const current = accountSettings[accountId];
     if (!current) throw { kind: "notFound", hint: null };
     accountSettings[accountId] = { ...current, senderName: name.trim() };
+  },
+  answerInvitation: async ({ messageId, answer }) => {
+    await wait(700);
+    const message = messages.find((m) => m.id === messageId);
+    if (!message?.invitation?.canAnswer) throw { kind: "invalidInput", hint: null };
+    invitationAnswers.set(messageId, answer);
   },
   sendMessage: async (mail, draftKey) => {
     await wait(800);
@@ -1305,10 +1494,15 @@ export const mockBackend: Backend = {
     if (!message) return null;
     const html = allMockMessages[index]?.html;
     const remoteImages = allowed || imageSenders.has(message.from.address.toLowerCase());
+    const answer = invitationAnswers.get(messageId);
     return {
       ...message,
       bodyHtml: html && message.bodyComplete ? renderMockHtml(html, remoteImages) : null,
       remoteImagesLoaded: remoteImages,
+      invitation:
+        message.invitation && answer
+          ? { ...message.invitation, answer, changedSinceAnswer: false }
+          : message.invitation,
     };
   },
   searchMessages: async (query, threads, also) => {

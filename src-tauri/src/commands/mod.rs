@@ -5,6 +5,7 @@ pub mod actions;
 pub mod agents;
 pub mod app;
 pub mod attachments;
+pub mod calendar;
 pub mod compose;
 pub mod links;
 pub mod mailbox;

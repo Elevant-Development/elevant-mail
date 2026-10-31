@@ -12,6 +12,7 @@ import {
   type SyncReport,
   usesMockData,
 } from "@/lib/tauri";
+import { useCalendarSync } from "@/hooks/use-calendar-sync";
 import { useAccounts } from "@/queries/accounts";
 import { useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
@@ -94,10 +95,16 @@ export function useSyncActions() {
 export function useBackgroundSync() {
   const { data: accounts } = useAccounts();
   const { syncAccount } = useSyncActions();
+  const { syncCalendars } = useCalendarSync();
   const synced = useRef(new Set<string>());
   const sync = useEffectEvent((accountId: string) => void syncAccount(accountId));
+  // Calendars go along at start and with every poll, not on every new mail.
+  const syncAll = useEffectEvent((accountId: string) => {
+    sync(accountId);
+    void syncCalendars(accountId);
+  });
   const pollAll = useEffectEvent(() => {
-    for (const account of accounts ?? []) sync(account.id);
+    for (const account of accounts ?? []) syncAll(account.id);
   });
 
   // Sent mail filed, drafts uploaded or removed in the background: the lists follow.
@@ -132,7 +139,7 @@ export function useBackgroundSync() {
     for (const id of current) {
       if (synced.current.has(id)) continue;
       synced.current.add(id);
-      sync(id);
+      syncAll(id);
     }
   }, [accounts]);
 

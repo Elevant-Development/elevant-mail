@@ -22,6 +22,7 @@ import {
 } from "@/queries/accounts";
 import { useSyncStore } from "@/stores/sync";
 
+import { CalendarSettings } from "./CalendarSettings";
 import { SendingSettings } from "./SendingSettings";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -80,6 +81,10 @@ export function AccountSettingsPanel({ account }: { account: Account }) {
 
       <Section title={t("settings.account.sending")}>
         {settings && <SendingSettings account={account} settings={settings} />}
+      </Section>
+
+      <Section title={t("settings.calendar.title")}>
+        <CalendarSettings account={account} />
       </Section>
 
       <Section title={t("settings.account.offline")}>
