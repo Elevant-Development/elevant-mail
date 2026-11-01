@@ -92,6 +92,15 @@ pub(crate) async fn archive_with(
     queue(db, message_ids, Destination::Archive)
 }
 
+/// Into the archive, only where the account has one already: for callers that cannot make a
+/// folder on the server (agents).
+pub fn archive_existing(db: &Database, message_ids: &[String]) -> Result<MoveOutcome> {
+    if !accounts_without_archive(&db.conn(), message_ids)?.is_empty() {
+        return Err(Error::FolderNotFound);
+    }
+    queue(db, message_ids, Destination::Archive)
+}
+
 /// Takes back moves that have not reached the server yet; returns the messages that are back.
 pub fn undo_moves(db: &Database, message_ids: &[String]) -> Result<Vec<String>> {
     let mut conn = db.conn();

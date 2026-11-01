@@ -549,7 +549,11 @@ can consent without an admin. Paging beyond 5,000 cached messages per folder cam
 
 Reading is done (`crates/core/src/agents.rs`, `crates/mcp`): the app's program with `mcp` is the
 server (stdio, newline-delimited JSON-RPC, no SDK), switched on and shared per account under
-Settings → AI agents, every call logged (table `agent_log`, newest 1000). Writing tools are next.
+Settings → AI agents, every call logged (table `agent_log`, newest 1000). Per account the user
+grants rights on top of reading (bits in `accounts.agent_permissions`): mark, move and archive,
+trash, drafts. Changes go into the cache and its queue like the user's own; the app watches the log
+(`src-tauri/src/agent_changes.rs`), refreshes, uploads agent drafts and pushes the queue after the
+undo window. Never sending, never deleting for good.
 
 Elevant Mail offers the local mail store over the Model Context Protocol, so AI agents (Claude
 Code and other MCP clients) can search and read mail without their own IMAP access.

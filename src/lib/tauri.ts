@@ -13,6 +13,7 @@ import type { Account } from "./bindings/Account";
 import type { AccountChanges } from "./bindings/AccountChanges";
 import type { AccountSettings } from "./bindings/AccountSettings";
 import type { AgentLogEntry } from "./bindings/AgentLogEntry";
+import type { AgentPermissions } from "./bindings/AgentPermissions";
 import type { AgentSettings } from "./bindings/AgentSettings";
 import type { Address } from "./bindings/Address";
 import type { Conversation } from "./bindings/Conversation";
@@ -53,6 +54,7 @@ export type { Account } from "./bindings/Account";
 export type { AccountChanges } from "./bindings/AccountChanges";
 export type { AccountSettings } from "./bindings/AccountSettings";
 export type { AgentAccount } from "./bindings/AgentAccount";
+export type { AgentPermissions } from "./bindings/AgentPermissions";
 export type { AgentLogEntry } from "./bindings/AgentLogEntry";
 export type { AgentSettings } from "./bindings/AgentSettings";
 export type { Attachment } from "./bindings/Attachment";
@@ -318,7 +320,8 @@ export interface Backend {
   /** Whether AI agents may read mail over MCP, and which accounts. */
   getAgentSettings(): Promise<AgentSettings>;
   setAgentAccess(enabled: boolean): Promise<void>;
-  setAgentAccountAccess(accountId: string, allowed: boolean): Promise<void>;
+  /** What agents may do with one account's mail; everything needs `read`. */
+  setAgentPermissions(accountId: string, permissions: AgentPermissions): Promise<void>;
   /** What agents read, newest first. */
   listAgentLog(limit: number): Promise<AgentLogEntry[]>;
   clearAgentLog(): Promise<void>;
@@ -411,8 +414,8 @@ const tauriBackend: Backend = {
   checkForUpdate: () => invoke("check_for_update"),
   getAgentSettings: () => invoke("get_agent_settings"),
   setAgentAccess: (enabled) => invoke("set_agent_access", { enabled }),
-  setAgentAccountAccess: (accountId, allowed) =>
-    invoke("set_agent_account_access", { accountId, allowed }),
+  setAgentPermissions: (accountId, permissions) =>
+    invoke("set_agent_permissions", { accountId, permissions }),
   listAgentLog: (limit) => invoke("list_agent_log", { limit }),
   clearAgentLog: () => invoke("clear_agent_log"),
   agentLaunch: () => invoke("agent_launch"),

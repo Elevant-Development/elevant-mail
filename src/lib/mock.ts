@@ -9,6 +9,7 @@ import type {
   AccountSettings,
   Address,
   AgentLogEntry,
+  AgentPermissions,
   Answer,
   Backend,
   Conversation,
@@ -87,11 +88,28 @@ function mockImportPreview(): ImportPreview {
   };
 }
 
+const noAgentPermissions: AgentPermissions = {
+  read: false,
+  mark: false,
+  moveMail: false,
+  trash: false,
+  drafts: false,
+};
+
 /** Agent access, with a few accesses as they would be logged. */
 const mockAgents = {
   enabled: false,
-  shared: new Set<string>(),
+  permissions: new Map<string, AgentPermissions>(),
   log: [
+    {
+      at: Date.now() - MINUTE,
+      client: "claude-code",
+      tool: "archive_messages",
+      detail: "",
+      results: 2,
+      refused: false,
+      changed: true,
+    },
     {
       at: Date.now() - 2 * MINUTE,
       client: "claude-code",
@@ -99,6 +117,7 @@ const mockAgents = {
       detail: L("Agenda für Donnerstag", "Agenda for Thursday"),
       results: 1,
       refused: false,
+      changed: false,
     },
     {
       at: Date.now() - 3 * MINUTE,
@@ -107,6 +126,7 @@ const mockAgents = {
       detail: "from:martin is:unread",
       results: 2,
       refused: false,
+      changed: false,
     },
     {
       at: Date.now() - 40 * MINUTE,
@@ -115,6 +135,7 @@ const mockAgents = {
       detail: "",
       results: 0,
       refused: true,
+      changed: false,
     },
   ] as AgentLogEntry[],
 };
@@ -1619,15 +1640,14 @@ export const mockBackend: Backend = {
       displayName: a.displayName,
       emailAddress: a.emailAddress,
       color: a.color,
-      allowed: mockAgents.shared.has(a.id),
+      permissions: mockAgents.permissions.get(a.id) ?? noAgentPermissions,
     })),
   }),
   setAgentAccess: async (enabled) => {
     mockAgents.enabled = enabled;
   },
-  setAgentAccountAccess: async (accountId, allowed) => {
-    if (allowed) mockAgents.shared.add(accountId);
-    else mockAgents.shared.delete(accountId);
+  setAgentPermissions: async (accountId, permissions) => {
+    mockAgents.permissions.set(accountId, permissions.read ? permissions : noAgentPermissions);
   },
   listAgentLog: async (limit) => mockAgents.log.slice(0, limit),
   clearAgentLog: async () => {

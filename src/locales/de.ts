@@ -666,11 +666,11 @@ export const de = {
   "settings.notifications.autostartHint": "Startet mit dem System im Tray, ohne Fenster.",
   "settings.agents": "KI-Agenten",
   "agents.intro":
-    "KI-Agenten wie Claude Code können über MCP deine Mails durchsuchen und lesen, ohne eigenen Zugang zu deinen Konten. Sie lesen nur, was auf diesem Rechner gespeichert ist, und bekommen keine Passwörter. Senden, Löschen oder Verschieben können sie nicht.",
+    "KI-Agenten wie Claude Code können über MCP deine Mails durchsuchen und lesen, ohne eigenen Zugang zu deinen Konten. Pro Konto legst du fest, was sie außerdem dürfen. Senden und endgültig Löschen können sie nie, und Passwörter bekommen sie nicht.",
   "agents.enabled": "Zugriff für KI-Agenten",
   "agents.enabledHint":
     "Ausgeschaltet bekommt kein Agent etwas zu sehen, auch wenn er eingerichtet ist.",
-  "agents.accounts": "Freigegebene Konten",
+  "agents.accounts": "Konten und Rechte",
   "agents.noneShared":
     "Noch kein Konto freigegeben. Agenten sehen erst etwas, wenn du hier eines einschaltest.",
   "agents.connect": "Agent verbinden",
@@ -691,4 +691,16 @@ export const de = {
   "agents.tool.listMessages": "Ordner gelesen",
   "agents.tool.searchMessages": "Gesucht",
   "agents.tool.readMessage": "Mail gelesen",
+  "agents.right.read": "Lesen",
+  "agents.right.mark": "Markieren",
+  "agents.right.move": "Verschieben, archivieren",
+  "agents.right.trash": "In den Papierkorb",
+  "agents.right.drafts": "Entwürfe schreiben",
+  "agents.log.changed.one": "1 geändert",
+  "agents.log.changed.other": "{count} geändert",
+  "agents.tool.markMessages": "Markiert",
+  "agents.tool.moveMessages": "Verschoben",
+  "agents.tool.archiveMessages": "Archiviert",
+  "agents.tool.trashMessages": "In den Papierkorb gelegt",
+  "agents.tool.createDraft": "Entwurf geschrieben",
 } as const;

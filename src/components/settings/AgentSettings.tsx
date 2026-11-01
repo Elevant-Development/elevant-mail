@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { describeError } from "@/lib/errors";
 import { locale, t, tCount } from "@/lib/i18n";
-import { type AgentLogEntry, api } from "@/lib/tauri";
+import { type AgentAccount, type AgentLogEntry, type AgentPermissions, api } from "@/lib/tauri";
 
 /** How many log entries the page shows. */
 const LOG_SHOWN = 50;
@@ -18,7 +18,73 @@ const toolLabels: Record<string, Parameters<typeof t>[0]> = {
   list_messages: "agents.tool.listMessages",
   search_messages: "agents.tool.searchMessages",
   read_message: "agents.tool.readMessage",
+  mark_messages: "agents.tool.markMessages",
+  move_messages: "agents.tool.moveMessages",
+  archive_messages: "agents.tool.archiveMessages",
+  trash_messages: "agents.tool.trashMessages",
+  create_draft: "agents.tool.createDraft",
 };
+
+/** The rights beyond reading, in the order the page shows them. */
+const rights: { key: Exclude<keyof AgentPermissions, "read">; label: Parameters<typeof t>[0] }[] = [
+  { key: "mark", label: "agents.right.mark" },
+  { key: "moveMail", label: "agents.right.move" },
+  { key: "trash", label: "agents.right.trash" },
+  { key: "drafts", label: "agents.right.drafts" },
+];
+
+/** One account: reading as its switch, the other rights below once it is on. */
+function AccountPermissions({
+  account,
+  disabled,
+  onChange,
+}: {
+  account: AgentAccount;
+  disabled: boolean;
+  onChange: (permissions: AgentPermissions) => void;
+}) {
+  const { permissions } = account;
+  const id = `agents-account-${account.accountId}`;
+  return (
+    <li className="grid gap-2.5 py-2.5">
+      <div className="flex items-center gap-3">
+        <span
+          aria-hidden
+          className="size-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: account.color }}
+        />
+        <label htmlFor={id} className="grid min-w-0 flex-1">
+          <span className="truncate text-sm font-medium">{account.displayName}</span>
+          <span className="truncate text-xs text-muted-foreground">{account.emailAddress}</span>
+        </label>
+        <Switch
+          id={id}
+          aria-label={t("agents.right.read")}
+          checked={permissions.read}
+          disabled={disabled}
+          onCheckedChange={(read) => onChange({ ...permissions, read })}
+        />
+      </div>
+      {permissions.read && (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 pl-5.5">
+          {rights.map(({ key, label }) => (
+            <label
+              key={key}
+              className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
+            >
+              {t(label)}
+              <Switch
+                checked={permissions[key]}
+                disabled={disabled}
+                onCheckedChange={(on) => onChange({ ...permissions, [key]: on })}
+              />
+            </label>
+          ))}
+        </div>
+      )}
+    </li>
+  );
+}
 
 /** A shell word, quoted when it has spaces or quotes in it. */
 function shellWord(word: string): string {
@@ -64,6 +130,10 @@ function LogEntry({ entry }: { entry: AgentLogEntry }) {
         <span className="font-medium">{label ? t(label) : entry.tool}</span>
         {entry.refused ? (
           <span className="text-xs font-medium text-destructive">{t("agents.log.refused")}</span>
+        ) : entry.changed ? (
+          <span className="text-xs font-medium text-primary">
+            {tCount("agents.log.changed", entry.results)}
+          </span>
         ) : (
           <span className="text-xs text-muted-foreground">
             {tCount("agents.log.results", entry.results)}
@@ -93,8 +163,13 @@ export function AgentSettings() {
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["agent-settings"] });
   const setEnabled = useMutation({ mutationFn: api.setAgentAccess, onSuccess: refresh });
   const setAccount = useMutation({
-    mutationFn: ({ accountId, allowed }: { accountId: string; allowed: boolean }) =>
-      api.setAgentAccountAccess(accountId, allowed),
+    mutationFn: ({
+      accountId,
+      permissions,
+    }: {
+      accountId: string;
+      permissions: AgentPermissions;
+    }) => api.setAgentPermissions(accountId, permissions),
     onSuccess: refresh,
   });
   const clearLog = useMutation({
@@ -104,7 +179,7 @@ export function AgentSettings() {
 
   const enabled = settings.data?.enabled ?? false;
   const accounts = settings.data?.accounts ?? [];
-  const shared = accounts.filter((a) => a.allowed).length;
+  const shared = accounts.filter((a) => a.permissions.read).length;
   const error = setEnabled.error ?? setAccount.error ?? clearLog.error;
   const command = launch.data
     ? ["claude", "mcp", "add", "elevant-mail", "--", launch.data.program, ...launch.data.args]
@@ -150,30 +225,14 @@ export function AgentSettings() {
             <h3 className="text-sm font-medium">{t("agents.accounts")}</h3>
             <ul className="divide-y rounded-lg border px-3">
               {accounts.map((account) => (
-                <li key={account.accountId} className="flex items-center gap-3 py-2.5">
-                  <span
-                    aria-hidden
-                    className="size-2.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: account.color }}
-                  />
-                  <label
-                    htmlFor={`agents-account-${account.accountId}`}
-                    className="grid min-w-0 flex-1"
-                  >
-                    <span className="truncate text-sm font-medium">{account.displayName}</span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {account.emailAddress}
-                    </span>
-                  </label>
-                  <Switch
-                    id={`agents-account-${account.accountId}`}
-                    checked={account.allowed}
-                    disabled={setAccount.isPending}
-                    onCheckedChange={(allowed) =>
-                      setAccount.mutate({ accountId: account.accountId, allowed })
-                    }
-                  />
-                </li>
+                <AccountPermissions
+                  key={account.accountId}
+                  account={account}
+                  disabled={setAccount.isPending}
+                  onChange={(permissions) =>
+                    setAccount.mutate({ accountId: account.accountId, permissions })
+                  }
+                />
               ))}
             </ul>
             {shared === 0 && <Notice tone="info" text={t("agents.noneShared")} />}

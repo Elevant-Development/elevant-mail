@@ -1,6 +1,7 @@
 //! Desktop shell of Elevant Mail: window, startup and the commands the frontend calls. Mail,
 //! storage and credentials live in `elevant-mail-core` (see docs/project-brief.md).
 
+mod agent_changes;
 mod commands;
 mod error;
 mod protocol;
@@ -32,6 +33,7 @@ pub fn run() {
             let hidden = std::env::args().any(|arg| arg == tray::HIDDEN_ARG);
             window::create_main(app.handle(), !hidden)?;
             tray::init(app.handle());
+            agent_changes::watch(app.handle());
             let state = app.state::<state::AppState>();
             for account in elevant_mail_core::accounts::list(&state.db.conn())? {
                 state.watchers.start(app.handle(), &account.id);
@@ -60,7 +62,7 @@ pub fn run() {
             commands::app::check_for_update,
             commands::agents::get_agent_settings,
             commands::agents::set_agent_access,
-            commands::agents::set_agent_account_access,
+            commands::agents::set_agent_permissions,
             commands::agents::list_agent_log,
             commands::agents::clear_agent_log,
             commands::agents::agent_launch,

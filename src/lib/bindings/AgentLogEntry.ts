@@ -17,6 +17,10 @@ client: string | null, tool: string,
  */
 detail: string, results: number, 
 /**
- * Turned away: switched off, or an account not shared.
+ * Turned away: switched off, an account not shared, or a right not given.
  */
-refused: boolean, };
+refused: boolean, 
+/**
+ * The agent changed mail (marked, moved, wrote a draft).
+ */
+changed: boolean, };

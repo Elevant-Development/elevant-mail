@@ -1,7 +1,7 @@
-//! Access for AI agents over MCP: the switch, the shared accounts and the log. The server itself
+//! Access for AI agents over MCP: the switch, what agents may do per account, and the log. The server itself
 //! runs as `elevant-mail mcp`, started by the agent (see elevant-mail-mcp).
 
-use elevant_mail_core::agents::{self, AgentLogEntry, AgentSettings};
+use elevant_mail_core::agents::{self, AgentLogEntry, AgentPermissions, AgentSettings};
 use serde::Serialize;
 use tauri::State;
 
@@ -29,16 +29,17 @@ pub async fn set_agent_access(
     Ok(agents::set_enabled(&state.db.conn(), enabled)?)
 }
 
+/// What agents may do with one account's mail.
 #[tauri::command]
-pub async fn set_agent_account_access(
+pub async fn set_agent_permissions(
     state: State<'_, AppState>,
     account_id: String,
-    allowed: bool,
+    permissions: AgentPermissions,
 ) -> Result<(), CommandError> {
-    Ok(agents::set_account_access(
+    Ok(agents::set_permissions(
         &state.db.conn(),
         &account_id,
-        allowed,
+        permissions,
     )?)
 }
 

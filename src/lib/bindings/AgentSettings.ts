@@ -2,6 +2,6 @@
 import type { AgentAccount } from "./AgentAccount";
 
 /**
- * What the settings page shows: the switch and, per account, whether agents may read it.
+ * What the settings page shows: the switch and, per account, what agents may do.
  */
 export type AgentSettings = { enabled: boolean, accounts: Array<AgentAccount>, };

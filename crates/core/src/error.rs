@@ -175,6 +175,9 @@ pub enum Error {
 
     #[error("the account has not allowed the app to its contacts yet")]
     ContactsAccessMissing,
+
+    #[error("agents may not {0} in this account")]
+    AgentNotAllowed(&'static str),
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -291,7 +294,8 @@ impl Error {
             | Error::CalendarReadOnly
             | Error::AddressBookReadOnly
             | Error::EmptyContact
-            | Error::InvalidEventTime => ErrorKind::InvalidInput,
+            | Error::InvalidEventTime
+            | Error::AgentNotAllowed(_) => ErrorKind::InvalidInput,
             Error::NotAnExport => ErrorKind::NotAnExport,
             Error::WrongPassphrase => ErrorKind::WrongPassphrase,
             Error::HostNotFound => ErrorKind::ServerNotFound,
@@ -391,6 +395,7 @@ impl Error {
             | Error::ContactNotFound
             | Error::AddressBookReadOnly
             | Error::EmptyContact
+            | Error::AgentNotAllowed(_)
             | Error::OpenExternal(_) => None,
         }
     }
