@@ -4,19 +4,20 @@
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
 A fast, private mail client for Linux and Windows. All your IMAP accounts in one window, with a
-unified inbox and a calm interface, for reading and writing mail.
+unified inbox and a calm interface, for reading and writing mail, with your calendars and
+contacts beside it.
 
 - **Free and open source.** No paywall, no subscription, no account with us.
 - **Private.** No cloud, no telemetry. The app talks to your mail servers and nothing else.
 - **Local first.** Your mail is cached on your computer, opens instantly and stays readable
   offline.
 
-![Elevant Mail with a conversation in the unified inbox of two accounts](docs/screenshots/main.jpg)
+![Elevant Mail with an invitation open in the unified inbox of two accounts](docs/screenshots/main.jpg)
 
-> **Status: v0.4, reads and sends.** Elevant Mail reads, searches, organizes and writes mail for
-> several accounts: conversations, filters, archiving with undo, replies and forwards with
-> formatting, drafts, attachments and signatures. It is early software: please keep another mail
-> client around for now, and
+> **Status: v0.6, mail, calendar and contacts.** Elevant Mail reads, searches, organizes and
+> writes mail for several accounts, and keeps your calendars and address books in step over
+> CalDAV, CardDAV and Microsoft 365. It is early software: please keep another mail client around
+> for now, and
 > [tell us](https://github.com/Elevant-Development/elevant-mail/issues) what breaks.
 
 ## Features
@@ -51,13 +52,32 @@ unified inbox and a calm interface, for reading and writing mail.
 - **Attachments:** open or save them. Files that could run programs are only saved, never opened
   directly.
 - **Read and starred** state syncs back to the server
+- **Calendar** with day, week and month view: create, change and delete events, all-day and
+  repeating ones too, with reminders and a color per calendar. Your calendars stay in step both
+  ways over CalDAV (Mailcow/SOGo, Nextcloud, Posteo, mailbox.org, iCloud and others) and with
+  Microsoft 365 and Outlook.com.
+- **Invitations** show in the mail with what else is on at that time; accept, maybe or decline
+  in one click, and accepted events land in your calendar
+- **Contacts** from your address books (CardDAV, Microsoft 365, Outlook.com), searchable, editable
+  and offered first when you write a recipient
+- **Keeps running in the tray** after you close the window, so new mail and reminders still
+  arrive; it can also start at login
+- **For AI agents (MCP):** tools like Claude Code can search and read the accounts you share with
+  them, and only do more (mark, move, trash, write drafts) where you allow it. Off until you
+  switch it on; see [AI agents](#ai-agents-mcp).
+- **Drag mail onto folders,** right-click a mail for its actions, and drag the columns to the
+  width you like
+- **Move your accounts** to another computer with an export file, passwords only when you
+  choose, encrypted with a passphrase
 - **Keyboard control** for the whole mail view (see [Keyboard shortcuts](#keyboard-shortcuts))
 - **Dark and light mode,** six accent colors, two densities, several bundled fonts
 - **Readable newsletters in dark mode:** designed mail sits on a light page, simple mail follows
   the dark theme, and you can switch per mail
 - **English and German.** The app follows your system language; more languages are welcome.
 
-![Writing a reply with formatting, signature and an attachment](docs/screenshots/compose.jpg)
+![The calendar's week view with the calendars of two accounts](docs/screenshots/calendar.jpg)
+
+![Writing a reply with the account's signature and the quoted mail](docs/screenshots/compose.jpg)
 
 | Designed newsletter with images allowed        | Light mode with attachments               |
 | ---------------------------------------------- | ----------------------------------------- |
@@ -135,6 +155,26 @@ one); notifications; and under
 **Reading** which accounts the unified inbox brings together, which inbox opens at start, when an
 opened mail counts as read and whose images always load.
 
+## AI agents (MCP)
+
+Elevant Mail can let AI agents such as Claude Code work with your mail over the
+[Model Context Protocol](https://modelcontextprotocol.io). The agent starts the app's program as
+its server (`elevant-mail mcp`); it reads the mail on your computer, gets no passwords and needs
+no network. The app does not have to be open, but changes an agent makes reach your mail server
+only while it runs.
+
+1. Open **Settings → AI agents** and switch on **Access for AI agents**.
+2. Per account, switch on **Read** and, if you like, what else agents may do: **Mark**, **Move,
+   archive**, **Move to trash**, **Write drafts**. Agents never send mail and never delete it for
+   good; drafts wait in your drafts folder for you to send.
+3. Copy the command shown there into a terminal, for Claude Code for example
+   `claude mcp add elevant-mail -- /path/to/elevant-mail mcp`. Other MCP clients get the same as
+   JSON.
+
+The page logs every access, refused ones too. Mail is written by strangers, so every result tells
+the agent that its content is data, not instructions; still, give agents only the rights you
+need.
+
 ## Searching
 
 Type into the search field at the top; every word has to match, as a word or the start of one
@@ -172,6 +212,7 @@ the app keeps offline.
 | `/`                  | Search. `Enter` or `↓` jumps to the first result, `Esc` clears.       |
 | `F6`                 | Jump between search, folders, list and message (`Shift+F6` goes back) |
 | `c`                  | Write a new mail                                                      |
+| `Ctrl+1`, `2`, `3`   | Mail, calendar, contacts                                              |
 | `r`, `a`, `f`        | Reply, reply to all, forward                                          |
 | `Ctrl+Enter`         | Send (while writing)                                                  |
 | `Ctrl+K`             | Add a link (while writing)                                            |
@@ -185,11 +226,14 @@ or a dialog is open.
 
 - **No telemetry, no analytics, no cloud.** Elevant Mail has no server of its own. It connects to
   your mail servers, to Microsoft when you sign in with Microsoft, to image hosts only when you
-  load a mail's images, and once a day to GitHub's API to look for a new version (one request
+  load a mail's images, to the calendar and address book servers of your accounts, and once a
+  day to GitHub's API to look for a new version (one request
   without anything about you; can be switched off).
 - **Nothing from the web.** Fonts, icons and styles are part of the app; no CDNs, no avatar
   services. The build is checked for this on every change.
 - **Passwords and sign-in tokens** live in your system keyring, never in files or logs.
+- **AI agents only by your leave:** the MCP server is off until you switch it on, reaches only
+  the accounts and rights you choose, runs on your computer only and logs every access.
 - **Encrypted connections only,** with certificates checked against your system's trust store.
 - **Mail is untrusted.** HTML is cleaned before display and shown in a sandbox where scripts
   never run. External images are blocked, so senders cannot see when you open a mail, until you
@@ -211,18 +255,15 @@ Found a security problem? Please report it privately, see [SECURITY.md](SECURITY
   filters and search on the server; account and reading settings; large folders
 - v0.4: sending with password or sign-in via Microsoft; reply, reply all and forward with
   formatting; drafts in the server's drafts folder; attachments; signatures
+- v0.5: drag mail onto folders, columns as wide as you like, Microsoft accounts on Windows
+  fixed; moving accounts to another computer (0.4.1)
+- v0.6: calendar and contacts over CalDAV, CardDAV and Microsoft 365, invitations, reminders;
+  keeps running in the tray; MCP server for AI agents with permissions per account
 
-**Next: MCP server for AI agents**
+**Next: optional AI help**
 
-- Optional and off by default, local only, read-only to start, so tools like Claude Code can
-  search your mail without their own access to your accounts
-
-**Then**
-
-- **Optional AI help:** summaries and reply drafts with a provider you choose, including local
-  models; nothing active without setup
-- **Keep running in the tray,** so notifications arrive with the window closed
-- **Calendar:** later, as its own area
+- Summaries and reply drafts with a provider you choose, including local models; nothing active
+  without setup
 
 The [project brief](docs/project-brief.md) has the details, the architecture and the decisions
 behind them.
