@@ -1,8 +1,9 @@
-//! A CalDAV server in the test process, over plain HTTP on 127.0.0.1: one user (`alex`,
-//! password `secret`) with a principal, a calendar home and calendars at
-//! `/dav/calendars/alex/<name>/`. `/.well-known/caldav` redirects to the principal, as Mailcow's
-//! SOGo and Nextcloud do. Enough of WebDAV for the client: PROPFIND, the `calendar-multiget`
-//! REPORT, PUT and DELETE with `If-Match`/`If-None-Match`.
+//! A CalDAV and CardDAV server in the test process, over plain HTTP on 127.0.0.1: one user
+//! (`alex`, password `secret`) with a principal, calendars at `/dav/calendars/alex/<name>/` and
+//! address books at `/dav/addressbooks/alex/<name>/`. `/.well-known/caldav` and
+//! `/.well-known/carddav` redirect to the principal, as Mailcow's SOGo and Nextcloud do. Enough of
+//! WebDAV for the client: PROPFIND, the `calendar-multiget` and `addressbook-multiget` REPORTs, PUT
+//! and DELETE with `If-Match`/`If-None-Match`.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -18,6 +19,7 @@ pub(crate) const USER: &str = "alex";
 pub(crate) const PASSWORD: &str = "secret";
 const PRINCIPAL: &str = "/dav/principals/alex/";
 const HOME: &str = "/dav/calendars/alex/";
+const ADDRESS_HOME: &str = "/dav/addressbooks/alex/";
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Calendar {
@@ -32,6 +34,9 @@ pub(crate) struct Calendar {
 pub(crate) struct Store {
     /// By path segment (`work`).
     pub calendars: BTreeMap<String, Calendar>,
+    /// Address books, by path segment, with their vCards; a slug of its own, apart from the
+    /// calendars'.
+    pub address_books: BTreeMap<String, Calendar>,
     next_etag: u64,
     /// Method and path of every request, for tests that count them.
     pub requests: Vec<String>,
@@ -49,20 +54,38 @@ impl Store {
         );
     }
 
-    /// Puts an event in, as another device would; returns its ETag.
-    pub fn put(&mut self, slug: &str, file: &str, ics: &str) -> String {
+    pub fn add_address_book(&mut self, slug: &str, name: &str, read_only: bool) {
+        self.address_books.insert(
+            slug.into(),
+            Calendar {
+                name: name.into(),
+                read_only,
+                ..Calendar::default()
+            },
+        );
+    }
+
+    fn collection(&mut self, slug: &str) -> &mut Calendar {
+        match self.calendars.get_mut(slug) {
+            Some(calendar) => calendar,
+            None => self.address_books.get_mut(slug).expect("a collection"),
+        }
+    }
+
+    /// Puts an event or contact in, as another device would; returns its ETag.
+    pub fn put(&mut self, slug: &str, file: &str, text: &str) -> String {
         self.next_etag += 1;
         let etag = self.next_etag;
-        let calendar = self.calendars.get_mut(slug).expect("a calendar");
-        calendar.events.insert(file.into(), (etag, ics.into()));
-        calendar.version += 1;
+        let collection = self.collection(slug);
+        collection.events.insert(file.into(), (etag, text.into()));
+        collection.version += 1;
         format!("\"{etag}\"")
     }
 
     pub fn remove(&mut self, slug: &str, file: &str) {
-        let calendar = self.calendars.get_mut(slug).expect("a calendar");
-        calendar.events.remove(file);
-        calendar.version += 1;
+        let collection = self.collection(slug);
+        collection.events.remove(file);
+        collection.version += 1;
     }
 }
 
@@ -175,7 +198,7 @@ fn multistatus(responses: &str) -> Answer {
         status: "207 Multi-Status",
         headers: vec![("Content-Type", "application/xml; charset=utf-8".into())],
         body: format!(
-            r#"<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:ic="http://apple.com/ns/ical/">{responses}</d:multistatus>"#
+            r#"<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:card="urn:ietf:params:xml:ns:carddav" xmlns:cs="http://calendarserver.org/ns/" xmlns:ic="http://apple.com/ns/ical/">{responses}</d:multistatus>"#
         ),
     }
 }
@@ -229,7 +252,7 @@ fn handle(request: &Request, store: &Mutex<Store>) -> Answer {
             ));
             done
         }
-        ("PROPFIND", "/.well-known/caldav") => {
+        ("PROPFIND", "/.well-known/caldav" | "/.well-known/carddav") => {
             let mut moved = answer("301 Moved Permanently");
             moved.headers.push(("Location", PRINCIPAL.into()));
             moved
@@ -238,9 +261,42 @@ fn handle(request: &Request, store: &Mutex<Store>) -> Answer {
             PRINCIPAL,
             &format!(
                 "<d:current-user-principal><d:href>{PRINCIPAL}</d:href></d:current-user-principal>\
-                 <c:calendar-home-set><d:href>{HOME}</d:href></c:calendar-home-set>"
+                 <c:calendar-home-set><d:href>{HOME}</d:href></c:calendar-home-set>\
+                 <card:addressbook-home-set><d:href>{ADDRESS_HOME}</d:href></card:addressbook-home-set>"
             ),
         )),
+        // Any address of the user names the principal, as the client asks it of the calendars.
+        ("PROPFIND", _) if request.body.contains("addressbook-home-set") => multistatus(&response(
+            path,
+            &format!(
+                "<d:current-user-principal><d:href>{PRINCIPAL}</d:href></d:current-user-principal>"
+            ),
+        )),
+        ("PROPFIND", ADDRESS_HOME) => {
+            let mut responses = response(
+                ADDRESS_HOME,
+                "<d:resourcetype><d:collection/></d:resourcetype>",
+            );
+            for (slug, book) in &store.address_books {
+                let privileges = if book.read_only {
+                    "<d:privilege><d:read/></d:privilege>"
+                } else {
+                    "<d:privilege><d:read/></d:privilege><d:privilege><d:write/></d:privilege>"
+                };
+                responses.push_str(&response(
+                    &format!("{ADDRESS_HOME}{slug}/"),
+                    &format!(
+                        "<d:resourcetype><d:collection/><card:addressbook/></d:resourcetype>\
+                         <d:displayname>{}</d:displayname>\
+                         <d:current-user-privilege-set>{privileges}</d:current-user-privilege-set>\
+                         <cs:getctag>\"{}\"</cs:getctag>",
+                        xml::escape(&book.name),
+                        book.version
+                    ),
+                ));
+            }
+            multistatus(&responses)
+        }
         ("PROPFIND", HOME) => {
             let mut responses = response(HOME, "<d:resourcetype><d:collection/></d:resourcetype>");
             for (slug, calendar) in &store.calendars {
@@ -271,21 +327,32 @@ fn handle(request: &Request, store: &Mutex<Store>) -> Answer {
             ));
             multistatus(&responses)
         }
-        (method, _) if path.starts_with(HOME) => {
-            let rest = &path[HOME.len()..];
+        (method, _) if path.starts_with(HOME) || path.starts_with(ADDRESS_HOME) => {
+            let contacts = path.starts_with(ADDRESS_HOME);
+            let (home, kind, data) = if contacts {
+                (ADDRESS_HOME, "<card:addressbook/>", "card:address-data")
+            } else {
+                (HOME, "<c:calendar/>", "c:calendar-data")
+            };
+            let rest = &path[home.len()..];
             let (slug, file) = rest.split_once('/').unwrap_or((rest, ""));
-            let Some(calendar) = store.calendars.get(slug).cloned() else {
+            let collections = if contacts {
+                &store.address_books
+            } else {
+                &store.calendars
+            };
+            let Some(calendar) = collections.get(slug).cloned() else {
                 return answer("404 Not Found");
             };
             match (method, file) {
                 ("PROPFIND", "") => {
                     let mut responses = response(
                         path,
-                        "<d:resourcetype><d:collection/><c:calendar/></d:resourcetype>",
+                        &format!("<d:resourcetype><d:collection/>{kind}</d:resourcetype>"),
                     );
                     for (name, (etag, _)) in &calendar.events {
                         responses.push_str(&response(
-                            &format!("{HOME}{slug}/{name}"),
+                            &format!("{home}{slug}/{name}"),
                             &format!("<d:getetag>\"{etag}\"</d:getetag><d:resourcetype/>"),
                         ));
                     }
@@ -307,7 +374,7 @@ fn handle(request: &Request, store: &Mutex<Store>) -> Answer {
                             Some(response(
                                 href,
                                 &format!(
-                                    "<d:getetag>\"{etag}\"</d:getetag><c:calendar-data>{}</c:calendar-data>",
+                                    "<d:getetag>\"{etag}\"</d:getetag><{data}>{}</{data}>",
                                     xml::escape(ics)
                                 ),
                             ))

@@ -52,6 +52,10 @@ interface UiState {
   notifications: boolean;
   /** Sender and subject in it; off, it only names the account. */
   notificationPreview: boolean;
+  /** A notification when an event's reminder is due. */
+  eventReminders: boolean;
+  /** Minutes before the start for new events with a time; null: none. */
+  defaultReminder: number | null;
   /** Once a day, ask GitHub whether a newer version was released. */
   updateCheck: boolean;
   /** The first start explained the check above. */
@@ -117,6 +121,8 @@ interface UiState {
   setLanguage: (language: LanguageSetting) => void;
   setNotifications: (on: boolean) => void;
   setNotificationPreview: (on: boolean) => void;
+  setEventReminders: (on: boolean) => void;
+  setDefaultReminder: (minutes: number | null) => void;
   setUpdateCheck: (on: boolean) => void;
   explainUpdateCheck: () => void;
   skipUpdate: (version: string) => void;
@@ -175,6 +181,8 @@ export const useUiStore = create<UiState>()(
       language: "system",
       notifications: true,
       notificationPreview: true,
+      eventReminders: true,
+      defaultReminder: 15,
       updateCheck: true,
       updateCheckExplained: false,
       skippedUpdate: null,
@@ -209,6 +217,8 @@ export const useUiStore = create<UiState>()(
       setDensity: (density) => set({ density }),
       setNotifications: (notifications) => set({ notifications }),
       setNotificationPreview: (notificationPreview) => set({ notificationPreview }),
+      setEventReminders: (eventReminders) => set({ eventReminders }),
+      setDefaultReminder: (defaultReminder) => set({ defaultReminder }),
       setUpdateCheck: (updateCheck) => set({ updateCheck, updateCheckExplained: true }),
       explainUpdateCheck: () => set({ updateCheckExplained: true }),
       skipUpdate: (version) => set({ skippedUpdate: version }),
@@ -369,6 +379,8 @@ export const useUiStore = create<UiState>()(
         language: state.language,
         notifications: state.notifications,
         notificationPreview: state.notificationPreview,
+        eventReminders: state.eventReminders,
+        defaultReminder: state.defaultReminder,
         updateCheck: state.updateCheck,
         updateCheckExplained: state.updateCheckExplained,
         skippedUpdate: state.skippedUpdate,

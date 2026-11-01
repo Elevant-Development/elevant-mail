@@ -10,7 +10,7 @@ import {
   replySubject,
   withSignature,
 } from "@/lib/compose";
-import { api, UNIFIED_INBOX } from "@/lib/tauri";
+import { type Address, api, UNIFIED_INBOX } from "@/lib/tauri";
 import { useAccounts } from "@/queries/accounts";
 import { useFolders } from "@/queries/folders";
 import { useUiStore } from "@/stores/ui";
@@ -35,7 +35,8 @@ export function useCompose() {
     return [settings.signature, settings.signatureHtml] as const;
   };
 
-  const compose = async () => {
+  /** A new mail, to `to` if given (e.g. from a contact). */
+  const compose = async (to: Address[] = []) => {
     const { selectedMailboxId, startAccountId } = useUiStore.getState();
     const folderAccount =
       selectedMailboxId === UNIFIED_INBOX
@@ -50,7 +51,7 @@ export function useCompose() {
       mode: "new",
       sourceId: null,
       accountId,
-      to: [],
+      to,
       cc: [],
       bcc: [],
       subject: "",

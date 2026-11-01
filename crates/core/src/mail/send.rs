@@ -605,6 +605,8 @@ mod tests {
                 all_day: false,
                 repeat: None,
                 attendees: Vec::new(),
+                reminder: None,
+                instance: None,
             },
         )
         .unwrap();

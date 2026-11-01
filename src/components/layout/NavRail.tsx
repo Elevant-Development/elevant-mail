@@ -13,9 +13,10 @@ import { type Area, useCalendarStore } from "@/stores/calendar";
 const areas: { value: Area; icon: IconName; label: MessageKey }[] = [
   { value: "mail", icon: "mail", label: "area.mail" },
   { value: "calendar", icon: "calendar", label: "area.calendar" },
+  { value: "contacts", icon: "contacts", label: "area.contacts" },
 ];
 
-/** A narrow column of icons at the left edge: mail, calendar, and the areas still to come. */
+/** A narrow column of icons at the left edge: mail, calendar, contacts. */
 export function NavRail({ className }: { className?: string }) {
   const area = useCalendarStore((s) => s.area);
   const setArea = useCalendarStore((s) => s.setArea);

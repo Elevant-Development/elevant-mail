@@ -1,6 +1,7 @@
-//! A CalDAV client (RFC 4791) for the calendars of mail accounts: finding them, listing their
-//! events with ETags, fetching and writing events. It signs in with the account's user name and
-//! password (Basic over TLS); plain HTTP is only allowed to this computer, for tests.
+//! A CalDAV (RFC 4791) and CardDAV (RFC 6352) client for the calendars and address books of mail
+//! accounts: finding them, listing their events or contacts with ETags, fetching and writing
+//! them. It signs in with the account's user name and password (Basic over TLS); plain HTTP is
+//! only allowed to this computer, for tests.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,15 +12,67 @@ use rustls::ClientConfig;
 use rustls_platform_verifier::BuilderVerifierExt;
 use url::Url;
 
-use super::xml::{self, APPLE_ICAL, CALDAV, CALENDARSERVER, DAV, Element, Response};
+use super::xml::{self, APPLE_ICAL, CALDAV, CALENDARSERVER, CARDDAV, DAV, Element, Response};
 use crate::secrets::Secret;
 use crate::{Error, Result};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// Redirects followed, as from `/.well-known/caldav` to the server's own path.
 const MAX_REDIRECTS: usize = 5;
-/// Events asked for in one `calendar-multiget`.
+/// Events or contacts asked for in one `calendar-multiget` or `addressbook-multiget`.
 const MULTIGET_BATCH: usize = 50;
+
+/// What a collection holds: events (CalDAV) or contacts (CardDAV).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Events,
+    Contacts,
+}
+
+impl Kind {
+    /// The namespace and the prefix the requests give it.
+    fn namespace(self) -> (&'static str, &'static str) {
+        match self {
+            Kind::Events => (CALDAV, "c"),
+            Kind::Contacts => (CARDDAV, "card"),
+        }
+    }
+
+    fn home_set(self) -> &'static str {
+        match self {
+            Kind::Events => "calendar-home-set",
+            Kind::Contacts => "addressbook-home-set",
+        }
+    }
+
+    fn multiget(self) -> &'static str {
+        match self {
+            Kind::Events => "calendar-multiget",
+            Kind::Contacts => "addressbook-multiget",
+        }
+    }
+
+    fn data(self) -> &'static str {
+        match self {
+            Kind::Events => "calendar-data",
+            Kind::Contacts => "address-data",
+        }
+    }
+
+    fn content_type(self) -> &'static str {
+        match self {
+            Kind::Events => "text/calendar; charset=utf-8",
+            Kind::Contacts => "text/vcard; charset=utf-8",
+        }
+    }
+
+    fn read_only(self) -> Error {
+        match self {
+            Kind::Events => Error::CalendarReadOnly,
+            Kind::Contacts => Error::AddressBookReadOnly,
+        }
+    }
+}
 
 /// A calendar on the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,12 +86,22 @@ pub(crate) struct RemoteCalendar {
     pub version: Option<String>,
 }
 
-/// An event on the server.
+/// An address book on the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RemoteEvent {
+pub(crate) struct RemoteAddressBook {
+    pub url: Url,
+    pub name: String,
+    pub read_only: bool,
+    /// Changes whenever a contact in it does (`getctag`, or the `sync-token`).
+    pub version: Option<String>,
+}
+
+/// An event or contact on the server: its iCalendar or vCard text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RemoteObject {
     pub url: Url,
     pub etag: Option<String>,
-    pub ics: String,
+    pub data: String,
 }
 
 /// What a write may overwrite.
@@ -184,7 +247,7 @@ impl Dav {
     ) -> Result<Option<(Url, Vec<Response>)>> {
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:c="{CALDAV}" xmlns:cs="{CALENDARSERVER}" xmlns:ic="{APPLE_ICAL}"><d:prop>{props}</d:prop></d:propfind>"#
+<d:propfind xmlns:d="DAV:" xmlns:c="{CALDAV}" xmlns:card="{CARDDAV}" xmlns:cs="{CALENDARSERVER}" xmlns:ic="{APPLE_ICAL}"><d:prop>{props}</d:prop></d:propfind>"#
         );
         let (url, response) = self
             .send("PROPFIND", url, &[("Depth", depth)], Some(&body))
@@ -203,14 +266,17 @@ impl Dav {
         }
     }
 
-    /// Where the user's calendars are (the calendar home), starting from a server address such
-    /// as `https://mail.example.org/.well-known/caldav`; `None` when there is no CalDAV there.
-    pub async fn find_home(&self, start: &Url) -> Result<Option<Url>> {
+    /// Where the user's calendars or address books are (their home), starting from a server
+    /// address such as `https://mail.example.org/.well-known/caldav`, or from any address of the
+    /// same user on that server; `None` when there is nothing of the kind there.
+    pub async fn find_home(&self, start: &Url, kind: Kind) -> Result<Option<Url>> {
+        let (namespace, prefix) = kind.namespace();
+        let home_set = format!("<{prefix}:{}/>", kind.home_set());
         let Some((url, responses)) = self
             .propfind(
                 start,
                 "0",
-                "<d:current-user-principal/><c:calendar-home-set/>",
+                &format!("<d:current-user-principal/>{home_set}"),
             )
             .await?
         else {
@@ -221,23 +287,56 @@ impl Dav {
                 .iter()
                 .find_map(|response| response.prop(namespace, name)?.href().map(str::to_owned))
         };
-        if let Some(home) = prop(CALDAV, "calendar-home-set") {
+        if let Some(home) = prop(namespace, kind.home_set()) {
             return Ok(url.join(&home).ok());
         }
         let Some(principal) = prop(DAV, "current-user-principal").and_then(|p| url.join(&p).ok())
         else {
             return Ok(None);
         };
-        let Some((url, responses)) = self
-            .propfind(&principal, "0", "<c:calendar-home-set/>")
-            .await?
-        else {
+        let Some((url, responses)) = self.propfind(&principal, "0", &home_set).await? else {
             return Ok(None);
         };
         Ok(responses
             .iter()
-            .find_map(|response| response.prop(CALDAV, "calendar-home-set")?.href())
+            .find_map(|response| response.prop(namespace, kind.home_set())?.href())
             .and_then(|home| url.join(home).ok()))
+    }
+
+    /// The address books in the home.
+    pub async fn address_books(&self, home: &Url) -> Result<Vec<RemoteAddressBook>> {
+        let Some((url, responses)) = self
+            .propfind(
+                home,
+                "1",
+                "<d:resourcetype/><d:displayname/><d:current-user-privilege-set/>\
+                 <cs:getctag/><d:sync-token/>",
+            )
+            .await?
+        else {
+            return Err(Error::Protocol("the address book home is gone".into()));
+        };
+        Ok(responses
+            .iter()
+            .filter_map(|response| {
+                response
+                    .prop(DAV, "resourcetype")?
+                    .child(CARDDAV, "addressbook")?;
+                let url = url.join(&response.href).ok()?;
+                Some(RemoteAddressBook {
+                    name: response
+                        .prop(DAV, "displayname")
+                        .and_then(Element::value)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| last_segment(&url)),
+                    read_only: response
+                        .prop(DAV, "current-user-privilege-set")
+                        .is_some_and(|privileges| !can_write(privileges)),
+                    version: version(response),
+                    url,
+                })
+            })
+            .collect())
     }
 
     /// The calendars in the home that hold events.
@@ -313,7 +412,7 @@ impl Dav {
             }))
     }
 
-    /// The events in a calendar, with their ETags.
+    /// The events in a calendar or the contacts in an address book, with their ETags.
     pub async fn etags(&self, calendar: &Url) -> Result<Vec<(Url, Option<String>)>> {
         let Some((url, responses)) = self
             .propfind(calendar, "1", "<d:getetag/><d:resourcetype/>")
@@ -344,8 +443,15 @@ impl Dav {
             .collect())
     }
 
-    /// The events at `urls`, with their iCalendar text, in batches.
-    pub async fn fetch(&self, calendar: &Url, urls: &[Url]) -> Result<Vec<RemoteEvent>> {
+    /// The events or contacts at `urls`, with their text, in batches.
+    pub async fn fetch(
+        &self,
+        calendar: &Url,
+        urls: &[Url],
+        kind: Kind,
+    ) -> Result<Vec<RemoteObject>> {
+        let (namespace, prefix) = kind.namespace();
+        let (multiget, data) = (kind.multiget(), kind.data());
         let mut events = Vec::new();
         for batch in urls.chunks(MULTIGET_BATCH) {
             let hrefs: String = batch
@@ -354,14 +460,14 @@ impl Dav {
                 .collect();
             let body = format!(
                 r#"<?xml version="1.0" encoding="utf-8"?>
-<c:calendar-multiget xmlns:d="DAV:" xmlns:c="{CALDAV}"><d:prop><d:getetag/><c:calendar-data/></d:prop>{hrefs}</c:calendar-multiget>"#
+<{prefix}:{multiget} xmlns:d="DAV:" xmlns:{prefix}="{namespace}"><d:prop><d:getetag/><{prefix}:{data}/></d:prop>{hrefs}</{prefix}:{multiget}>"#
             );
             let (url, response) = self
                 .send("REPORT", calendar, &[("Depth", "1")], Some(&body))
                 .await?;
             if response.status().as_u16() != 207 {
                 return Err(Error::Protocol(format!(
-                    "calendar-multiget answered {}",
+                    "{multiget} answered {}",
                     response.status().as_u16()
                 )));
             }
@@ -370,21 +476,27 @@ impl Dav {
                 .await
                 .map_err(|error| network_error(&error))?;
             events.extend(xml::multistatus(&text).into_iter().filter_map(|response| {
-                Some(RemoteEvent {
+                Some(RemoteObject {
                     url: url.join(&response.href).ok()?,
                     etag: response
                         .prop(DAV, "getetag")
                         .and_then(Element::value)
                         .map(str::to_owned),
-                    ics: response.prop(CALDAV, "calendar-data")?.value()?.to_owned(),
+                    data: response.prop(namespace, data)?.value()?.to_owned(),
                 })
             }));
         }
         Ok(events)
     }
 
-    /// Writes an event, under the condition.
-    pub async fn put(&self, url: &Url, ics: &str, condition: Condition<'_>) -> Result<Written> {
+    /// Writes an event or contact, under the condition.
+    pub async fn put(
+        &self,
+        url: &Url,
+        data: &str,
+        condition: Condition<'_>,
+        kind: Kind,
+    ) -> Result<Written> {
         if !allowed(url) {
             return Err(Error::InvalidLink);
         }
@@ -392,8 +504,8 @@ impl Dav {
             .client
             .put(url.clone())
             .basic_auth(&self.username, Some(self.password.expose()))
-            .header(CONTENT_TYPE, "text/calendar; charset=utf-8")
-            .body(ics.to_owned());
+            .header(CONTENT_TYPE, kind.content_type())
+            .body(data.to_owned());
         request = match condition {
             Condition::New => request.header("If-None-Match", "*"),
             Condition::Version(etag) => request.header("If-Match", etag),
@@ -406,14 +518,15 @@ impl Dav {
         match response.status().as_u16() {
             200..=299 => Ok(Written::Done(etag_of(&response))),
             401 => Err(Error::AuthenticationFailed { provider: None }),
-            403 => Err(Error::CalendarReadOnly),
+            403 => Err(kind.read_only()),
             412 => Ok(Written::Conflict),
             code => Err(Error::Protocol(format!("PUT answered {code}"))),
         }
     }
 
-    /// Deletes an event, only if it is still that version; gone already counts as done.
-    pub async fn delete(&self, url: &Url, etag: Option<&str>) -> Result<Written> {
+    /// Deletes an event or contact, only if it is still that version; gone already counts as
+    /// done.
+    pub async fn delete(&self, url: &Url, etag: Option<&str>, kind: Kind) -> Result<Written> {
         if !allowed(url) {
             return Err(Error::InvalidLink);
         }
@@ -431,7 +544,7 @@ impl Dav {
         match response.status().as_u16() {
             200..=299 | 404 | 410 => Ok(Written::Done(None)),
             401 => Err(Error::AuthenticationFailed { provider: None }),
-            403 => Err(Error::CalendarReadOnly),
+            403 => Err(kind.read_only()),
             412 => Ok(Written::Conflict),
             code => Err(Error::Protocol(format!("DELETE answered {code}"))),
         }

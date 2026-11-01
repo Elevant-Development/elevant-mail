@@ -6,7 +6,8 @@ import { Notice } from "@/components/common/Notice";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { notificationsAllowed, showNotification } from "@/lib/desktop-notify";
-import { t } from "@/lib/i18n";
+import { locale, t } from "@/lib/i18n";
+import { reminderChoices, reminderLabel } from "@/lib/reminders";
 import { api } from "@/lib/tauri";
 import { useUiStore } from "@/stores/ui";
 
@@ -61,6 +62,10 @@ export function NotificationSettings() {
     mutationFn: api.setAutostart,
     onSuccess: (enabled) => queryClient.setQueryData(["autostart"], enabled),
   });
+  const eventReminders = useUiStore((s) => s.eventReminders);
+  const setEventReminders = useUiStore((s) => s.setEventReminders);
+  const defaultReminder = useUiStore((s) => s.defaultReminder);
+  const setDefaultReminder = useUiStore((s) => s.setDefaultReminder);
   const updateCheck = useUiStore((s) => s.updateCheck);
   const setUpdateCheck = useUiStore((s) => s.setUpdateCheck);
   const [denied, setDenied] = useState(false);
@@ -93,6 +98,32 @@ export function NotificationSettings() {
         onChange={setPreview}
       />
       {denied && <Notice tone="error" text={t("settings.notifications.denied")} />}
+      <Setting
+        id="settings-event-reminders"
+        label={t("settings.notifications.reminders")}
+        hint={t("settings.notifications.remindersHint")}
+        checked={eventReminders}
+        onChange={(on) => {
+          setEventReminders(on);
+          if (on) void ask();
+        }}
+      />
+      <label className="flex items-center justify-between gap-4 text-sm">
+        <span className="font-medium">{t("settings.notifications.defaultReminder")}</span>
+        <select
+          className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30"
+          value={defaultReminder ?? "none"}
+          onChange={(event) =>
+            setDefaultReminder(event.target.value === "none" ? null : Number(event.target.value))
+          }
+        >
+          {reminderChoices.map((minutes) => (
+            <option key={minutes ?? "none"} value={minutes ?? "none"}>
+              {reminderLabel(minutes, locale)}
+            </option>
+          ))}
+        </select>
+      </label>
       <Setting
         id="settings-keep-running"
         label={t("settings.notifications.keepRunning")}

@@ -12,4 +12,9 @@ start: number, end: number, allDay: boolean,
 /**
  * A date of a series.
  */
-recurring: boolean, };
+recurring: boolean, 
+/**
+ * For a date of a series: its original start, which names it when only this date is
+ * opened, changed or deleted.
+ */
+instance: number | null, };

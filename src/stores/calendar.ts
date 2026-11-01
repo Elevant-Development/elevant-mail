@@ -6,11 +6,14 @@ import type { CalendarView } from "@/lib/calendar";
 import type { UserError } from "@/lib/errors";
 import type { EventInput } from "@/lib/tauri";
 
-export type Area = "mail" | "calendar";
+export type Area = "mail" | "calendar" | "contacts";
 
-/** The event dialog: one event to look at, or one being written (new or changed). */
+/**
+ * The event dialog: one event to look at, or one being written (new or changed). `instance`: one
+ * date of a series, by its original start.
+ */
 export type EventDialog =
-  | { mode: "view"; eventId: string }
+  | { mode: "view"; eventId: string; instance: number | null }
   /** `ownEvent`: the account organizes it (or nobody does), so its attendees can change. */
   | { mode: "edit"; event: EventInput; ownEvent: boolean };
 
@@ -32,7 +35,7 @@ interface CalendarState {
   setAnchor: (anchor: number) => void;
   /** A day in the day view, e.g. from the month grid. */
   showDay: (day: number) => void;
-  openEvent: (eventId: string) => void;
+  openEvent: (eventId: string, instance?: number | null) => void;
   editEvent: (event: EventInput, ownEvent?: boolean) => void;
   closeDialog: () => void;
 }
@@ -61,7 +64,7 @@ export const useCalendarStore = create<CalendarState>()(
       setView: (view) => set({ view }),
       setAnchor: (anchor) => set({ anchor }),
       showDay: (day) => set({ view: "day", anchor: day }),
-      openEvent: (eventId) => set({ dialog: { mode: "view", eventId } }),
+      openEvent: (eventId, instance = null) => set({ dialog: { mode: "view", eventId, instance } }),
       editEvent: (event, ownEvent = true) => set({ dialog: { mode: "edit", event, ownEvent } }),
       closeDialog: () => set({ dialog: null }),
     }),

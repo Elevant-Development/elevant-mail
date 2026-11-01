@@ -32,6 +32,8 @@ export function hasOpenOverlay(): boolean {
 
 /** Marks the scrollable message list and reader body, so shortcuts know where the focus is. */
 export const LIST_ATTRIBUTE = "data-message-list";
+/** A row of the list, with the message it shows: the context menu finds it. */
+export const MESSAGE_ATTRIBUTE = "data-message-id";
 export const READER_ATTRIBUTE = "data-reader-body";
 export const SEARCH_ATTRIBUTE = "data-search-input";
 /** The sidebar's folder tree, and each of its entries (`useTreeFocus`). */

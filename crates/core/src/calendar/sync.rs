@@ -12,7 +12,7 @@ use serde::Serialize;
 use ts_rs::TS;
 use url::Url;
 
-use super::caldav::{self, Condition, Dav, RemoteCalendar, Written};
+use super::caldav::{self, Condition, Dav, Kind, RemoteCalendar, Written};
 use super::events;
 use super::graph::{self, Graph, GraphCalendar};
 use crate::accounts::{self, SignInMethod};
@@ -103,8 +103,8 @@ pub fn status(conn: &Connection, account_id: &str) -> Result<CaldavStatus> {
     })
 }
 
-/// Where to look for an account's calendars, in order.
-fn candidates(imap_host: &str, email: &str) -> Vec<Url> {
+/// Where to look for an account's calendars or address books, in order.
+pub(crate) fn candidates(imap_host: &str, email: &str, kind: Kind) -> Vec<Url> {
     let host = imap_host.trim().to_ascii_lowercase();
     let domain = email
         .rsplit_once('@')
@@ -120,20 +120,31 @@ fn candidates(imap_host: &str, email: &str) -> Vec<Url> {
         return Vec::new();
     }
     let mut addresses = Vec::new();
-    // Providers whose calendars are not on the mail server.
-    let known = [
-        ("mailbox.org", "https://dav.mailbox.org/"),
-        ("posteo.de", "https://posteo.de:8443/"),
-        ("imap.mail.me.com", "https://caldav.icloud.com/"),
-    ];
+    // Providers whose calendars and address books are not on the mail server.
+    let known = match kind {
+        Kind::Events => [
+            ("mailbox.org", "https://dav.mailbox.org/"),
+            ("posteo.de", "https://posteo.de:8443/"),
+            ("imap.mail.me.com", "https://caldav.icloud.com/"),
+        ],
+        Kind::Contacts => [
+            ("mailbox.org", "https://dav.mailbox.org/"),
+            ("posteo.de", "https://posteo.de:8843/"),
+            ("imap.mail.me.com", "https://contacts.icloud.com/"),
+        ],
+    };
     for (key, address) in known {
         if host == key || host.ends_with(&format!(".{key}")) || domain == key {
             addresses.push(address.to_owned());
         }
     }
-    addresses.push(format!("https://{host}/.well-known/caldav"));
+    let well_known = match kind {
+        Kind::Events => "caldav",
+        Kind::Contacts => "carddav",
+    };
+    addresses.push(format!("https://{host}/.well-known/{well_known}"));
     if !domain.is_empty() && domain != host {
-        addresses.push(format!("https://{domain}/.well-known/caldav"));
+        addresses.push(format!("https://{domain}/.well-known/{well_known}"));
     }
     addresses
         .into_iter()
@@ -141,17 +152,22 @@ fn candidates(imap_host: &str, email: &str) -> Vec<Url> {
         .collect()
 }
 
-/// Asks each address in turn; the first that names a calendar home wins. Looking by itself
-/// (`guessing`), a refused sign-in only means no calendars for this password there; for an
-/// address the user gave, it is the answer.
-async fn look_for_home(dav: &Dav, addresses: &[Url], guessing: bool) -> Result<Option<Url>> {
+/// Asks each address in turn; the first that names a home of the kind wins. Looking by itself
+/// (`guessing`), a refused sign-in only means none for this password there; for an address the
+/// user gave, it is the answer.
+pub(crate) async fn look_for_home(
+    dav: &Dav,
+    addresses: &[Url],
+    guessing: bool,
+    kind: Kind,
+) -> Result<Option<Url>> {
     for address in addresses {
-        match dav.find_home(address).await {
+        match dav.find_home(address, kind).await {
             Ok(Some(home)) => return Ok(Some(home)),
             Ok(None) => {}
             Err(error @ Error::AuthenticationFailed { .. }) if !guessing => return Err(error),
             // Another address may still answer.
-            Err(error) => tracing::debug!(%address, %error, "no calendars there"),
+            Err(error) => tracing::debug!(%address, %error, ?kind, "nothing there"),
         }
     }
     Ok(None)
@@ -162,8 +178,9 @@ async fn connect(secrets: &dyn SecretStore, account_id: &str, account: &Account)
     Dav::new(&account.username, password)
 }
 
-/// Switches the account's calendars on or off, and sets where they are: `url` is a server
-/// address (the account's own is looked for when it is `None`). Checks it before saving.
+/// Switches the account's calendars and address books on or off, and sets where the calendars
+/// are: `url` is a server address (the account's own is looked for when it is `None`). Checks it
+/// before saving. The address books are looked for anew, from there.
 pub async fn set_caldav(
     db: &Database,
     secrets: &dyn SecretStore,
@@ -175,11 +192,16 @@ pub async fn set_caldav(
     if !enabled {
         let conn = db.conn();
         conn.execute(
-            "UPDATE accounts SET caldav_enabled = 0 WHERE id = ?1",
+            "UPDATE accounts SET caldav_enabled = 0, carddav_url = NULL, carddav_checked_at = NULL
+             WHERE id = ?1",
             [account_id],
         )?;
-        // The cache keeps no calendars it does not sync.
+        // The cache keeps no calendars or contacts it does not sync.
         conn.execute("DELETE FROM calendars WHERE account_id = ?1", [account_id])?;
+        conn.execute(
+            "DELETE FROM address_books WHERE account_id = ?1",
+            [account_id],
+        )?;
         return status(&conn, account_id);
     }
     let url = url.filter(|_| account.sign_in == SignInMethod::Password);
@@ -193,7 +215,7 @@ pub async fn set_caldav(
             }
             let dav = connect(secrets, account_id, &account).await?;
             Some(
-                look_for_home(&dav, &[start], false)
+                look_for_home(&dav, &[start], false, Kind::Events)
                     .await?
                     .ok_or(Error::CalendarsNotFound)?,
             )
@@ -201,7 +223,8 @@ pub async fn set_caldav(
         None => None,
     };
     db.conn().execute(
-        "UPDATE accounts SET caldav_enabled = 1, caldav_url = ?2, caldav_checked_at = NULL
+        "UPDATE accounts SET caldav_enabled = 1, caldav_url = ?2, caldav_checked_at = NULL,
+           carddav_url = NULL, carddav_checked_at = NULL
          WHERE id = ?1",
         params![account_id, home.as_ref().map(Url::as_str)],
     )?;
@@ -234,8 +257,8 @@ pub async fn sync_account(
             {
                 return Ok(CalendarSyncReport::default());
             }
-            let found =
-                look_for_home(&dav, &candidates(&account.imap_host, &account.email), true).await?;
+            let addresses = candidates(&account.imap_host, &account.email, Kind::Events);
+            let found = look_for_home(&dav, &addresses, true, Kind::Events).await?;
             let conn = db.conn();
             match found {
                 Some(home) => {
@@ -369,13 +392,17 @@ struct Pending {
     remote_id: Option<String>,
     etag: Option<String>,
     kind: String,
+    /// The series itself changed, not only some of its dates (see `events.send_series`).
+    send_series: bool,
+    /// Its rule changed (see `events.send_rule`).
+    send_rule: bool,
 }
 
 /// The changes made here in a calendar that wait for its server, oldest first.
 fn pending_changes(conn: &Connection, calendar_id: &str) -> Result<Vec<Pending>> {
     Ok(conn
         .prepare(
-            "SELECT id, uid, ics, remote_id, etag, pending FROM events
+            "SELECT id, uid, ics, remote_id, etag, pending, send_series, send_rule FROM events
              WHERE calendar_id = ?1 AND pending IS NOT NULL ORDER BY changed_at",
         )?
         .query_map([calendar_id], |row| {
@@ -386,8 +413,18 @@ fn pending_changes(conn: &Connection, calendar_id: &str) -> Result<Vec<Pending>>
                 remote_id: row.get(3)?,
                 etag: row.get(4)?,
                 kind: row.get(5)?,
+                send_series: row.get(6)?,
+                send_rule: row.get(7)?,
             })
         })?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// The dates of a series changed here on their own, for Graph: original start and kind.
+fn pending_dates(conn: &Connection, event_id: &str) -> Result<Vec<(i64, String)>> {
+    Ok(conn
+        .prepare("SELECT instance, kind FROM pending_instances WHERE event_id = ?1")?
+        .query_map([event_id], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?)
 }
 
@@ -465,10 +502,10 @@ async fn sync_calendar(db: &Database, dav: &Dav, calendar: &RemoteCalendar) -> R
         .map(|(url, _)| url.clone())
         .collect();
     let fetched: Vec<_> = dav
-        .fetch(&calendar.url, &wanted)
+        .fetch(&calendar.url, &wanted, Kind::Events)
         .await?
         .into_iter()
-        .map(|event| (event.url.to_string(), event.etag, event.ics))
+        .map(|event| (event.url.to_string(), event.etag, event.data))
         .collect();
     let listed: Vec<&str> = listed.iter().map(|(url, _)| url.as_str()).collect();
     let removed = take_remote(
@@ -506,7 +543,10 @@ async fn send_change(
     };
     let conn = || db.conn();
     match change.kind.as_str() {
-        "delete" => match dav.delete(&target, change.etag.as_deref()).await? {
+        "delete" => match dav
+            .delete(&target, change.etag.as_deref(), Kind::Events)
+            .await?
+        {
             Written::Done(_) => {
                 conn().execute("DELETE FROM events WHERE id = ?1", [&change.id])?;
             }
@@ -524,7 +564,9 @@ async fn send_change(
                 (_, Some(etag)) => Condition::Version(etag),
                 (_, None) => Condition::Any,
             };
-            let written = dav.put(&target, &change.ics, condition).await?;
+            let written = dav
+                .put(&target, &change.ics, condition, Kind::Events)
+                .await?;
             let etag = match &written {
                 Written::Done(etag) => etag.clone(),
                 // Someone else's version wins; it is fetched below.
@@ -536,6 +578,11 @@ async fn send_change(
             )?;
         }
     }
+    // Its changed dates went with the series' text.
+    conn().execute(
+        "DELETE FROM pending_instances WHERE event_id = ?1",
+        [&change.id],
+    )?;
     Ok(())
 }
 
@@ -620,8 +667,9 @@ async fn sync_graph_calendar(
     Ok(!fetched.is_empty() || removed > 0 || !pending.is_empty())
 }
 
-/// One change to Graph. Afterwards the event is fetched again, so the cache holds the server's
-/// version (with its own UID for a new event).
+/// One change to Graph: the event or series, then the dates of the series changed on their own.
+/// Afterwards the event is fetched again, so the cache holds the server's version (with its own
+/// UID for a new event).
 async fn send_graph_change(
     db: &Database,
     graph: &Graph,
@@ -634,8 +682,13 @@ async fn send_graph_change(
     let written = match (change.kind.as_str(), change.remote_id.as_deref()) {
         ("delete", Some(id)) => graph.delete(id, change.etag.as_deref()).await?,
         ("delete", None) => graph::Written::Done(String::new()),
+        // Only dates of the series changed: the series stays as it is there.
+        ("update", Some(id)) if !change.send_series => graph::Written::Done(id.to_owned()),
         (kind, remote_id) => {
-            let Some(body) = graph::to_graph(&change.ics, zone.as_deref(), own) else {
+            let part = graph::Part::Series {
+                rule: kind == "create" || change.send_rule,
+            };
+            let Some(body) = graph::to_graph(&change.ics, zone.as_deref(), own, part) else {
                 conn().execute(
                     "UPDATE events SET pending = NULL WHERE id = ?1",
                     [&change.id],
@@ -653,6 +706,10 @@ async fn send_graph_change(
             conn().execute("DELETE FROM events WHERE id = ?1", [&change.id])?;
         }
         (_, graph::Written::Done(id)) => {
+            let dates = pending_dates(&conn(), &change.id)?;
+            for (instance, kind) in dates {
+                send_graph_date(graph, &id, &change.ics, zone.as_deref(), instance, &kind).await?;
+            }
             conn().execute(
                 "UPDATE events SET pending = NULL, remote_id = ?2, etag = NULL WHERE id = ?1",
                 params![change.id, id],
@@ -665,6 +722,31 @@ async fn send_graph_change(
                 [&change.id],
             )?;
         }
+    }
+    conn().execute(
+        "DELETE FROM pending_instances WHERE event_id = ?1",
+        [&change.id],
+    )?;
+    Ok(())
+}
+
+/// One date of a series to Graph: changed as the series' text has it, or cancelled. A date
+/// the series there no longer has is left alone.
+async fn send_graph_date(
+    graph: &Graph,
+    series_id: &str,
+    ics: &str,
+    zone: Option<&str>,
+    instance: i64,
+    kind: &str,
+) -> Result<()> {
+    let Some(id) = graph.instance_id(series_id, instance).await? else {
+        return Ok(());
+    };
+    if kind == "delete" {
+        graph.delete(&id, None).await?;
+    } else if let Some(body) = graph::to_graph(ics, zone, None, graph::Part::Date(instance)) {
+        graph.update(&id, None, &body).await?;
     }
     Ok(())
 }
@@ -687,6 +769,7 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
     /// 3 November 2026, 09:00 UTC.
     const NOV_3_NINE: i64 = 1_793_696_400_000;
     const HOUR: i64 = 3_600_000;
+    const DAY: i64 = 24 * HOUR;
 
     struct Setup {
         db: Database,
@@ -770,10 +853,11 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
     #[test]
     fn looks_on_the_mail_server_and_the_domain() {
-        let addresses: Vec<String> = candidates("mail.example.org", "alex@example.org")
-            .iter()
-            .map(Url::to_string)
-            .collect();
+        let addresses: Vec<String> =
+            candidates("mail.example.org", "alex@example.org", Kind::Events)
+                .iter()
+                .map(Url::to_string)
+                .collect();
         assert_eq!(
             addresses,
             [
@@ -781,8 +865,8 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
                 "https://example.org/.well-known/caldav"
             ]
         );
-        assert!(candidates("imap.gmail.com", "alex@gmail.com").is_empty());
-        let posteo = candidates("posteo.de", "alex@posteo.de");
+        assert!(candidates("imap.gmail.com", "alex@gmail.com", Kind::Events).is_empty());
+        let posteo = candidates("posteo.de", "alex@posteo.de", Kind::Events);
         assert_eq!(posteo[0].as_str(), "https://posteo.de:8443/");
         assert_eq!(posteo.len(), 2);
     }
@@ -847,6 +931,8 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
                 all_day: false,
                 repeat: None,
                 attendees: Vec::new(),
+                reminder: None,
+                instance: None,
             },
             Some("Europe/Berlin"),
         )
@@ -896,6 +982,8 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
                 all_day: false,
                 repeat: None,
                 attendees: Vec::new(),
+                reminder: None,
+                instance: None,
             },
             Some("Europe/Berlin"),
         )
@@ -906,6 +994,89 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
         let events = &store.calendars["work"].events;
         assert_eq!(events.len(), 1);
         assert!(events["meeting-1.ics"].1.contains("Planung (verschoben)"));
+    }
+
+    /// A weekly series from Tuesday, 3 November, 10:00 in Berlin.
+    fn weekly(calendar_id: &str, title: &str) -> EventInput {
+        EventInput {
+            id: None,
+            calendar_id: calendar_id.into(),
+            title: title.into(),
+            location: String::new(),
+            description: String::new(),
+            start: NOV_3_NINE,
+            end: NOV_3_NINE + HOUR,
+            all_day: false,
+            repeat: Some(crate::calendar::Frequency::Weekly),
+            attendees: Vec::new(),
+            reminder: None,
+            instance: None,
+        }
+    }
+
+    fn waiting_dates(setup: &Setup) -> i64 {
+        setup
+            .db
+            .conn()
+            .query_row("SELECT count(*) FROM pending_instances", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn single_dates_of_a_series_go_with_its_text() {
+        let setup = setup().await;
+        setup.connect().await;
+        setup.sync().await;
+        let work = setup.calendar("Arbeit");
+        let series = weekly(&work.id, "Sprint");
+        let id = events::save_event_in(&setup.db.conn(), &series, Some("Europe/Berlin")).unwrap();
+        setup.sync().await;
+
+        let week = 7 * DAY;
+        let moved = EventInput {
+            id: Some(id.clone()),
+            title: "Sprint (Review)".into(),
+            start: NOV_3_NINE + week + HOUR,
+            end: NOV_3_NINE + week + 2 * HOUR,
+            instance: Some(NOV_3_NINE + week),
+            ..series.clone()
+        };
+        events::save_event_in(&setup.db.conn(), &moved, Some("Europe/Berlin")).unwrap();
+        events::delete_event_at(&setup.db.conn(), &id, Some(NOV_3_NINE + 2 * week)).unwrap();
+        assert_eq!(waiting_dates(&setup), 2);
+        setup.sync().await;
+
+        let uid: String = setup
+            .db
+            .conn()
+            .query_row("SELECT uid FROM events WHERE id = ?1", [&id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        {
+            let store = setup.server.store();
+            let (_, ics) = &store.calendars["work"].events[&format!("{uid}.ics")];
+            assert!(
+                ics.contains("RECURRENCE-ID;TZID=Europe/Berlin:20261110T100000"),
+                "{ics}"
+            );
+            assert!(ics.contains("SUMMARY:Sprint (Review)"), "{ics}");
+            assert!(
+                ics.contains("EXDATE;TZID=Europe/Berlin:20261117T100000"),
+                "{ics}"
+            );
+        }
+        assert_eq!(waiting_dates(&setup), 0);
+        let dates =
+            events::occurrences(&setup.db.conn(), NOV_3_NINE, NOV_3_NINE + 3 * week).unwrap();
+        let starts: Vec<i64> = dates
+            .iter()
+            .filter(|date| date.event_id == id)
+            .map(|date| date.start)
+            .collect();
+        assert_eq!(starts, [NOV_3_NINE, NOV_3_NINE + week + HOUR]);
     }
 
     #[tokio::test]
@@ -948,6 +1119,8 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
                 all_day: false,
                 repeat: None,
                 attendees: Vec::new(),
+                reminder: None,
+                instance: None,
             },
             None,
         )
@@ -987,6 +1160,8 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
             all_day: false,
             repeat: None,
             attendees: vec![lena.clone()],
+            reminder: None,
+            instance: None,
         };
         let id = events::save_event_in(&setup.db.conn(), &input, Some("Europe/Berlin")).unwrap();
         setup.sync().await;
@@ -1126,6 +1301,8 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
                     all_day: false,
                     repeat: None,
                     attendees: Vec::new(),
+                    reminder: None,
+                    instance: None,
                 },
                 Some("Europe/Berlin"),
             )
@@ -1146,6 +1323,8 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
                     all_day: false,
                     repeat: None,
                     attendees: Vec::new(),
+                    reminder: None,
+                    instance: None,
                 },
                 Some("Europe/Berlin"),
             )
@@ -1199,6 +1378,97 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
             server.store().events.remove(&id);
             sync(&setup, &graph).await;
             assert_eq!(setup.titles(), ["Zahnarzt (Kontrolle)"]);
+        }
+
+        #[tokio::test]
+        async fn single_dates_change_without_touching_the_series() {
+            let (setup, server, graph) = graph_setup().await;
+            sync(&setup, &graph).await;
+            let calendar = setup.calendar("Kalender");
+            let series = event_id(&setup, "Jour fixe");
+            let week = 7 * DAY;
+            // Tuesday, 27 October, 10:00 in Berlin; the 17 November.
+            let october_27 = NOV_3_NINE - week;
+            let base = EventInput {
+                id: Some(series.clone()),
+                calendar_id: calendar.id.clone(),
+                title: "Jour fixe (Raum 3)".into(),
+                location: String::new(),
+                description: String::new(),
+                start: october_27 + HOUR,
+                end: october_27 + HOUR + HOUR / 2,
+                all_day: false,
+                repeat: Some(crate::calendar::Frequency::Weekly),
+                attendees: Vec::new(),
+                reminder: None,
+                instance: Some(october_27),
+            };
+            events::save_event_in(&setup.db.conn(), &base, Some("Europe/Berlin")).unwrap();
+            events::delete_event_at(&setup.db.conn(), &series, Some(NOV_3_NINE + 2 * week))
+                .unwrap();
+            assert_eq!(waiting_dates(&setup), 2);
+            sync(&setup, &graph).await;
+
+            {
+                let store = server.store();
+                assert!(
+                    !store
+                        .writes
+                        .iter()
+                        .any(|(_, path, _)| path == "me/events/AAMk-master"),
+                    "{:?}",
+                    store.writes
+                );
+                let master = &store.events["AAMk-master"].1;
+                let exceptions = master["exceptionOccurrences"].as_array().unwrap();
+                // The one changed before stays.
+                assert_eq!(exceptions.len(), 2, "{exceptions:?}");
+                let ours = exceptions
+                    .iter()
+                    .find(|exception| exception["subject"] == "Jour fixe (Raum 3)")
+                    .unwrap();
+                assert_eq!(ours["originalStart"], "2026-10-27T09:00:00Z");
+                assert_eq!(ours["start"]["dateTime"], "2026-10-27T10:00:00.0000000");
+                assert_eq!(
+                    master["cancelledOccurrences"],
+                    json!(["OID.AAMk-master.2026-11-10", "OID.AAMk-master.2026-11-17"])
+                );
+            }
+            assert_eq!(waiting_dates(&setup), 0);
+            let dates =
+                events::occurrences(&setup.db.conn(), october_27, NOV_3_NINE + 3 * week).unwrap();
+            let titles: Vec<_> = dates
+                .iter()
+                .filter(|date| date.event_id == series)
+                .map(|date| (date.title.clone().unwrap_or_default(), date.start))
+                .collect();
+            assert_eq!(
+                titles,
+                [
+                    ("Jour fixe (Raum 3)".to_owned(), october_27 + HOUR),
+                    ("Jour fixe (später)".to_owned(), NOV_3_NINE + HOUR),
+                ]
+            );
+
+            // A new title for the series: sent without its rule, so Exchange keeps the dates.
+            let details = events::get_event(&setup.db.conn(), &series).unwrap();
+            let renamed = EventInput {
+                title: "Teamrunde".into(),
+                start: details.start,
+                end: details.end,
+                instance: None,
+                ..base
+            };
+            events::save_event_in(&setup.db.conn(), &renamed, Some("Europe/Berlin")).unwrap();
+            sync(&setup, &graph).await;
+            let store = server.store();
+            let (_, _, body) = store
+                .writes
+                .iter()
+                .find(|(method, path, _)| method == "PATCH" && path == "me/events/AAMk-master")
+                .unwrap();
+            assert_eq!(body["subject"], "Teamrunde");
+            assert!(body.get("recurrence").is_none(), "{body}");
         }
     }
 

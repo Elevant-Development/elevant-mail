@@ -1,7 +1,9 @@
 //! Calendar: calendars and their events from the cache, syncing them over CalDAV, and answering
 //! invitations that came by mail.
 
-use elevant_mail_core::calendar::events::{self, Calendar, EventDetails, EventInput, Occurrence};
+use elevant_mail_core::calendar::events::{
+    self, Calendar, EventDetails, EventInput, Occurrence, Reminder,
+};
 use elevant_mail_core::calendar::invitation::{self, InvitationAnswer};
 use elevant_mail_core::calendar::sync::{self, CaldavStatus, CalendarSyncReport};
 use tauri::State;
@@ -27,6 +29,20 @@ pub async fn set_calendar_visible(
     )?)
 }
 
+/// Gives a calendar a colour of its own; `None` shows it in its account's colour again.
+#[tauri::command]
+pub async fn set_calendar_color(
+    state: State<'_, AppState>,
+    calendar_id: String,
+    color: Option<String>,
+) -> Result<(), CommandError> {
+    Ok(events::set_calendar_color(
+        &state.db.conn(),
+        &calendar_id,
+        color.as_deref(),
+    )?)
+}
+
 /// The dates of all events that overlap `from..to` (Unix milliseconds), series expanded.
 #[tauri::command]
 pub async fn list_occurrences(
@@ -37,12 +53,23 @@ pub async fn list_occurrences(
     Ok(events::occurrences(&state.db.conn(), from, to)?)
 }
 
+/// The reminders due in `from..=to` (Unix milliseconds), for the interface to show.
+#[tauri::command]
+pub async fn due_reminders(
+    state: State<'_, AppState>,
+    from: i64,
+    to: i64,
+) -> Result<Vec<Reminder>, CommandError> {
+    Ok(events::due_reminders(&state.db.conn(), from, to)?)
+}
+
 #[tauri::command]
 pub async fn get_event(
     state: State<'_, AppState>,
     event_id: String,
+    instance: Option<i64>,
 ) -> Result<EventDetails, CommandError> {
-    Ok(events::get_event(&state.db.conn(), &event_id)?)
+    Ok(events::get_event_at(&state.db.conn(), &event_id, instance)?)
 }
 
 /// A new event or the changes to one; returns its id.
@@ -59,8 +86,13 @@ pub async fn save_event(
 pub async fn delete_event(
     state: State<'_, AppState>,
     event_id: String,
+    instance: Option<i64>,
 ) -> Result<(), CommandError> {
-    Ok(events::delete_event(&state.db.conn(), &event_id)?)
+    Ok(events::delete_event_at(
+        &state.db.conn(),
+        &event_id,
+        instance,
+    )?)
 }
 
 /// Sends the answer to the organizer and returns once the SMTP server took it.

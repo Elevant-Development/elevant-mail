@@ -7,6 +7,7 @@ import {
   type NewAccount,
   type SmtpSettings,
 } from "@/lib/tauri";
+import { useSyncAfterSignIn } from "@/hooks/use-sync-after-sign-in";
 import { useSyncStore } from "@/stores/sync";
 
 export function useAccounts() {
@@ -149,9 +150,15 @@ export function useChangeLogin() {
 
 export function useSignInAgain() {
   const changed = useLoginChanged();
+  const syncAfterSignIn = useSyncAfterSignIn();
   return useMutation({
     mutationKey: ["sign-in-again"],
     mutationFn: (accountId: string) => api.signInAgain(accountId),
-    onSuccess: (_, accountId) => changed(accountId),
+    onSuccess: (_, accountId) => {
+      // What the sign-in allowed now (calendars, contacts) comes in without waiting for the
+      // next round.
+      void syncAfterSignIn(accountId);
+      return changed(accountId);
+    },
   });
 }

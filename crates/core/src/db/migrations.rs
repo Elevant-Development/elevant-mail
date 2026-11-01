@@ -25,6 +25,10 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0017_calendars.sql"),
     include_str!("migrations/0018_caldav.sql"),
     include_str!("migrations/0019_invitations_from_calendars.sql"),
+    include_str!("migrations/0020_series_dates.sql"),
+    include_str!("migrations/0021_calendar_colors.sql"),
+    include_str!("migrations/0022_contacts.sql"),
+    include_str!("migrations/0023_carddav.sql"),
 ];
 
 /// Schema version after all migrations of this build have run.

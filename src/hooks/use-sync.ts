@@ -13,6 +13,7 @@ import {
   usesMockData,
 } from "@/lib/tauri";
 import { useCalendarSync } from "@/hooks/use-calendar-sync";
+import { useContactsSync } from "@/hooks/use-contacts-sync";
 import { useAccounts } from "@/queries/accounts";
 import { useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
@@ -96,12 +97,14 @@ export function useBackgroundSync() {
   const { data: accounts } = useAccounts();
   const { syncAccount } = useSyncActions();
   const { syncCalendars } = useCalendarSync();
+  const { syncContacts } = useContactsSync();
   const synced = useRef(new Set<string>());
   const sync = useEffectEvent((accountId: string) => void syncAccount(accountId));
-  // Calendars go along at start and with every poll, not on every new mail.
+  // Calendars and contacts go along at start and with every poll, not on every new mail.
   const syncAll = useEffectEvent((accountId: string) => {
     sync(accountId);
     void syncCalendars(accountId);
+    void syncContacts(accountId);
   });
   const pollAll = useEffectEvent(() => {
     for (const account of accounts ?? []) syncAll(account.id);

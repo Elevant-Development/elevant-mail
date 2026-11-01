@@ -232,9 +232,13 @@ it does not understand.
 | `folders`         | Folders per account with SPECIAL-USE role, `uid_validity`, `uid_next`, `highest_modseq`, counts                                                           |
 | `messages`        | Headers, flags, preview, content (text and original HTML, sanitized when opened), `in_reply_to`, `references_header` and `reply_to`, `thread_id` and `thread_subject` (subject without "Re:") for conversations, `leaving` while a move is on its way, `by_search` for mail only a server search fetched, `calendar` for an invitation's iCalendar part; unique per folder and UID |
 | `invitation_replies` | What the user answered to an invitation, per account, event UID and occurrence, with the invitation's `SEQUENCE` it answered |
-| `accounts` (CalDAV) | `caldav_url` (where the account's calendars are, found or set), `caldav_enabled`, `caldav_checked_at` (when looking found nothing) |
-| `calendars`       | Calendars per account (`account_id` NULL: the calendar on this computer, id `local`), colour, read-only, shown or hidden, the server's id and sync token once synced, `can_invite` (its server sends invitations; NULL until asked) |
-| `events`          | Events with their iCalendar text as the source of truth, beside it title, place, first start and end, all-day and series flags for the views; the server's id and ETag, `pending` for a change still on its way |
+| `accounts` (CalDAV) | `caldav_url` (where the account's calendars are, found or set), `caldav_enabled` (calendars and address books), `caldav_checked_at` (when looking found nothing), `carddav_url` and `carddav_checked_at` likewise for the address books |
+| `calendars`       | Calendars per account (`account_id` NULL: the calendar on this computer, id `local`), the server's colour, `own_color` (chosen here; NULL: the account's), read-only, shown or hidden, the server's id and sync token once synced, `can_invite` (its server sends invitations; NULL until asked) |
+| `events`          | Events with their iCalendar text as the source of truth, beside it title, place, first start and end, all-day and series flags for the views; the server's id and ETag, `pending` for a change still on its way, and for Graph `send_series`/`send_rule` (the series itself or its rule changed) |
+| `address_books`   | Address books per account (`account_id` NULL: the one on this computer, id `local`), read-only, the server's id and sync token once synced |
+| `contacts`        | Contacts with their vCard as the source of truth, beside it name, company and first mail address for lists, `sort_key` and `search` (lower case without accents); the server's id and ETag, `pending` for a change still on its way |
+| `contact_addresses` | Every mail address of a contact in lower case, for suggestions |
+| `pending_instances` | Dates of a series changed or deleted on their own that Graph still has to get, by event and original start |
 | `thread_keys`     | Every Message-ID a conversation has seen, per account, so replies find it                                                                                  |
 | `drafts`          | Mail being written: recipients, subject, HTML and text, the Message-ID of its copy in the drafts folder, when it changed and when it was uploaded |
 | `draft_attachments` | Files attached to a draft, with their bytes; they go with the draft |
@@ -281,7 +285,8 @@ checks that they are current.
 | Flags       | `set_read`, `set_flagged`, `push_actions`                                                                                                 |
 | Moving      | `move_messages`, `archive_messages` (makes an archive folder where there is none), `delete_messages` (to the trash, from there for good), `undo_moves` |
 | Writing     | `send_message` (returns once the SMTP server took it; filing in Sent and removing the draft follow, then `cache-changed`), `save_draft`, `list_drafts`, `upload_draft`, `discard_draft`, `open_draft` (from the drafts folder), `pick_attachments`, `attach_dropped`, `detach_attachment`, `list_attachments`, `forward_attachments`, `suggest_addresses` |
-| Calendar    | `list_calendars`, `set_calendar_visible`, `list_occurrences` (the dates of all events in a range, series expanded), `get_event`, `save_event` (new or changed), `delete_event` (a series with all its dates), `sync_calendars` (CalDAV, one at a time per account), `caldav_status`, `set_caldav` (on or off, the server's address; checked first), `answer_invitation` (sends the iTIP answer to the organizer; returns once the SMTP server took it) |
+| Calendar    | `list_calendars`, `set_calendar_visible`, `set_calendar_color` (own colour or back to the account's), `list_occurrences` (the dates of all events in a range, series expanded), `get_event` (or one date of a series), `due_reminders`, `save_event` (new or changed, or one date of a series), `delete_event` (a series with all its dates, or one of them), `sync_calendars` (CalDAV, one at a time per account), `caldav_status`, `set_caldav` (on or off, the server's address; checked first), `answer_invitation` (sends the iTIP answer to the organizer; returns once the SMTP server took it) |
+| Contacts    | `list_address_books`, `list_contacts` (of one address book or all, by name, with a search), `get_contact`, `save_contact` (new or changed; moved to another address book), `delete_contact`, `sync_contacts` (CardDAV or Graph, one at a time per account) |
 | Links       | `open_link`                                                                                                                               |
 | Attachments | `save_attachment` (the system's save dialog via `tauri-plugin-dialog`, called from Rust only; the frontend gets no dialog or file permissions), `open_attachment` |
 | Sync        | `sync_account`, `sync_folder`, `load_older`, `search_server` (one account's folders on the server)                                        |
@@ -616,13 +621,16 @@ Steps:
    the calendars per account with a box to show or hide each. A click on an event opens it, a
    click on an empty slot or "New event" starts one; the dialog sets title, start and end (or
    whole days), repetition (daily, weekly, monthly, yearly), calendar, place and description.
-   Changing a series changes all its dates, deleting one deletes them all. Keys: `t` today, `←`/`→`
+   A date of a series is changed or deleted on its own or with the whole series (step 6). Keys: `t` today, `←`/`→`
    or `j`/`k`, `d`/`w`/`m`, `n` new event. Events are stored as iCalendar
    (`crates/core/src/calendar/events.rs`), written in the system's time zone with its
    `VTIMEZONE`, so a series keeps its local time across clock changes; series are expanded when a
    range is asked for. Until the sources come, events go into a calendar on this computer.
    `calcard` 0.3 expands a series whose start is given in UTC (`DTSTART:…Z`, as Google writes
-   it) in the default time zone; the app names such a start `TZID=UTC` before expanding.
+   it) in the default time zone; the app names such a start `TZID=UTC` before expanding. It also
+   expands every series from its start up to 10,000 dates, whatever range is asked for, which took
+   seconds for a few series without end; the app ends each rule (`UNTIL`) a day after the range
+   before expanding.
 3. **CalDAV**, reading and writing — done (`crates/core/src/calendar/caldav.rs`, `sync.rs`). For
    accounts with a password; the same user name and password sign in. The calendars are looked
    for at a few providers that keep them elsewhere (mailbox.org, Posteo, iCloud), then at
@@ -630,7 +638,7 @@ Steps:
    `current-user-principal` to the `calendar-home-set`; nothing else is asked. Found nothing, the
    app looks again a day later; the account settings (Calendar) switch it off or take the
    server's address. Calendars for tasks only are left out; read-only ones are marked. An account's calendars show in
-   the account's colour (the server's colour is kept for later, when calendars can get their own). A sync
+   the account's colour unless one was chosen for them (step 6); the server's colour is kept. A sync
    sends the changes made here first (`PUT` with `If-None-Match: *` for new events, `If-Match`
    with the ETag for changed ones, `DELETE` with `If-Match`), then skips calendars whose
    `getctag`/`sync-token` did not change, lists the others' ETags and fetches what is new or
@@ -670,6 +678,79 @@ Steps:
    calendar on this computer, the event dialog has no attendees. Attendees invited before keep
    their entries and answers when the list changes; on an invitation from someone else the
    organizer's list stays as it is.
+6. **Reminders, single dates of a series, own colours** — done.
+   - *Reminders:* the event dialog sets one (none, at the start, 5 minutes to 2 days before) as a
+     `VALARM` with `TRIGGER:-PT…M`; Graph's `isReminderOn`/`reminderMinutesBeforeStart` both
+     ways. Alarms the dialog did not make stay as they are until the reminder is changed. The
+     interface asks every 30 seconds for the reminders due (`due_reminders`, all alarms of an
+     event, all-day dates from local midnight) and shows them as notifications; Settings →
+     Notifications switches them off and sets the reminder for new events.
+   - *Single dates of a series:* a date opened from a view carries its original start
+     (`Occurrence.instance`, the `RECURRENCE-ID` instant). Changing it asks "only this date or
+     the whole series"; only this date writes a component of its own with `RECURRENCE-ID`
+     (replacing an earlier one, keeping the series' organizer and attendees), deleting it adds an
+     `EXDATE`. CalDAV gets the series' whole text as always. Graph changes dates one by one: they
+     are listed in `pending_instances` and sent after the series to the date's id from
+     `events/{id}/instances` (`PATCH` or `DELETE`). The series itself goes to Graph only when it
+     changed (`events.send_series`), and its rule only when the rule changed or the series
+     moved (`events.send_rule`), since Exchange drops a series' changed dates when it gets the rule
+     again. `calcard` 0.3 puts a changed date in place of the series' one only when both have the
+     same `SEQUENCE`; servers count them apart, so the app leaves `SEQUENCE` out before expanding.
+   - *Own colours:* a colour button beside each calendar in the sidebar offers the account colours
+     and back to the account's (`calendars.own_color`).
+
+### Contacts
+
+Decided on 2026-11-01:
+
+- **Where:** its own area in the icon column (`Ctrl+3`) with list, search and details; the same
+  contacts are suggested when writing mail and when inviting to an event.
+- **Sources:** CardDAV address books on the mail server (found like CalDAV, same sign-in) and
+  Microsoft 365/Outlook.com contacts over Graph (`Contacts.ReadWrite`, one more "allow" per
+  account like calendars). Like the unified inbox, all address books can be shown together.
+- **Reading and writing** from the start, local first and through the queue like events.
+- **Fields:** name, several mail addresses, phone numbers, company, address, birthday and a note;
+  everything else in the vCard is kept as it is.
+
+Steps:
+
+1. **Contacts area** — done. `Ctrl+3` or the icon column opens it: the sidebar lists "All
+   contacts" and the address books per account, the list shows the contacts by name under their
+   letters with a search over name, company, mail addresses and numbers (lower case, accents
+   ignored: "muller" finds "Müller"), and the details offer a mail to each address. The dialog
+   sets first and last name, company, mail addresses and numbers with their kind (work, home,
+   mobile, other), postal addresses, a birthday with or without a year, a note and the address
+   book. Contacts are stored as vCards (`crates/core/src/contacts/`); `calcard` reads them, but
+   changes are made to the text itself: a field the dialog did not change keeps its lines, and
+   properties the app does not edit (photos, groups such as `item1.X-ABLabel`, `X-` extensions)
+   stay byte for byte, since `calcard`'s writer rewrites everything and loses inline photos. New
+   cards are vCard 3.0, which every server takes. Until the sources come, contacts go into an
+   address book on this computer.
+2. **CardDAV**, reading and writing — done (`crates/core/src/contacts/sync.rs`). The CalDAV
+   client takes contacts too (`caldav::Kind`: `addressbook-home-set`, `addressbook-multiget`,
+   `text/vcard`). Address books go on and off with the account's calendars (Settings → Calendar
+   and contacts); they are looked for from the calendars' address, whose principal names both
+   homes, then at `/.well-known/carddav` and the providers that keep them elsewhere (mailbox.org,
+   Posteo on port 8843, iCloud), and again a day after finding none (`accounts.carddav_url`,
+   `carddav_checked_at`). The sync works as for calendars: changes made here go first (`PUT` of
+   `<uid>.vcf` with `If-None-Match: *`, `If-Match` with the ETag, `DELETE`), the server wins a
+   conflict, unchanged address books (`getctag`/`sync-token`) are skipped, the others' changed
+   contacts fetched. It runs with the calendars (at start, every 5 minutes) and right after a
+   change; a failure shows under the account in the address book list.
+3. **Microsoft Graph** contacts — done (`crates/core/src/contacts/graph.rs`). The Microsoft
+   sign-in asks for `Contacts.ReadWrite` on Graph besides the calendars; accounts that signed in
+   before get `ContactsAccessMissing` and a button "Allow contacts" under the account in the
+   address book list. The default contacts folder (named "Contacts" by the interface) and the
+   folders in it are address books; each sync lists their contacts with all fields and takes those
+   whose `changeKey` changed, as vCards with Graph's id as `UID`. Graph knows fewer kinds: mail
+   addresses have none (they show as "other"), one mobile number, two home and two work numbers,
+   one postal address each for home, work and other; a birthday without a year is kept with the
+   year 1604, as Outlook does. Writing sends every field the app edits (`POST`, `PATCH` with
+   `If-Match`, `DELETE`); the next listing brings the contact back as Graph keeps it.
+4. **Suggestions** — done. Typing a recipient or an attendee offers the contacts' addresses
+   (`contact_addresses`) first, found by name, company or address with accents ignored and
+   named as the contact is, then the addresses from cached mail as before
+   (`mailbox::suggest_addresses`).
 
 ## Tests
 

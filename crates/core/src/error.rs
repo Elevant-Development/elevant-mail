@@ -152,6 +152,15 @@ pub enum Error {
     #[error("the event no longer exists")]
     EventNotFound,
 
+    #[error("the contact no longer exists")]
+    ContactNotFound,
+
+    #[error("the address book can only be read")]
+    AddressBookReadOnly,
+
+    #[error("a contact needs a name, a company or a mail address")]
+    EmptyContact,
+
     #[error("the calendar can only be read")]
     CalendarReadOnly,
 
@@ -163,6 +172,9 @@ pub enum Error {
 
     #[error("the account has not allowed the app to its calendars yet")]
     CalendarAccessMissing,
+
+    #[error("the account has not allowed the app to its contacts yet")]
+    ContactsAccessMissing,
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -208,6 +220,8 @@ pub enum ErrorKind {
     CalendarsNotFound,
     /// A Microsoft account signed in before the app asked for its calendars: sign in again.
     CalendarAccessMissing,
+    /// A Microsoft account signed in before the app asked for its contacts: sign in again.
+    ContactsAccessMissing,
     Internal,
 }
 
@@ -275,6 +289,8 @@ impl Error {
             | Error::AttachmentsTooLarge
             | Error::AgentAccessOff
             | Error::CalendarReadOnly
+            | Error::AddressBookReadOnly
+            | Error::EmptyContact
             | Error::InvalidEventTime => ErrorKind::InvalidInput,
             Error::NotAnExport => ErrorKind::NotAnExport,
             Error::WrongPassphrase => ErrorKind::WrongPassphrase,
@@ -302,9 +318,11 @@ impl Error {
             | Error::FolderNotFound
             | Error::MessageNotFound
             | Error::AttachmentNotFound
-            | Error::EventNotFound => ErrorKind::NotFound,
+            | Error::EventNotFound
+            | Error::ContactNotFound => ErrorKind::NotFound,
             Error::CalendarsNotFound => ErrorKind::CalendarsNotFound,
             Error::CalendarAccessMissing => ErrorKind::CalendarAccessMissing,
+            Error::ContactsAccessMissing => ErrorKind::ContactsAccessMissing,
             Error::FileWrite(_) => ErrorKind::FileWrite,
             Error::Keyring(_) | Error::TlsSetup(_) | Error::OpenExternal(_) => ErrorKind::Internal,
         }
@@ -344,7 +362,9 @@ impl Error {
             Error::InvalidRecipient(_) | Error::RecipientRejected(_) => Some(Hint::CheckRecipients),
             Error::OAuthRequired { .. } => Some(Hint::SignInWithMicrosoft),
             Error::ConsentRequired => Some(Hint::AskAdminForConsent),
-            Error::SignInExpired | Error::CalendarAccessMissing => Some(Hint::SignInAgain),
+            Error::SignInExpired | Error::CalendarAccessMissing | Error::ContactsAccessMissing => {
+                Some(Hint::SignInAgain)
+            }
             Error::DifferentAccount => Some(Hint::SignInAsAccount),
             Error::SignInCancelled | Error::SignInFailed(_) => None,
             Error::Database(_)
@@ -368,6 +388,9 @@ impl Error {
             | Error::EventNotFound
             | Error::CalendarReadOnly
             | Error::InvalidEventTime
+            | Error::ContactNotFound
+            | Error::AddressBookReadOnly
+            | Error::EmptyContact
             | Error::OpenExternal(_) => None,
         }
     }

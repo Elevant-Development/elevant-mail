@@ -7,6 +7,7 @@ pub mod app;
 pub mod attachments;
 pub mod calendar;
 pub mod compose;
+pub mod contacts;
 pub mod links;
 pub mod mailbox;
 pub mod sync;

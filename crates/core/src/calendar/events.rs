@@ -29,8 +29,11 @@ pub struct Calendar {
     pub account_id: Option<String>,
     /// Empty for the calendar on this computer: the interface names it.
     pub name: String,
-    /// The account's colour; the calendar's own for the one on this computer.
+    /// The colour chosen for it, else the account's; the calendar's own for the one on this
+    /// computer.
     pub color: String,
+    /// A colour was chosen for it.
+    pub own_color: bool,
     pub read_only: bool,
     /// Its events show in the views.
     pub visible: bool,
@@ -56,6 +59,10 @@ pub struct Occurrence {
     pub all_day: bool,
     /// A date of a series.
     pub recurring: bool,
+    /// For a date of a series: its original start, which names it when only this date is
+    /// opened, changed or deleted.
+    #[ts(type = "number | null")]
+    pub instance: Option<i64>,
 }
 
 /// An event as its dialog shows it; for a series its first date.
@@ -80,7 +87,33 @@ pub struct EventDetails {
     pub read_only: bool,
     /// The account organizes it (or nobody does): its attendees can be changed here.
     pub own_event: bool,
+    /// Minutes before the start of its (first) reminder; `None` without one.
+    #[ts(type = "number | null")]
+    pub reminder: Option<i64>,
+    /// Opened as one date of a series: that date's original start. The details are this date's.
+    #[ts(type = "number | null")]
+    pub instance: Option<i64>,
 }
+
+/// A reminder that is due: the app shows it as a notification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Reminder {
+    pub event_id: String,
+    pub title: Option<String>,
+    pub location: Option<String>,
+    /// The date it reminds of, as in `Occurrence`.
+    #[ts(type = "number")]
+    pub start: i64,
+    pub all_day: bool,
+    /// When it is due, Unix milliseconds.
+    #[ts(type = "number")]
+    pub at: i64,
+}
+
+/// Reminders this long before their event are looked for; earlier ones are rare.
+const REMINDER_LEAD_MS: i64 = 8 * DAY_MS;
 
 /// A new event or the changes to one, from the event dialog.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
@@ -107,6 +140,16 @@ pub struct EventInput {
     /// can invite, and only for events the account organizes; ignored elsewhere.
     #[serde(default)]
     pub attendees: Vec<Address>,
+    /// Minutes before the start of a reminder; `None` for none. An event whose reminder stays
+    /// the same keeps its alarms as they are.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub reminder: Option<i64>,
+    /// Only this date of a series (its original start): it changes on its own, the series
+    /// stays. Repetition and calendar are the series' then.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub instance: Option<i64>,
 }
 
 /// Who organizes and who is invited, for an event in a calendar that can invite.
@@ -149,9 +192,10 @@ fn organized_by(event: &calcard::icalendar::ICalendarComponent, address: Option<
 
 pub fn list_calendars(conn: &Connection) -> Result<Vec<Calendar>> {
     let mut statement = conn.prepare(
-        // An account's calendars show in its colour; the one the server gave stays kept.
-        "SELECT c.id, c.account_id, c.name, coalesce(a.color, c.color), c.read_only, c.visible,
-           c.can_invite
+        // An account's calendars show in its colour unless one was chosen; the one the server
+        // gave stays kept.
+        "SELECT c.id, c.account_id, c.name, coalesce(c.own_color, a.color, c.color), c.read_only,
+           c.visible, c.can_invite, c.own_color IS NOT NULL
          FROM calendars c LEFT JOIN accounts a ON a.id = c.account_id
          ORDER BY c.account_id IS NULL, a.sort_order, a.created_at, c.position, c.name",
     )?;
@@ -165,10 +209,20 @@ pub fn list_calendars(conn: &Connection) -> Result<Vec<Calendar>> {
                 read_only: row.get(4)?,
                 visible: row.get(5)?,
                 can_invite: row.get::<_, Option<bool>>(6)?.unwrap_or(false),
+                own_color: row.get(7)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(calendars)
+}
+
+/// Gives a calendar a colour of its own; `None` shows it in its account's colour again.
+pub fn set_calendar_color(conn: &Connection, calendar_id: &str, color: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE calendars SET own_color = ?2 WHERE id = ?1",
+        params![calendar_id, color],
+    )?;
+    Ok(())
 }
 
 /// Shows or hides a calendar's events in the views.
@@ -201,6 +255,7 @@ pub fn occurrences(conn: &Connection, from: i64, to: i64) -> Result<Vec<Occurren
             end: row.get(5)?,
             all_day: row.get(6)?,
             recurring: false,
+            instance: None,
         })
     })?;
     for row in rows {
@@ -235,6 +290,7 @@ pub fn occurrences(conn: &Connection, from: i64, to: i64) -> Result<Vec<Occurren
                 end: dates.end,
                 all_day: dates.all_day,
                 recurring: true,
+                instance: dates.instance,
             });
         }
     }
@@ -258,6 +314,18 @@ fn master(calendar: &ICalendar) -> Option<usize> {
 }
 
 pub fn get_event(conn: &Connection, event_id: &str) -> Result<EventDetails> {
+    get_event_at(conn, event_id, None)
+}
+
+/// A changed date can lie this far from where the series would have it.
+const INSTANCE_REACH_MS: i64 = 400 * DAY_MS;
+
+/// The event, or with `instance` one date of its series as that date is.
+pub fn get_event_at(
+    conn: &Connection,
+    event_id: &str,
+    instance: Option<i64>,
+) -> Result<EventDetails> {
     let (calendar_id, ics, read_only, own_address): (String, String, bool, Option<String>) = conn
         .query_row(
             "SELECT e.calendar_id, e.ics, c.read_only, a.email_address
@@ -270,9 +338,21 @@ pub fn get_event(conn: &Connection, event_id: &str) -> Result<EventDetails> {
         .optional()?
         .ok_or(Error::EventNotFound)?;
     let calendar = ICalendar::parse(&ics).map_err(|_| Error::EventNotFound)?;
-    let index = master(&calendar).ok_or(Error::EventNotFound)?;
+    let series = master(&calendar).ok_or(Error::EventNotFound)?;
+    let dates = match instance {
+        Some(instance) => ical::dates_between(
+            &calendar,
+            instance - INSTANCE_REACH_MS,
+            instance + INSTANCE_REACH_MS,
+        )
+        .into_iter()
+        .find(|dates| dates.instance == Some(instance))
+        .ok_or(Error::EventNotFound)?,
+        None => ical::first_dates(&calendar, series).ok_or(Error::EventNotFound)?,
+    };
+    // A changed date has details of its own; the rule is the series'.
+    let index = dates.component;
     let event = &calendar.components[index];
-    let dates = ical::first_dates(&calendar, index).ok_or(Error::EventNotFound)?;
     Ok(EventDetails {
         id: event_id.to_owned(),
         calendar_id,
@@ -282,14 +362,80 @@ pub fn get_event(conn: &Connection, event_id: &str) -> Result<EventDetails> {
         start: dates.start,
         end: dates.end,
         all_day: dates.all_day,
-        recurrence: ical::recurrence(event),
+        recurrence: ical::recurrence(&calendar.components[series]),
         organizer: event
             .property(&ICalendarProperty::Organizer)
             .and_then(ical::person),
         attendees: ical::attendees(event),
         read_only,
         own_event: organized_by(event, own_address.as_deref()),
+        reminder: ical::reminder_minutes(&calendar, index),
+        instance: dates.instance.filter(|_| instance.is_some()),
     })
+}
+
+/// The reminders due in `from..=to` (Unix milliseconds), for dates of events and series that
+/// have alarms. All-day dates are reminded of from local midnight.
+pub fn due_reminders(conn: &Connection, from: i64, to: i64) -> Result<Vec<Reminder>> {
+    let mut statement = conn.prepare(
+        "SELECT id, ics FROM events
+         WHERE pending IS NOT 'delete' AND ics LIKE '%BEGIN:VALARM%'
+           AND starts_at < ?2 AND (recurring = 1 OR ends_at > ?1)",
+    )?;
+    let rows = statement.query_map(
+        params![from - REMINDER_LEAD_MS, to + REMINDER_LEAD_MS],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?;
+    let zone = super::local_time_zone_name().and_then(|name| name.parse::<chrono_tz::Tz>().ok());
+    let mut due = Vec::new();
+    for row in rows {
+        let (event_id, ics) = row?;
+        let Ok(calendar) = ICalendar::parse(&ics) else {
+            continue;
+        };
+        for dates in ical::dates_between(&calendar, from - REMINDER_LEAD_MS, to + REMINDER_LEAD_MS)
+        {
+            // An all-day date starts at midnight where the user is.
+            let local_start = if dates.all_day {
+                DateTime::<Utc>::from_timestamp_millis(dates.start)
+                    .and_then(|utc| {
+                        let midnight = utc.naive_utc();
+                        match zone {
+                            Some(zone) => zone
+                                .from_local_datetime(&midnight)
+                                .earliest()
+                                .map(|local| local.timestamp_millis()),
+                            None => Some(midnight.and_utc().timestamp_millis()),
+                        }
+                    })
+                    .unwrap_or(dates.start)
+            } else {
+                dates.start
+            };
+            let local_end = local_start + (dates.end - dates.start);
+            for trigger in ical::triggers(&calendar, dates.component) {
+                let at = match trigger {
+                    ical::Trigger::Relative { seconds, to_end } => {
+                        (if to_end { local_end } else { local_start }) + seconds * 1000
+                    }
+                    ical::Trigger::Absolute(at) => at,
+                };
+                if at > from && at <= to {
+                    let component = &calendar.components[dates.component];
+                    due.push(Reminder {
+                        event_id: event_id.clone(),
+                        title: ical::text(component, &ICalendarProperty::Summary),
+                        location: ical::text(component, &ICalendarProperty::Location),
+                        start: dates.start,
+                        all_day: dates.all_day,
+                        at,
+                    });
+                }
+            }
+        }
+    }
+    due.sort_by_key(|reminder| reminder.at);
+    Ok(due)
 }
 
 /// Saves a new event or the changes to one; returns its id. Times are written in the system's
@@ -345,6 +491,37 @@ pub(crate) fn save_event_in(
         ),
         None => None,
     };
+    if let (Some(instance), Some((uid, ics, calendar_id, remote_id))) = (input.instance, &existing)
+    {
+        let ics = with_instance(ics, uid, &input, instance, time_zone, now)?;
+        let id = input.id.clone().unwrap_or_default();
+        mark_instance(
+            conn,
+            &id,
+            calendar_id,
+            remote_id.is_some(),
+            &ics,
+            instance,
+            "update",
+        )?;
+        return Ok(id);
+    }
+    // The rule changed or the series moved: its changed dates are dropped, and Graph needs the
+    // rule again.
+    let rule_changed = match &existing {
+        Some((_, ics, ..)) => {
+            let calendar = ICalendar::parse(ics).map_err(|_| Error::EventNotFound)?;
+            let series = master(&calendar).ok_or(Error::EventNotFound)?;
+            ical::recurrence(&calendar.components[series]).map(|rule| rule.frequency)
+                != input.repeat
+                || ical::first_occurrence(&calendar, series)
+                    != Some((input.start, input.end, input.all_day))
+        }
+        None => true,
+    };
+    if rule_changed && let Some(id) = &input.id {
+        conn.execute("DELETE FROM pending_instances WHERE event_id = ?1", [id])?;
+    }
     let organizer = organizer_for(conn, &input.calendar_id)?;
     let people = organizer.map(|organizer| People {
         organizer,
@@ -385,7 +562,8 @@ pub(crate) fn save_event_in(
             conn.execute(
                 "UPDATE events SET calendar_id = ?2, uid = ?3, ics = ?4, title = ?5, location = ?6,
                    all_day = ?7, starts_at = ?8, ends_at = ?9, recurring = ?10, changed_at = ?11,
-                   pending = ?12
+                   pending = ?12, send_series = 1,
+                   send_rule = CASE WHEN pending IS NULL THEN ?13 ELSE max(send_rule, ?13) END
                  WHERE id = ?1",
                 params![
                     id,
@@ -400,6 +578,7 @@ pub(crate) fn save_event_in(
                     columns.recurring,
                     now,
                     pending,
+                    rule_changed,
                 ],
             )?;
             Ok(id)
@@ -580,15 +759,32 @@ pub(crate) fn store_remote(
 
 /// Deletes an event, a series with all its dates. One on a server waits for the sync.
 pub fn delete_event(conn: &Connection, event_id: &str) -> Result<()> {
-    let (calendar_id, remote_id): (String, Option<String>) = conn
+    delete_event_at(conn, event_id, None)
+}
+
+/// Deletes an event, or with `instance` only that date of its series.
+pub fn delete_event_at(conn: &Connection, event_id: &str, instance: Option<i64>) -> Result<()> {
+    let (calendar_id, remote_id, ics): (String, Option<String>, String) = conn
         .query_row(
-            "SELECT calendar_id, remote_id FROM events WHERE id = ?1",
+            "SELECT calendar_id, remote_id, ics FROM events WHERE id = ?1",
             [event_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?
         .ok_or(Error::EventNotFound)?;
     writable(conn, &calendar_id)?;
+    if let Some(instance) = instance {
+        let ics = without_instance(&ics, instance)?;
+        return mark_instance(
+            conn,
+            event_id,
+            &calendar_id,
+            remote_id.is_some(),
+            &ics,
+            instance,
+            "delete",
+        );
+    }
     if remote_id.is_some() {
         conn.execute(
             "UPDATE events SET pending = 'delete', changed_at = ?2 WHERE id = ?1",
@@ -598,6 +794,159 @@ pub fn delete_event(conn: &Connection, event_id: &str) -> Result<()> {
         conn.execute("DELETE FROM events WHERE id = ?1", [event_id])?;
     }
     Ok(())
+}
+
+/// Keeps a change to one date of a series: the series' text with it, and for Graph which date
+/// changed, while the series itself waits for nothing.
+fn mark_instance(
+    conn: &Connection,
+    event_id: &str,
+    calendar_id: &str,
+    on_server: bool,
+    ics: &str,
+    instance: i64,
+    kind: &str,
+) -> Result<()> {
+    let remote = writable(conn, calendar_id)?;
+    let columns = columns_of(ics).ok_or(Error::InvalidEventTime)?;
+    let pending = remote.then_some(if on_server { "update" } else { "create" });
+    conn.execute(
+        "UPDATE events SET ics = ?2, title = ?3, location = ?4, all_day = ?5, starts_at = ?6,
+           ends_at = ?7, changed_at = ?8,
+           send_series = CASE WHEN pending IS NULL THEN 0 ELSE send_series END,
+           send_rule = CASE WHEN pending IS NULL THEN 0 ELSE send_rule END,
+           pending = coalesce(pending, ?9)
+         WHERE id = ?1",
+        params![
+            event_id,
+            ics,
+            columns.title,
+            columns.location,
+            columns.all_day,
+            columns.start,
+            columns.end,
+            Utc::now().timestamp_millis(),
+            pending,
+        ],
+    )?;
+    if remote {
+        conn.execute(
+            "INSERT INTO pending_instances (event_id, instance, kind) VALUES (?1, ?2, ?3)
+             ON CONFLICT (event_id, instance) DO UPDATE SET kind = excluded.kind",
+            params![event_id, instance, kind],
+        )?;
+    }
+    Ok(())
+}
+
+/// The components that change dates of the series, by the date they change.
+fn overrides_of(calendar: &ICalendar, instance: i64) -> Vec<u32> {
+    calendar
+        .components
+        .iter()
+        .enumerate()
+        .filter(|(_, component)| {
+            component.component_type == ICalendarComponentType::VEvent
+                && component
+                    .property(&ICalendarProperty::RecurrenceId)
+                    .and_then(|entry| ical::instant_of(calendar, entry))
+                    == Some(instance)
+        })
+        .filter_map(|(position, _)| u32::try_from(position).ok())
+        .collect()
+}
+
+/// The series' text with one date as the dialog left it: a component of its own, named by the
+/// date's original start (`RECURRENCE-ID`), in place of an earlier change of that date. It keeps
+/// the series' organizer and attendees.
+fn with_instance(
+    ics: &str,
+    uid: &str,
+    input: &EventInput,
+    instance: i64,
+    time_zone: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<String> {
+    let mut calendar = ICalendar::parse(ics).map_err(|_| Error::EventNotFound)?;
+    let series = master(&calendar).ok_or(Error::EventNotFound)?;
+    let recurrence_id = ical::instance_property(&calendar, series, "RECURRENCE-ID", instance)
+        .ok_or(Error::EventNotFound)?;
+    let sequence = calendar.components[series]
+        .property(&ICalendarProperty::Sequence)
+        .and_then(|entry| entry.values.first())
+        .and_then(|value| value.as_integer())
+        .unwrap_or(0);
+    let mut people = String::new();
+    for entry in calendar.components[series].entries.iter().filter(|entry| {
+        matches!(
+            entry.name,
+            ICalendarProperty::Organizer | ICalendarProperty::Attendee
+        )
+    }) {
+        entry
+            .write_to(&mut people)
+            .map_err(|_| Error::InvalidEventTime)?;
+    }
+    let stamp = now.format("%Y%m%dT%H%M%SZ");
+    let mut lines = vec![
+        "BEGIN:VEVENT".to_owned(),
+        format!("UID:{}", ical::escape(uid)),
+        recurrence_id,
+        format!("DTSTAMP:{stamp}"),
+        format!("SEQUENCE:{}", sequence + 1),
+        time_line("DTSTART", input.start, input.all_day, time_zone),
+        time_line("DTEND", input.end, input.all_day, time_zone),
+    ];
+    for (name, value) in [
+        ("SUMMARY", &input.title),
+        ("LOCATION", &input.location),
+        ("DESCRIPTION", &input.description),
+    ] {
+        if !value.trim().is_empty() {
+            lines.push(format!("{name}:{}", ical::escape(value.trim())));
+        }
+    }
+    lines.extend(people.lines().map(str::to_owned));
+    if let Some(minutes) = input.reminder {
+        lines.extend(ical::alarm_lines(minutes, input.title.trim()));
+    }
+    lines.push("END:VEVENT".to_owned());
+
+    let replaced = overrides_of(&calendar, instance);
+    calendar.components[0]
+        .component_ids
+        .retain(|id| !replaced.contains(id));
+    let text = calendar.to_string();
+    let end = text.rfind("END:VCALENDAR").ok_or(Error::InvalidEventTime)?;
+    let text = format!("{}{}\r\n{}", &text[..end], lines.join("\r\n"), &text[end..]);
+    let mut calendar = ICalendar::parse(&text).map_err(|_| Error::InvalidEventTime)?;
+    calendar.add_missing_timezones();
+    Ok(calendar.to_string())
+}
+
+/// The series' text without one date: left out (`EXDATE`), and an earlier change of it gone.
+fn without_instance(ics: &str, instance: i64) -> Result<String> {
+    let mut calendar = ICalendar::parse(ics).map_err(|_| Error::EventNotFound)?;
+    let series = master(&calendar).ok_or(Error::EventNotFound)?;
+    let exdate = ical::instance_property(&calendar, series, "EXDATE", instance)
+        .ok_or(Error::EventNotFound)?;
+    let replaced = overrides_of(&calendar, instance);
+    calendar.components[0]
+        .component_ids
+        .retain(|id| !replaced.contains(id));
+    // The EXDATE goes in as text, parsed with the rest.
+    let text = calendar.to_string();
+    let master_uid = calendar.components[series]
+        .uid()
+        .unwrap_or_default()
+        .to_owned();
+    let marker = format!("UID:{}", ical::escape(&master_uid));
+    let at = text.find(&marker).ok_or(Error::EventNotFound)?;
+    let line_end = text[at..].find("\r\n").map_or(text.len(), |end| at + end);
+    let text = format!("{}\r\n{exdate}{}", &text[..line_end], &text[line_end..]);
+    let mut calendar = ICalendar::parse(&text).map_err(|_| Error::InvalidEventTime)?;
+    calendar.add_missing_timezones();
+    Ok(calendar.to_string())
 }
 
 /// `DTSTART`/`DTEND` (or a date for all-day events): in the time zone by name, else in UTC.
@@ -651,6 +1000,9 @@ fn new_calendar(
     if let Some(rule) = input.repeat.and_then(Frequency::as_rrule) {
         lines.push(format!("RRULE:FREQ={rule}"));
     }
+    if let Some(minutes) = input.reminder {
+        lines.extend(ical::alarm_lines(minutes, input.title.trim()));
+    }
     if let Some(people) = people.filter(|people| !people.attendees.is_empty()) {
         let cn = |name: Option<&str>| {
             name.map(|name| format!(";CN=\"{}\"", name.replace('"', "'")))
@@ -700,6 +1052,7 @@ fn changed_calendar(
         .and_then(|value| value.as_integer())
         .unwrap_or(0);
     let old_dates = ical::first_dates(&calendar, index);
+    let old_reminder = ical::reminder_minutes(&calendar, index);
     let old_rule = ical::recurrence(event);
     let keep_rule = old_rule.as_ref().map(|rule| rule.frequency) == input.repeat;
     let moved = old_dates.is_none_or(|dates| {
@@ -740,6 +1093,39 @@ fn changed_calendar(
             .filter(|entry| replaced(&entry.name) && entry.name != ICalendarProperty::Uid)
             .cloned(),
     );
+    if old_reminder != input.reminder {
+        // The dialog's reminder replaces the event's alarms.
+        let alarms: Vec<u32> = calendar.components[index]
+            .component_ids
+            .iter()
+            .copied()
+            .filter(|id| {
+                calendar
+                    .components
+                    .get(*id as usize)
+                    .is_some_and(|component| {
+                        component.component_type == ICalendarComponentType::VAlarm
+                    })
+            })
+            .collect();
+        calendar.components[index]
+            .component_ids
+            .retain(|id| !alarms.contains(id));
+        let fresh_alarms: Vec<_> = fresh.components[fresh_index]
+            .component_ids
+            .iter()
+            .filter_map(|id| fresh.components.get(*id as usize))
+            .filter(|component| component.component_type == ICalendarComponentType::VAlarm)
+            .cloned()
+            .collect();
+        for alarm in fresh_alarms {
+            let id =
+                u32::try_from(calendar.components.len()).map_err(|_| Error::InvalidEventTime)?;
+            calendar.components.push(alarm);
+            calendar.components[index].component_ids.push(id);
+        }
+    }
+    let master_event = &mut calendar.components[index];
     if people.is_some() {
         // Attendees invited before keep their entries, answers included; new ones come from
         // the fresh event, and the organizer stays while anyone is invited.
@@ -822,6 +1208,8 @@ mod tests {
             all_day: false,
             repeat: None,
             attendees: Vec::new(),
+            reminder: None,
+            instance: None,
         }
     }
 
@@ -835,6 +1223,15 @@ mod tests {
         assert!(calendars[0].visible);
         set_calendar_visible(&db.conn(), LOCAL_CALENDAR, false).unwrap();
         assert!(!list_calendars(&db.conn()).unwrap()[0].visible);
+
+        let standard = calendars[0].color.clone();
+        assert!(!calendars[0].own_color);
+        set_calendar_color(&db.conn(), LOCAL_CALENDAR, Some("oklch(0.72 0.14 150)")).unwrap();
+        let chosen = &list_calendars(&db.conn()).unwrap()[0];
+        assert_eq!(chosen.color, "oklch(0.72 0.14 150)");
+        assert!(chosen.own_color);
+        set_calendar_color(&db.conn(), LOCAL_CALENDAR, None).unwrap();
+        assert_eq!(list_calendars(&db.conn()).unwrap()[0].color, standard);
     }
 
     #[test]
@@ -909,6 +1306,172 @@ mod tests {
         assert_eq!(found[1].start, TUESDAY_TEN + 7 * DAY_MS + HOUR);
         let event = get_event(&conn, &id).unwrap();
         assert_eq!(event.recurrence.unwrap().frequency, Frequency::Weekly);
+    }
+
+    #[test]
+    fn old_series_without_end_find_their_dates_now() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        // Daily since 2000, weekly since 2010 with an end in 2020: only the daily one goes on.
+        let year = 365 * DAY_MS;
+        let daily = EventInput {
+            repeat: Some(Frequency::Daily),
+            ..input(
+                "Täglich",
+                TUESDAY_TEN - 26 * year,
+                TUESDAY_TEN - 26 * year + HOUR,
+            )
+        };
+        save_event_in(&conn, &daily, Some("Europe/Berlin")).unwrap();
+        let ended = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:ended\r\n\
+DTSTART:20100105T090000Z\r\nDTEND:20100105T100000Z\r\nRRULE:FREQ=WEEKLY;UNTIL=20200101T000000Z\r\n\
+SUMMARY:Vorbei\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        store_remote(&conn, LOCAL_CALENDAR, "ended.ics", None, ended).unwrap();
+        let started = std::time::Instant::now();
+        let week = occurrences(&conn, TUESDAY_TEN - HOUR, TUESDAY_TEN + 7 * DAY_MS - HOUR).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(week.len(), 7);
+        assert!(
+            week.iter()
+                .all(|date| date.title.as_deref() == Some("Täglich"))
+        );
+        // Its first date is still where it began.
+        let id = &week[0].event_id;
+        assert_eq!(get_event(&conn, id).unwrap().start, TUESDAY_TEN - 26 * year);
+    }
+
+    #[test]
+    fn one_date_of_a_series_is_changed_or_left_out() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let series = EventInput {
+            repeat: Some(Frequency::Weekly),
+            ..input("Jour fixe", TUESDAY_TEN, TUESDAY_TEN + HOUR)
+        };
+        let id = save_event_in(&conn, &series, Some("Europe/Berlin")).unwrap();
+        let dates = occurrences(&conn, TUESDAY_TEN, TUESDAY_TEN + 21 * DAY_MS).unwrap();
+        assert_eq!(dates.len(), 3);
+        let (second, third) = (dates[1].instance.unwrap(), dates[2].instance.unwrap());
+        assert_eq!(second, dates[1].start);
+
+        // The second date two hours later, with its own title.
+        let moved = EventInput {
+            id: Some(id.clone()),
+            title: "Jour fixe (verschoben)".into(),
+            start: second + 2 * HOUR,
+            end: second + 3 * HOUR,
+            instance: Some(second),
+            ..series.clone()
+        };
+        assert_eq!(
+            save_event_in(&conn, &moved, Some("Europe/Berlin")).unwrap(),
+            id
+        );
+        let one = get_event_at(&conn, &id, Some(second)).unwrap();
+        assert_eq!(one.title.as_deref(), Some("Jour fixe (verschoben)"));
+        assert_eq!(one.start, second + 2 * HOUR);
+        assert_eq!(one.instance, Some(second));
+        assert_eq!(one.recurrence.unwrap().frequency, Frequency::Weekly);
+        assert_eq!(
+            get_event(&conn, &id).unwrap().title.as_deref(),
+            Some("Jour fixe")
+        );
+
+        // Changed again: still one changed date, not two.
+        let again = EventInput {
+            start: second + 4 * HOUR,
+            end: second + 5 * HOUR,
+            ..moved.clone()
+        };
+        save_event_in(&conn, &again, Some("Europe/Berlin")).unwrap();
+        let ics: String = conn
+            .query_row("SELECT ics FROM events WHERE id = ?1", [&id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(ics.matches("RECURRENCE-ID").count(), 1, "{ics}");
+        assert!(
+            ics.contains("RECURRENCE-ID;TZID=Europe/Berlin:20261027T100000"),
+            "{ics}"
+        );
+
+        // The third date left out.
+        delete_event_at(&conn, &id, Some(third)).unwrap();
+        let dates = occurrences(&conn, TUESDAY_TEN, TUESDAY_TEN + 21 * DAY_MS).unwrap();
+        let starts: Vec<i64> = dates.iter().map(|date| date.start).collect();
+        assert_eq!(starts, vec![TUESDAY_TEN, second + 4 * HOUR]);
+        assert_eq!(dates[1].title.as_deref(), Some("Jour fixe (verschoben)"));
+        assert_eq!(dates[1].instance, Some(second));
+
+        // A new title for the series keeps the changed date.
+        let renamed = EventInput {
+            id: Some(id.clone()),
+            title: "Teamrunde".into(),
+            ..series.clone()
+        };
+        save_event_in(&conn, &renamed, Some("Europe/Berlin")).unwrap();
+        let dates = occurrences(&conn, TUESDAY_TEN, TUESDAY_TEN + 21 * DAY_MS).unwrap();
+        assert_eq!(dates.len(), 2);
+        assert_eq!(dates[0].title.as_deref(), Some("Teamrunde"));
+        assert_eq!(dates[1].start, second + 4 * HOUR);
+
+        // Nothing waits for a server: the calendar is on this computer.
+        let waiting: i64 = conn
+            .query_row("SELECT count(*) FROM pending_instances", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(waiting, 0);
+    }
+
+    #[test]
+    fn reminders_come_due_before_each_date() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let series = EventInput {
+            repeat: Some(Frequency::Weekly),
+            reminder: Some(15),
+            ..input("Jour fixe", TUESDAY_TEN, TUESDAY_TEN + HOUR)
+        };
+        let id = save_event_in(&conn, &series, Some("Europe/Berlin")).unwrap();
+        assert_eq!(get_event(&conn, &id).unwrap().reminder, Some(15));
+        // The second date, a week on (winter time: 10:00 is an hour later in UTC).
+        let second = TUESDAY_TEN + 7 * DAY_MS + HOUR;
+        let due = due_reminders(&conn, second - 20 * 60_000, second).unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].at, second - 15 * 60_000);
+        assert_eq!(due[0].start, second);
+        assert_eq!(due[0].title.as_deref(), Some("Jour fixe"));
+        // Not again in the next minute.
+        assert!(
+            due_reminders(&conn, second - 15 * 60_000, second)
+                .unwrap()
+                .is_empty()
+        );
+
+        // An hour before instead: the alarm is replaced, not added.
+        let changed = EventInput {
+            id: Some(id.clone()),
+            reminder: Some(60),
+            ..series.clone()
+        };
+        save_event_in(&conn, &changed, Some("Europe/Berlin")).unwrap();
+        assert_eq!(get_event(&conn, &id).unwrap().reminder, Some(60));
+        let ics: String = conn
+            .query_row("SELECT ics FROM events WHERE id = ?1", [&id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(ics.matches("BEGIN:VALARM").count(), 1, "{ics}");
+        // And none.
+        let none = EventInput {
+            id: Some(id.clone()),
+            reminder: None,
+            ..series
+        };
+        save_event_in(&conn, &none, Some("Europe/Berlin")).unwrap();
+        assert_eq!(get_event(&conn, &id).unwrap().reminder, None);
+        assert!(due_reminders(&conn, 0, i64::MAX / 4).unwrap().is_empty());
     }
 
     #[test]

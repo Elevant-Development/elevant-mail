@@ -27,6 +27,7 @@ function event(start: number, end: number, allDay = false): Occurrence {
     calendarId: "local",
     title: null,
     location: null,
+    instance: null,
     start,
     end,
     allDay,

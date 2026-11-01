@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useSyncAfterSignIn } from "@/hooks/use-sync-after-sign-in";
 import { useSyncActions } from "@/hooks/use-sync";
 import { describeError, isCancelledSignIn, type UserError } from "@/lib/errors";
 import { formatServer } from "@/lib/formatting";
@@ -40,6 +41,7 @@ function AccountForm({ onDone }: { onDone: () => void }) {
   const queryClient = useQueryClient();
   const selectMailbox = useUiStore((s) => s.selectMailbox);
   const { syncAccount } = useSyncActions();
+  const syncAfterSignIn = useSyncAfterSignIn();
   const addAccount = useAddAccount();
 
   const [email, setEmail] = useState("");
@@ -102,8 +104,10 @@ function AccountForm({ onDone }: { onDone: () => void }) {
       });
       const inbox = folders.find((f) => f.accountId === account.id && f.role === "inbox");
       if (inbox) selectMailbox(inbox.id);
-      // Fetched now, not left to the background sync noticing the new account.
+      // Fetched now, not left to the background sync noticing the new account; calendars and
+      // contacts too, asked again while a new Microsoft consent takes effect.
       void syncAccount(account.id);
+      void syncAfterSignIn(account.id);
       onDone();
     } catch (cause) {
       if (!isCancelledSignIn(cause)) setError(describeError(cause));

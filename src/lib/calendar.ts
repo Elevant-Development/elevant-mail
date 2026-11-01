@@ -185,8 +185,16 @@ export function defaultCalendar(calendars: Calendar[]): Calendar | undefined {
   return writable.find((calendar) => calendar.visible) ?? writable[0];
 }
 
-/** A new event as the dialog starts it: an hour long, or one whole day. */
-export function newEvent(start: number, allDay: boolean, calendarId: string): EventInput {
+/**
+ * A new event as the dialog starts it: an hour long with the default `reminder`, or one whole
+ * day without one.
+ */
+export function newEvent(
+  start: number,
+  allDay: boolean,
+  calendarId: string,
+  reminder: number | null = null,
+): EventInput {
   const first = allDay ? utcDate(startOfDay(start)) : start;
   return {
     id: null,
@@ -199,5 +207,7 @@ export function newEvent(start: number, allDay: boolean, calendarId: string): Ev
     allDay,
     repeat: null,
     attendees: [],
+    reminder: allDay ? null : reminder,
+    instance: null,
   };
 }

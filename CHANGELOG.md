@@ -13,8 +13,22 @@ the text of its GitHub release, so every version gets its entry before it is tag
 - **Calendar.** A column of icons at the left edge switches between mail and a calendar with day, week and month view (`Ctrl+1`, `Ctrl+2`). Create, change and delete events, also all-day and repeating ones; a click on an empty slot starts one there.
 - **Your calendars over CalDAV.** For accounts with a password the app finds their calendars on the mail server (Mailcow/SOGo, Nextcloud, Posteo, mailbox.org, iCloud and others) and keeps them in step both ways; where it does not find them, enter the address in the account settings under Calendar.
 - **Calendars of Microsoft 365 and Outlook.com** over Microsoft Graph, both ways, series included. Accounts added before ask once to "Allow calendars": a new sign-in in the browser. Invitations in these accounts are answered over Microsoft, which tells the organizer.
+- **Contacts.** A third area (`Ctrl+3`) lists your contacts by name, all address books together or one at a time, with a search that ignores accents. Add and change contacts with mail addresses, phone numbers, addresses, birthday and a note; a click on an address starts a mail.
+- **Your address books over CardDAV.** Where the app finds your calendars on the mail server (Mailcow/SOGo, Nextcloud, Posteo, mailbox.org, iCloud), it finds the address books too and keeps them in step both ways. Photos and anything else the app does not edit stay in the contact as they were. The account settings call the switch "Calendar and contacts".
+- **Contacts of Microsoft 365 and Outlook.com** over Microsoft Graph, both ways, with their folders. Accounts added before ask once to "Allow contacts": a new sign-in in the browser.
+- **Reminders.** An event can remind you, from the moment it starts to two days before; the reminder shows as a notification, and those of Microsoft 365 and CalDAV calendars come along. Settings → Notifications switches reminders off and sets the one for new events.
+- **One date of a series.** Changing or deleting a date of a repeating event asks whether only this date or the whole series; on Microsoft 365 the series' other changed dates stay as they are.
+- **A colour per calendar.** The button beside a calendar in the sidebar gives it a colour of its own, or back to the account's.
 - **Invitations meet the calendar.** An invitation says what else is on at that time and whether it is in your calendar already. Accepting puts it there, declining takes it out, and a cancellation offers to remove it. Events in calendars whose server sends invitations (Microsoft 365, Mailcow/SOGo, Nextcloud) can have attendees; the server invites them.
 - **Invitations in the reader.** A mail with an invitation shows above its text when and where the event is, who is invited and how a series repeats ("Weekly on Tuesday, 4 times"), with the buttons Accept, Maybe and Decline. The answer goes to the organizer by mail; the app remembers it and offers the buttons again when the organizer changes the event. Cancellations and answers from others show as well.
+
+- **Contacts as you type.** Writing a recipient or inviting to an event offers your contacts first, by name, company or address ("muller" finds "Müller"), then the addresses from your mail.
+- **A menu for mails.** A right-click on a mail in the list offers reply, reply all and forward, read or unread, the star, archive, move and delete, each with its key. On a selected mail it acts on the whole selection.
+
+### Changed
+
+- **No browser menu.** A right-click no longer offers the web view's "Reload" and "Back"; in text fields and on selected text the menu for copying and pasting stays. F5 and Ctrl+R no longer reload the window.
+- **After signing in to Microsoft**, calendars and contacts come in at once; while Microsoft still takes a few seconds to apply what was just allowed, the app asks again.
 
 ## 0.5.0 – 2026-10-30
 

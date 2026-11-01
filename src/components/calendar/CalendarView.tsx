@@ -19,6 +19,7 @@ import type { Occurrence } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useCalendars, useOccurrences } from "@/queries/calendar";
 import { useCalendarStore } from "@/stores/calendar";
+import { useUiStore } from "@/stores/ui";
 
 import { MonthGrid } from "./MonthGrid";
 import { TimeGrid } from "./TimeGrid";
@@ -60,9 +61,11 @@ export function CalendarView({ className }: CalendarViewProps) {
   const target = defaultCalendar(calendars);
 
   const create = (start: number, allDay: boolean) => {
-    if (target) editEvent(newEvent(start, allDay, target.id));
+    if (target) {
+      editEvent(newEvent(start, allDay, target.id, useUiStore.getState().defaultReminder));
+    }
   };
-  const open = (occurrence: Occurrence) => openEvent(occurrence.eventId);
+  const open = (occurrence: Occurrence) => openEvent(occurrence.eventId, occurrence.instance);
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;

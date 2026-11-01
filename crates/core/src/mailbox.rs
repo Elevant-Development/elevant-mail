@@ -462,48 +462,60 @@ pub fn search_messages(
     Ok(group(listed, replies, true))
 }
 
-/// Addresses offered while typing a recipient: senders of cached mail and the recipients of the
-/// user's own mail in Sent (those count more), whose name or address contains `query`; the
-/// ones written with most first. The user's own addresses are left out. A name comes from the
-/// latest mail with the address.
+/// Addresses offered while typing a recipient: the contacts' addresses first, then senders of
+/// cached mail and the recipients of the user's own mail in Sent (those count more), whose name or
+/// address contains `query` (for contacts also their company, accents ignored); the ones written
+/// with most first. The user's own addresses are left out. A contact's name wins, else the name
+/// comes from the latest mail with the address.
 pub fn suggest_addresses(conn: &Connection, query: &str, limit: u32) -> Result<Vec<Address>> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return Ok(Vec::new());
     }
-    let pattern = format!(
-        "%{}%",
-        query
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_")
-    );
+    let like = |text: &str| {
+        format!(
+            "%{}%",
+            text.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        )
+    };
+    let pattern = like(&query);
+    let folded = like(&crate::contacts::fold(&query));
     let mut statement = conn.prepare_cached(
-        "WITH people (name, address, weight, at) AS (
-           SELECT from_name, lower(from_address), 1, date_sent FROM messages
+        // Contacts are found by their own search text and weigh more than any mail; their name
+        // comes with the latest `at`.
+        "WITH people (name, address, weight, at, found) AS (
+           SELECT c.name, a.address, 1000, 9223372036854775807, 1
+           FROM contact_addresses a JOIN contacts c ON c.id = a.contact_id
+           WHERE c.pending IS NOT 'delete'
+             AND (a.address LIKE ?1 ESCAPE '\\' OR c.search LIKE ?3 ESCAPE '\\')
+           UNION ALL
+           SELECT from_name, lower(from_address), 1, date_sent, 0 FROM messages
            WHERE from_address IS NOT NULL
            UNION ALL
            SELECT json_extract(j.value, '$.name'), lower(json_extract(j.value, '$.address')), 3,
-             m.date_sent
+             m.date_sent, 0
            FROM messages m JOIN folders f ON f.id = m.folder_id,
              json_each(coalesce(m.to_addresses, '[]')) j
            WHERE f.role = 'sent'
            UNION ALL
            SELECT json_extract(j.value, '$.name'), lower(json_extract(j.value, '$.address')), 2,
-             m.date_sent
+             m.date_sent, 0
            FROM messages m JOIN folders f ON f.id = m.folder_id,
              json_each(coalesce(m.cc_addresses, '[]')) j
            WHERE f.role = 'sent'
          )
          SELECT address, name, sum(weight) AS score, max(at) FROM people
-         WHERE (address LIKE ?1 ESCAPE '\\' OR lower(coalesce(name, '')) LIKE ?1 ESCAPE '\\')
+         WHERE (found = 1 OR address LIKE ?1 ESCAPE '\\'
+                OR lower(coalesce(name, '')) LIKE ?1 ESCAPE '\\')
            AND address NOT IN (SELECT lower(email_address) FROM accounts)
          GROUP BY address
          ORDER BY score DESC, max(at) DESC
          LIMIT ?2",
     )?;
     let found = statement
-        .query_map(params![pattern, limit], |row| {
+        .query_map(params![pattern, limit, folded], |row| {
             let name: Option<String> = row.get(1)?;
             Ok(Address {
                 name: name.filter(|name| !name.trim().is_empty()),
@@ -1204,6 +1216,59 @@ mod tests {
         assert_eq!(suggest("100%"), ["100% Rabatt <shop@example.net>"]);
         assert!(suggest("0%x").is_empty());
         assert!(suggest(" ").is_empty());
+    }
+
+    #[test]
+    fn contacts_come_first_with_their_names() {
+        use crate::contacts::{self, ContactInput, ContactLabel, LOCAL_ADDRESS_BOOK, Labeled};
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        seed(&conn);
+        // Lena wrote often; Anna is a contact whose old mail had another name.
+        conn.execute_batch(
+            r#"INSERT INTO messages (id, account_id, folder_id, uid, from_name, from_address,
+                 to_addresses, date_sent, fetched_at)
+               VALUES
+                 ('to-lena', 'acc', 'sent', 7, 'Alex', 'alex@example.org',
+                   '[{"name":"Lena","address":"lena@example.org"}]', 9000, 0),
+                 ('from-anna', 'acc', 'inbox', 8, 'A. M.', 'anna@example.org', NULL, 8000, 0);"#,
+        )
+        .unwrap();
+        let contact = |given: &str, family: &str, company: &str, email: &str| ContactInput {
+            id: None,
+            address_book_id: LOCAL_ADDRESS_BOOK.into(),
+            given_name: given.into(),
+            family_name: family.into(),
+            company: company.into(),
+            emails: vec![Labeled {
+                label: ContactLabel::Work,
+                value: email.into(),
+            }],
+            phones: Vec::new(),
+            addresses: Vec::new(),
+            birthday: None,
+            note: String::new(),
+        };
+        contacts::save_contact(&conn, &contact("Anna", "Müller", "", "anna@example.org")).unwrap();
+        let stadtwerke = contact("", "", "Stadtwerke", "service@stadtwerke.example");
+        contacts::save_contact(&conn, &stadtwerke).unwrap();
+        let suggest = |query: &str| -> Vec<String> {
+            suggest_addresses(&conn, query, 5)
+                .unwrap()
+                .into_iter()
+                .map(|a| format!("{} <{}>", a.name.unwrap_or_default(), a.address))
+                .collect()
+        };
+        assert_eq!(
+            suggest("example.org"),
+            ["Anna Müller <anna@example.org>", "Lena <lena@example.org>"]
+        );
+        // Accents ignored, and by company.
+        assert_eq!(suggest("muller"), ["Anna Müller <anna@example.org>"]);
+        assert_eq!(
+            suggest("stadt"),
+            ["Stadtwerke <service@stadtwerke.example>"]
+        );
     }
 
     #[test]

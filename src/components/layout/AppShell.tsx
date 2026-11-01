@@ -3,6 +3,9 @@ import { type CSSProperties, useEffect } from "react";
 import { AccountDialog } from "@/components/accounts/AccountDialog";
 import { CalendarView } from "@/components/calendar/CalendarView";
 import { EventDialog } from "@/components/calendar/EventDialog";
+import { ContactDialog } from "@/components/contacts/ContactDialog";
+import { ContactList } from "@/components/contacts/ContactList";
+import { ContactPane } from "@/components/contacts/ContactPane";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { WelcomeScreen } from "@/components/accounts/WelcomeScreen";
 import { Composer } from "@/components/compose/Composer";
@@ -21,6 +24,7 @@ import { useStartMailbox } from "@/hooks/use-start-mailbox";
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
 import { useCalendarStore } from "@/stores/calendar";
+import { useContactsStore } from "@/stores/contacts";
 import { useUiStore } from "@/stores/ui";
 
 import { ColumnResizer } from "./ColumnResizer";
@@ -56,9 +60,11 @@ export function AppShell() {
     }),
   } as CSSProperties;
 
-  const calendar = useCalendarStore((s) => s.area === "calendar");
+  const area = useCalendarStore((s) => s.area);
+  const contactId = useContactsStore((s) => s.contactId);
+  const openContact = useContactsStore((s) => s.openContact);
   const showOverlay = !isWide && sidebarOpen;
-  useMailKeyboard({ enabled: !firstStart && !showOverlay && !calendar, isWide });
+  useMailKeyboard({ enabled: !firstStart && !showOverlay && area === "mail", isWide });
   useStartMailbox();
   useKeptDrafts();
   useDraftLeaving();
@@ -80,7 +86,21 @@ export function AppShell() {
         {!firstStart && <NavRail className={cn("shrink-0", railWidth)} />}
         {firstStart ? (
           <WelcomeScreen />
-        ) : calendar ? (
+        ) : area === "contacts" ? (
+          isWide ? (
+            <>
+              <Sidebar className={cn("shrink-0", sidebarWidth)} />
+              <ColumnResizer column="sidebar" />
+              <ContactList className={cn("shrink-0", listWidth, panel)} />
+              <ColumnResizer column="list" />
+              <ContactPane className={cn("flex-1", panel)} />
+            </>
+          ) : contactId ? (
+            <ContactPane className={cn("flex-1", panel)} onBack={() => openContact(null)} />
+          ) : (
+            <ContactList className={cn("flex-1", panel)} />
+          )
+        ) : area === "calendar" ? (
           <>
             {isWide && (
               <>
@@ -124,6 +144,7 @@ export function AppShell() {
       <AccountDialog />
       <SettingsDialog />
       <EventDialog />
+      <ContactDialog />
       <MoveDialog />
       <DragLabel />
       <DeleteForeverDialog />

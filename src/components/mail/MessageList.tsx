@@ -10,7 +10,7 @@ import { useSyncActions } from "@/hooks/use-sync";
 import { isSignInError } from "@/lib/errors";
 import { mailboxTitle, unifiedInboxes } from "@/lib/folders";
 import { t } from "@/lib/i18n";
-import { focusListItem } from "@/lib/keyboard";
+import { focusListItem, MESSAGE_ATTRIBUTE } from "@/lib/keyboard";
 import { type Conversation, type SyncProgress, UNIFIED_INBOX } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/queries/accounts";
@@ -21,6 +21,7 @@ import { useUiStore } from "@/stores/ui";
 
 import { EmptyState } from "./EmptyState";
 import { ListFilters } from "./ListFilters";
+import { MessageContextMenu } from "./MessageContextMenu";
 import { MessageListItem } from "./MessageListItem";
 import { SearchOnServer } from "./SearchOnServer";
 
@@ -157,50 +158,53 @@ function MessageRows({
   };
 
   return (
-    <div
-      ref={scrollRef}
-      // LIST_ATTRIBUTE: lets the shortcuts tell when the focus is in the list.
-      data-message-list=""
-      data-focus-group=""
-      className="min-h-0 flex-1 overflow-y-auto"
-    >
-      <ul className="relative" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualRows.map((row) => {
-          const message = messages[row.index];
-          if (!message) return null;
-          return (
-            <li
-              key={row.key}
-              ref={virtualizer.measureElement}
-              data-index={row.index}
-              // -1: the size is not known while more pages follow.
-              aria-setsize={hasMore ? -1 : messages.length}
-              aria-posinset={row.index + 1}
-              className="absolute inset-x-2 top-0"
-              style={{ transform: `translateY(${row.start}px)` }}
-            >
-              <MessageListItem
-                message={message}
-                selected={selected.has(message.id)}
-                tabbable={row.index === tabStopIndex}
-                now={now}
-                accountColor={accountColor(message.accountId)}
-                ownAddresses={ownAddresses}
-                onSelect={(event) => select(message.id, event)}
-                onPointerDown={(event) => startDrag(message.id, event)}
-              />
-            </li>
-          );
-        })}
-      </ul>
-      {hasMore ? (
-        <div className="flex justify-center pb-3 text-muted-foreground">
-          <Icon name="spinner" className="size-4 animate-spin" />
-        </div>
-      ) : (
-        footer
-      )}
-    </div>
+    <MessageContextMenu messages={messages}>
+      <div
+        ref={scrollRef}
+        // LIST_ATTRIBUTE: lets the shortcuts tell when the focus is in the list.
+        data-message-list=""
+        data-focus-group=""
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        <ul className="relative" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualRows.map((row) => {
+            const message = messages[row.index];
+            if (!message) return null;
+            return (
+              <li
+                key={row.key}
+                ref={virtualizer.measureElement}
+                data-index={row.index}
+                {...{ [MESSAGE_ATTRIBUTE]: message.id }}
+                // -1: the size is not known while more pages follow.
+                aria-setsize={hasMore ? -1 : messages.length}
+                aria-posinset={row.index + 1}
+                className="absolute inset-x-2 top-0"
+                style={{ transform: `translateY(${row.start}px)` }}
+              >
+                <MessageListItem
+                  message={message}
+                  selected={selected.has(message.id)}
+                  tabbable={row.index === tabStopIndex}
+                  now={now}
+                  accountColor={accountColor(message.accountId)}
+                  ownAddresses={ownAddresses}
+                  onSelect={(event) => select(message.id, event)}
+                  onPointerDown={(event) => startDrag(message.id, event)}
+                />
+              </li>
+            );
+          })}
+        </ul>
+        {hasMore ? (
+          <div className="flex justify-center pb-3 text-muted-foreground">
+            <Icon name="spinner" className="size-4 animate-spin" />
+          </div>
+        ) : (
+          footer
+        )}
+      </div>
+    </MessageContextMenu>
   );
 }
 

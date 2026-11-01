@@ -24,4 +24,14 @@ repeat: Frequency | null,
  * Who is invited; the calendar's server sends the invitations. Only for calendars that
  * can invite, and only for events the account organizes; ignored elsewhere.
  */
-attendees: Array<Address>, };
+attendees: Array<Address>, 
+/**
+ * Minutes before the start of a reminder; `None` for none. An event whose reminder stays
+ * the same keeps its alarms as they are.
+ */
+reminder: number | null, 
+/**
+ * Only this date of a series (its original start): it changes on its own, the series
+ * stays. Repetition and calendar are the series' then.
+ */
+instance: number | null, };

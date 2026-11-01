@@ -14,4 +14,12 @@ readOnly: boolean,
 /**
  * The account organizes it (or nobody does): its attendees can be changed here.
  */
-ownEvent: boolean, };
+ownEvent: boolean, 
+/**
+ * Minutes before the start of its (first) reminder; `None` without one.
+ */
+reminder: number | null, 
+/**
+ * Opened as one date of a series: that date's original start. The details are this date's.
+ */
+instance: number | null, };

@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useCalendarSync } from "@/hooks/use-calendar-sync";
+import { useContactsSync } from "@/hooks/use-contacts-sync";
 import { api, type Calendar, type EventInput } from "@/lib/tauri";
 import { useCalendarStore } from "@/stores/calendar";
 
@@ -27,14 +28,43 @@ export function useOccurrences(from: number, to: number) {
   });
 }
 
-export function useEvent(eventId: string | null) {
+/** The event, or with `instance` that date of its series. */
+export function useEvent(eventId: string | null, instance: number | null = null) {
   return useQuery({
-    queryKey: ["event", eventId],
-    queryFn: () => (eventId ? api.getEvent(eventId) : null),
+    queryKey: ["event", eventId, instance],
+    queryFn: () => (eventId ? api.getEvent(eventId, instance) : null),
     enabled: eventId !== null,
     // From the cache: a missing event stays missing.
     retry: false,
   });
+}
+
+/** A colour of its own for a calendar, shown at once; `null` for its account's colour. */
+export function useSetCalendarColor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ calendarId, color }: { calendarId: string; color: string | null }) =>
+      api.setCalendarColor(calendarId, color),
+    onMutate: ({ calendarId, color }) => {
+      if (color === null) return;
+      queryClient.setQueryData<Calendar[]>(["calendars"], (calendars) =>
+        calendars?.map((calendar) =>
+          calendar.id === calendarId ? { ...calendar, color, ownColor: true } : calendar,
+        ),
+      );
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["calendars"] }),
+  });
+}
+
+/** Loads a whole series, for changing all its dates from one of them. */
+export function useLoadSeries() {
+  const queryClient = useQueryClient();
+  return (eventId: string) =>
+    queryClient.fetchQuery({
+      queryKey: ["event", eventId, null],
+      queryFn: () => api.getEvent(eventId, null),
+    });
 }
 
 /** Shows or hides a calendar at once; the backend keeps it for the next start. */
@@ -79,7 +109,14 @@ export function useDeleteEvent() {
   const queryClient = useQueryClient();
   const { sendChanges } = useCalendarSync();
   return useMutation({
-    mutationFn: ({ eventId }: { eventId: string; calendarId: string }) => api.deleteEvent(eventId),
+    mutationFn: ({
+      eventId,
+      instance = null,
+    }: {
+      eventId: string;
+      calendarId: string;
+      instance?: number | null;
+    }) => api.deleteEvent(eventId, instance),
     // The open dialog closes; asking for the deleted event again would only fail.
     onSuccess: (_, { calendarId }) => {
       sendChanges(calendarId);
@@ -96,10 +133,14 @@ export function useCaldavStatus(accountId: string) {
   });
 }
 
-/** Switches an account's calendars on or off, or sets their server; then syncs them. */
+/**
+ * Switches an account's calendars and address books on or off, or sets their server; then syncs
+ * them.
+ */
 export function useSetCaldav(accountId: string) {
   const queryClient = useQueryClient();
   const { syncCalendars } = useCalendarSync();
+  const { syncContacts } = useContactsSync();
   return useMutation({
     mutationFn: ({ enabled, url }: { enabled: boolean; url: string | null }) =>
       api.setCaldav(accountId, enabled, url),
@@ -107,7 +148,12 @@ export function useSetCaldav(accountId: string) {
       queryClient.setQueryData(["caldav", accountId], status);
       void queryClient.invalidateQueries({ queryKey: ["calendars"] });
       void queryClient.invalidateQueries({ queryKey: ["occurrences"] });
-      if (status.enabled) void syncCalendars(accountId);
+      void queryClient.invalidateQueries({ queryKey: ["address-books"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      if (status.enabled) {
+        void syncCalendars(accountId);
+        void syncContacts(accountId);
+      }
     },
   });
 }

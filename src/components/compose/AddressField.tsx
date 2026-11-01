@@ -19,9 +19,9 @@ interface AddressFieldProps {
 }
 
 /**
- * Recipients as chips. Typing offers addresses from the cached mail (↑/↓, Enter or Tab takes
- * one); a comma, semicolon, Enter or leaving the field turns what was typed into chips,
- * Backspace on an empty field takes the last one back. Pasted lists are split.
+ * Recipients as chips. Typing offers addresses from the contacts, then from the cached mail
+ * (↑/↓, Enter or Tab takes one); a comma, semicolon, Enter or leaving the field turns what was
+ * typed into chips, Backspace on an empty field takes the last one back. Pasted lists are split.
  */
 export function AddressField({ label, addresses, onChange, autoFocus, extra }: AddressFieldProps) {
   const id = useId();

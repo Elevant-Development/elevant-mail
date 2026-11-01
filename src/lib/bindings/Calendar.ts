@@ -10,9 +10,14 @@ accountId: string | null,
  */
 name: string, 
 /**
- * The account's colour; the calendar's own for the one on this computer.
+ * The colour chosen for it, else the account's; the calendar's own for the one on this
+ * computer.
  */
-color: string, readOnly: boolean, 
+color: string, 
+/**
+ * A colour was chosen for it.
+ */
+ownColor: boolean, readOnly: boolean, 
 /**
  * Its events show in the views.
  */

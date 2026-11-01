@@ -7,7 +7,7 @@ use calcard::icalendar::{
     ICalendarParameterName, ICalendarParameterValue, ICalendarParticipationRole,
     ICalendarParticipationStatus, ICalendarProperty, ICalendarValue, ICalendarWeekday,
 };
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate, Timelike};
 
 use super::{Attendee, Frequency, Participation, Recurrence};
 use crate::model::Address;
@@ -147,6 +147,9 @@ pub(crate) struct Dates {
     pub start: i64,
     pub end: i64,
     pub all_day: bool,
+    /// For a date of a series: its original start (`RECURRENCE-ID`), which stays the same when
+    /// that date is moved; all-day dates at midnight UTC. `None` for a single event.
+    pub instance: Option<i64>,
 }
 
 /// The dates of the events in `calendar` that overlap `from..to` (Unix milliseconds), for a
@@ -155,7 +158,11 @@ pub(crate) struct Dates {
 /// are the system's local time.
 pub(crate) fn dates_between(calendar: &ICalendar, from: i64, to: i64) -> Vec<Dates> {
     let local = super::local_time_zone();
-    let calendar = &utc_series_named(calendar);
+    let calendar = &ready_to_expand(calendar, to);
+    let series = calendar
+        .components
+        .iter()
+        .any(|component| component.has_property(&ICalendarProperty::Rrule));
     calendar
         .expand_dates(local, EXPAND_LIMIT)
         .events
@@ -175,6 +182,7 @@ pub(crate) fn dates_between(calendar: &ICalendar, from: i64, to: i64) -> Vec<Dat
                         start,
                         end: start + days * DAY_MS,
                         all_day: true,
+                        instance: None,
                     }
                 }
                 None => Dates {
@@ -182,21 +190,129 @@ pub(crate) fn dates_between(calendar: &ICalendar, from: i64, to: i64) -> Vec<Dat
                     start: start * 1000,
                     end: end.max(start) * 1000,
                     all_day: false,
+                    instance: None,
                 },
             };
+            let event = calendar.components.get(component)?;
+            let instance = match event.property(&ICalendarProperty::RecurrenceId) {
+                Some(entry) => instant_of(calendar, entry),
+                None if series && event.has_property(&ICalendarProperty::Rrule) => {
+                    Some(dates.start)
+                }
+                None => None,
+            };
+            let dates = Dates { instance, ..dates };
             (dates.start < to && dates.end.max(dates.start + 1) > from).then_some(dates)
         })
         .collect()
 }
 
-/// The calendar with the start of each series given in UTC (`DTSTART:…Z`, as Google writes it)
-/// named `TZID=UTC` instead: `calcard` (0.3) expands such a series in the default time zone, which
-/// would move every date by the local offset. Single events and named zones are not affected.
-fn utc_series_named(calendar: &ICalendar) -> ICalendar {
+/// The moment a date-time property names, in Unix milliseconds: in its `TZID`, in UTC with `Z`,
+/// else in the system's zone; a date alone at midnight UTC.
+pub(crate) fn instant_of(calendar: &ICalendar, entry: &ICalendarEntry) -> Option<i64> {
+    let date = entry.values.first()?.as_partial_date_time()?;
+    if date.hour.is_none() {
+        let day = NaiveDate::from_ymd_opt(
+            i32::from(date.year?),
+            u32::from(date.month?),
+            u32::from(date.day?),
+        )?;
+        return Some(day.and_hms_opt(0, 0, 0)?.and_utc().timestamp() * 1000);
+    }
+    let zone = calendar
+        .build_tz_resolver()
+        .with_default(super::local_time_zone())
+        .resolve_or_default(entry.tz_id());
+    Some(date.to_date_time_with_tz(zone)?.timestamp() * 1000)
+}
+
+/// `RECURRENCE-ID` or `EXDATE` for the date of the series at `index` that starts at `instance`,
+/// written the way the series writes its `DTSTART`, as servers compare them.
+pub(crate) fn instance_property(
+    calendar: &ICalendar,
+    index: usize,
+    name: &str,
+    instance: i64,
+) -> Option<String> {
+    let start = calendar
+        .components
+        .get(index)?
+        .property(&ICalendarProperty::Dtstart)?;
+    let date = start.values.first()?.as_partial_date_time()?;
+    let utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(instance)?;
+    if date.hour.is_none() {
+        return Some(format!("{name};VALUE=DATE:{}", utc.format("%Y%m%d")));
+    }
+    if let Some(tz_id) = start.tz_id() {
+        let zone = calendar
+            .build_tz_resolver()
+            .with_default(super::local_time_zone())
+            .resolve_or_default(Some(tz_id));
+        let local = utc.with_timezone(&zone).naive_local();
+        return Some(format!(
+            "{name};TZID={tz_id}:{}",
+            local.format("%Y%m%dT%H%M%S")
+        ));
+    }
+    if (date.tz_hour, date.tz_minute) == (Some(0), Some(0)) {
+        return Some(format!("{name}:{}", utc.format("%Y%m%dT%H%M%SZ")));
+    }
+    // Floating: the system's local time.
+    let local = utc.with_timezone(&super::local_time_zone()).naive_local();
+    Some(format!("{name}:{}", local.format("%Y%m%dT%H%M%S")))
+}
+
+/// The calendar as `calcard` (0.3) expands it right:
+/// - The start of each series given in UTC (`DTSTART:…Z`, as Google writes it) is named
+///   `TZID=UTC` instead: `calcard` expands such a series in the default time zone, which would
+///   move every date by the local offset. Single events and named zones are not affected.
+/// - Without `SEQUENCE`: `calcard` puts a changed date in place of the series' date only when
+///   both have the same one, and servers count them apart.
+/// - Each rule ends a day after `until` (Unix milliseconds) at the latest: `calcard` expands a
+///   series from its start up to its limit whatever range is asked for, which took seconds for a
+///   few series without end.
+fn ready_to_expand(calendar: &ICalendar, until: i64) -> ICalendar {
     let mut calendar = calendar.clone();
+    // Compared as wall-clock time, as `calcard` does; the day covers any time zone.
+    let cap = until
+        .checked_add(DAY_MS)
+        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+        .map(|cap| cap.naive_utc());
     for component in &mut calendar.components {
+        component
+            .entries
+            .retain(|entry| entry.name != ICalendarProperty::Sequence);
         if !component.has_property(&ICalendarProperty::Rrule) {
             continue;
+        }
+        let start = component
+            .property(&ICalendarProperty::Dtstart)
+            .and_then(|entry| entry.values.first())
+            .and_then(ICalendarValue::as_partial_date_time)
+            .and_then(wall_clock);
+        if let (Some(cap), Some(start)) = (cap, start)
+            && let Some(ICalendarValue::RecurrenceRule(rule)) = component
+                .property_mut(&ICalendarProperty::Rrule)
+                .and_then(|entry| entry.values.first_mut())
+        {
+            // Never before the start: `calcard` drops such a rule.
+            let cap = cap.max(start);
+            if rule
+                .until
+                .as_ref()
+                .and_then(wall_clock)
+                .is_none_or(|end| end > cap)
+            {
+                rule.until = Some(PartialDateTime {
+                    year: u16::try_from(cap.year()).ok(),
+                    month: u8::try_from(cap.month()).ok(),
+                    day: u8::try_from(cap.day()).ok(),
+                    hour: u8::try_from(cap.hour()).ok(),
+                    minute: u8::try_from(cap.minute()).ok(),
+                    second: u8::try_from(cap.second()).ok(),
+                    ..PartialDateTime::default()
+                });
+            }
         }
         let Some(start) = component.property_mut(&ICalendarProperty::Dtstart) else {
             continue;
@@ -218,9 +334,33 @@ fn utc_series_named(calendar: &ICalendar) -> ICalendar {
     calendar
 }
 
+/// The date and time of a value as written, without its zone.
+fn wall_clock(date: &PartialDateTime) -> Option<chrono::NaiveDateTime> {
+    NaiveDate::from_ymd_opt(
+        i32::from(date.year?),
+        u32::from(date.month?),
+        u32::from(date.day?),
+    )?
+    .and_hms_opt(
+        u32::from(date.hour.unwrap_or(0)),
+        u32::from(date.minute.unwrap_or(0)),
+        u32::from(date.second.unwrap_or(0)),
+    )
+}
+
+/// How far after its start a series is expanded to find its first date: a few first dates may
+/// be left out (`EXDATE`).
+const FIRST_DATE_REACH_MS: i64 = 400 * DAY_MS;
+
 /// The first date of the event at `index`.
 pub(crate) fn first_dates(calendar: &ICalendar, index: usize) -> Option<Dates> {
-    dates_between(calendar, i64::MIN, i64::MAX)
+    let start = calendar
+        .components
+        .get(index)?
+        .property(&ICalendarProperty::Dtstart)
+        .and_then(|entry| instant_of(calendar, entry));
+    let until = start.map_or(i64::MAX, |start| start.saturating_add(FIRST_DATE_REACH_MS));
+    dates_between(calendar, i64::MIN, until)
         .into_iter()
         .filter(|dates| dates.component == index)
         .min_by_key(|dates| dates.start)
@@ -229,6 +369,68 @@ pub(crate) fn first_dates(calendar: &ICalendar, index: usize) -> Option<Dates> {
 /// Start, end and whether it lasts whole days, of the first date of the event at `index`.
 pub(crate) fn first_occurrence(calendar: &ICalendar, index: usize) -> Option<(i64, i64, bool)> {
     first_dates(calendar, index).map(|dates| (dates.start, dates.end, dates.all_day))
+}
+
+/// When an alarm of an event goes off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Trigger {
+    /// Seconds after the start (negative: before), or after the end.
+    Relative { seconds: i64, to_end: bool },
+    /// At this moment, Unix milliseconds.
+    Absolute(i64),
+}
+
+/// The alarms of the event at `index` (its `VALARM` components).
+pub(crate) fn triggers(calendar: &ICalendar, index: usize) -> Vec<Trigger> {
+    let Ok(id) = u32::try_from(index) else {
+        return Vec::new();
+    };
+    calendar
+        .alarms_for_id(id)
+        .filter_map(|alarm| {
+            let entry = alarm.property(&ICalendarProperty::Trigger)?;
+            match entry.values.first()? {
+                ICalendarValue::Duration(duration) => Some(Trigger::Relative {
+                    seconds: duration.as_seconds(),
+                    to_end: matches!(
+                        param(entry, &ICalendarParameterName::Related),
+                        Some(ICalendarParameterValue::Related(
+                            calcard::icalendar::ICalendarRelated::End
+                        ))
+                    ),
+                }),
+                ICalendarValue::PartialDateTime(date) => date
+                    .to_timestamp()
+                    .map(|seconds| Trigger::Absolute(seconds * 1000)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The reminder the event dialog shows: minutes before the start of the first alarm that says
+/// so; `None` without one.
+pub(crate) fn reminder_minutes(calendar: &ICalendar, index: usize) -> Option<i64> {
+    triggers(calendar, index)
+        .into_iter()
+        .find_map(|trigger| match trigger {
+            Trigger::Relative {
+                seconds,
+                to_end: false,
+            } if seconds <= 0 => Some(-seconds / 60),
+            _ => None,
+        })
+}
+
+/// The lines of an alarm `minutes` before the start, for the event dialog's reminder.
+pub(crate) fn alarm_lines(minutes: i64, title: &str) -> Vec<String> {
+    vec![
+        "BEGIN:VALARM".to_owned(),
+        "ACTION:DISPLAY".to_owned(),
+        format!("DESCRIPTION:{}", escape(title)),
+        format!("TRIGGER:-PT{}M", minutes.max(0)),
+        "END:VALARM".to_owned(),
+    ]
 }
 
 /// A TEXT value as iCalendar writes it: backslash, semicolon, comma and line breaks escaped.

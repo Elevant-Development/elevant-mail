@@ -31,7 +31,8 @@ const PREFER: &str = r#"outlook.timezone="UTC", outlook.body-content-type="text"
 const BATCH: usize = 20;
 /// What the app reads of an event.
 const FIELDS: &str = "id,iCalUId,subject,body,start,end,isAllDay,location,organizer,attendees,\
-recurrence,originalStartTimeZone,originalStart,changeKey,type,isCancelled";
+recurrence,originalStartTimeZone,originalStart,changeKey,type,isCancelled,isReminderOn,\
+reminderMinutesBeforeStart";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +66,9 @@ pub(crate) struct GraphEvent {
     pub change_key: Option<String>,
     #[serde(default)]
     pub is_cancelled: bool,
+    #[serde(default)]
+    pub is_reminder_on: bool,
+    pub reminder_minutes_before_start: Option<i64>,
     #[serde(default)]
     pub cancelled_occurrences: Vec<String>,
     #[serde(default)]
@@ -224,7 +228,7 @@ impl Graph {
         })
     }
 
-    async fn send(
+    pub(crate) async fn send(
         &self,
         method: Method,
         url: Url,
@@ -252,7 +256,7 @@ impl Graph {
         }
     }
 
-    async fn get<T: for<'de> Deserialize<'de>>(&self, url: Url) -> Result<T> {
+    pub(crate) async fn get<T: for<'de> Deserialize<'de>>(&self, url: Url) -> Result<T> {
         let response = self.send(Method::GET, url, None, None).await?;
         match response.status().as_u16() {
             200 => response
@@ -265,7 +269,7 @@ impl Graph {
         }
     }
 
-    async fn pages<T: for<'de> Deserialize<'de>>(&self, url: Url) -> Result<Vec<T>> {
+    pub(crate) async fn pages<T: for<'de> Deserialize<'de>>(&self, url: Url) -> Result<Vec<T>> {
         let mut items = Vec::new();
         let mut next = Some(url);
         while let Some(url) = next.take() {
@@ -276,7 +280,7 @@ impl Graph {
         Ok(items)
     }
 
-    fn url(&self, path: &str) -> Result<Url> {
+    pub(crate) fn url(&self, path: &str) -> Result<Url> {
         self.base.join(path).map_err(|_| Error::InvalidLink)
     }
 
@@ -422,6 +426,34 @@ impl Graph {
         Ok(page.value.into_iter().next().map(|event| event.id))
     }
 
+    /// The id of the date of a series that originally starts at `instance` (Unix milliseconds),
+    /// moved or not; `None` when the series has no such date (any more).
+    pub async fn instance_id(&self, series_id: &str, instance: i64) -> Result<Option<String>> {
+        // A changed date is looked for where it may have moved to.
+        let reach = chrono::Duration::days(31);
+        let at = DateTime::<Utc>::from_timestamp_millis(instance).ok_or(Error::InvalidEventTime)?;
+        let mut url = self.url(&format!("me/events/{series_id}/instances"))?;
+        url.query_pairs_mut()
+            .append_pair("startDateTime", &(at - reach).to_rfc3339())
+            .append_pair("endDateTime", &(at + reach).to_rfc3339())
+            .append_pair("$select", "id,originalStart")
+            .append_pair("$top", "100");
+        let dates: Vec<Instance> = match self.pages(url).await {
+            Err(Error::EventNotFound) => return Ok(None),
+            dates => dates?,
+        };
+        // All-day dates begin at midnight where the series is, not UTC: within half a day.
+        Ok(dates
+            .into_iter()
+            .filter_map(|date| {
+                let start = DateTime::parse_from_rfc3339(date.original_start.as_deref()?).ok()?;
+                let off = (start.timestamp_millis() - instance).abs();
+                (off <= 14 * 3_600_000).then_some((off, date.id))
+            })
+            .min_by_key(|(off, _)| *off)
+            .map(|(_, id)| id))
+    }
+
     /// Accepts, tentatively accepts or declines an invitation; Exchange tells the organizer.
     pub async fn respond(&self, event_id: &str, action: &str) -> Result<()> {
         let url = self.url(&format!("me/events/{event_id}/{action}"))?;
@@ -436,7 +468,7 @@ impl Graph {
 }
 
 /// The zone an event was made in: IANA or Windows names; the system's when unknown.
-fn zone_of(name: Option<&str>) -> chrono_tz::Tz {
+pub(crate) fn zone_of(name: Option<&str>) -> chrono_tz::Tz {
     let resolved = name
         .and_then(|name| name.parse::<calcard::common::timezone::Tz>().ok())
         .and_then(|tz| match tz {
@@ -670,6 +702,15 @@ fn event_lines(
         ));
     }
     if master.is_none()
+        && event.is_reminder_on
+        && let Some(minutes) = event.reminder_minutes_before_start
+    {
+        lines.extend(ical::alarm_lines(
+            minutes,
+            event.subject.as_deref().unwrap_or_default(),
+        ));
+    }
+    if master.is_none()
         && let Some(recurrence) = &event.recurrence
         && let Some(rule) = rrule(recurrence, all_day, local(start, zone), zone)
     {
@@ -732,14 +773,45 @@ pub(crate) fn to_ical(event: &GraphEvent) -> Option<String> {
     Some(calendar.to_string())
 }
 
+/// What of an event goes to Graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Part {
+    /// The event, or the series as a whole; its rule only with `rule`, since sending it makes
+    /// Exchange drop the series' changed dates.
+    Series { rule: bool },
+    /// One date of the series, by its original start.
+    Date(i64),
+}
+
+/// A date of a series, as `instances` lists it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Instance {
+    id: String,
+    original_start: Option<String>,
+}
+
 /// What Graph takes to create or change an event: from its iCalendar text, as the event dialog
 /// left it. Times go in the system's zone. A series' rule goes along where Graph can say it;
 /// one it cannot (certain weekdays of a month, say) is left as it is on the server.
-pub(crate) fn to_graph(ics: &str, zone_name: Option<&str>, own: Option<&str>) -> Option<Value> {
+pub(crate) fn to_graph(
+    ics: &str,
+    zone_name: Option<&str>,
+    own: Option<&str>,
+    part: Part,
+) -> Option<Value> {
     let calendar = ICalendar::parse(ics).ok()?;
     let index = calendar.components.iter().position(|component| {
         component.component_type == calcard::icalendar::ICalendarComponentType::VEvent
-            && !component.has_property(&ICalendarProperty::RecurrenceId)
+            && match part {
+                Part::Series { .. } => !component.has_property(&ICalendarProperty::RecurrenceId),
+                Part::Date(instance) => {
+                    component
+                        .property(&ICalendarProperty::RecurrenceId)
+                        .and_then(|entry| ical::instant_of(&calendar, entry))
+                        == Some(instance)
+                }
+            }
     })?;
     let event = &calendar.components[index];
     let dates = ical::first_dates(&calendar, index)?;
@@ -765,6 +837,17 @@ pub(crate) fn to_graph(ics: &str, zone_name: Option<&str>, own: Option<&str>) ->
         "start": when(dates.start)?,
         "end": when(dates.end)?,
     });
+    match ical::reminder_minutes(&calendar, index) {
+        Some(minutes) => {
+            body["isReminderOn"] = json!(true);
+            body["reminderMinutesBeforeStart"] = json!(minutes);
+        }
+        None => body["isReminderOn"] = json!(false),
+    }
+    let Part::Series { rule } = part else {
+        // A date has the series' attendees.
+        return Some(body);
+    };
     // Attendees only for the account's own events: Exchange invites them.
     let organizer = event
         .property(&ICalendarProperty::Organizer)
@@ -785,6 +868,9 @@ pub(crate) fn to_graph(ics: &str, zone_name: Option<&str>, own: Option<&str>) ->
             })
             .collect();
         body["attendees"] = json!(attendees);
+    }
+    if !rule {
+        return Some(body);
     }
     match ical::recurrence(event) {
         None => body["recurrence"] = Value::Null,
@@ -928,6 +1014,29 @@ pub(crate) mod tests {
         );
     }
 
+    const ALL: Part = Part::Series { rule: true };
+
+    #[test]
+    fn reminders_go_both_ways() {
+        let mut event = series_json();
+        event["isReminderOn"] = json!(true);
+        event["reminderMinutesBeforeStart"] = json!(30);
+        let event: GraphEvent = serde_json::from_value(event).unwrap();
+        let ics = to_ical(&event).unwrap();
+        assert!(ics.contains("TRIGGER:-PT30M"), "{ics}");
+        let body = to_graph(&ics, Some("Europe/Berlin"), None, ALL).unwrap();
+        assert_eq!(body["isReminderOn"], true);
+        assert_eq!(body["reminderMinutesBeforeStart"], 30);
+        let none = to_graph(
+            &to_ical(&series()).unwrap(),
+            Some("Europe/Berlin"),
+            None,
+            ALL,
+        )
+        .unwrap();
+        assert_eq!(none["isReminderOn"], false);
+    }
+
     #[test]
     fn all_day_events_stay_on_their_dates() {
         let event: GraphEvent = serde_json::from_value(json!({
@@ -947,7 +1056,7 @@ pub(crate) mod tests {
     #[test]
     fn events_go_back_with_their_rule_where_graph_can_say_it() {
         let ics = to_ical(&series()).unwrap();
-        let body = to_graph(&ics, Some("Europe/Berlin"), None).unwrap();
+        let body = to_graph(&ics, Some("Europe/Berlin"), None, ALL).unwrap();
         assert_eq!(body["subject"], "Jour fixe");
         assert_eq!(body["start"]["dateTime"], "2026-10-20T10:00:00");
         assert_eq!(body["start"]["timeZone"], "Europe/Berlin");
@@ -960,7 +1069,7 @@ pub(crate) mod tests {
 
         let single = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nDTSTART;VALUE=DATE:20261112\r\n\
 DTEND;VALUE=DATE:20261113\r\nSUMMARY:Feiertag\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
-        let body = to_graph(single, Some("Europe/Berlin"), None).unwrap();
+        let body = to_graph(single, Some("Europe/Berlin"), None, ALL).unwrap();
         assert_eq!(body["isAllDay"], true);
         assert_eq!(body["start"]["dateTime"], "2026-11-12T00:00:00");
         assert_eq!(body["end"]["dateTime"], "2026-11-13T00:00:00");

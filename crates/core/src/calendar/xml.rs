@@ -9,6 +9,7 @@ use quick_xml::name::ResolveResult;
 
 pub(crate) const DAV: &str = "DAV:";
 pub(crate) const CALDAV: &str = "urn:ietf:params:xml:ns:caldav";
+pub(crate) const CARDDAV: &str = "urn:ietf:params:xml:ns:carddav";
 /// `getctag`, a calendar's version, as Apple's and most other servers report it.
 pub(crate) const CALENDARSERVER: &str = "http://calendarserver.org/ns/";
 /// `calendar-color`.

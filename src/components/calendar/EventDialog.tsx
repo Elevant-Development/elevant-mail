@@ -11,10 +11,17 @@ import { addDays, HOUR_MS, localDay, startOfDay, utcDate } from "@/lib/calendar"
 import { describeError } from "@/lib/errors";
 import { locale, type MessageKey, t } from "@/lib/i18n";
 import { formatAttendees, formatEventTime, formatRecurrence } from "@/lib/invitations";
+import { reminderChoices, reminderLabel } from "@/lib/reminders";
 import type { Account, Address, Calendar, EventDetails, EventInput, Frequency } from "@/lib/tauri";
 import { AddressField } from "@/components/compose/AddressField";
 import { useAccounts } from "@/queries/accounts";
-import { useCalendars, useDeleteEvent, useEvent, useSaveEvent } from "@/queries/calendar";
+import {
+  useCalendars,
+  useDeleteEvent,
+  useEvent,
+  useLoadSeries,
+  useSaveEvent,
+} from "@/queries/calendar";
 import { useCalendarStore } from "@/stores/calendar";
 
 import { calendarName } from "./event-style";
@@ -51,11 +58,13 @@ export function EventDialog() {
   return (
     <Dialog open={dialog !== null} onOpenChange={(open) => !open && closeDialog()}>
       <DialogContent aria-describedby={undefined} className="gap-0 p-0 sm:max-w-lg">
-        {dialog?.mode === "view" && <EventView eventId={dialog.eventId} />}
+        {dialog?.mode === "view" && (
+          <EventView eventId={dialog.eventId} instance={dialog.instance} />
+        )}
         {dialog?.mode === "edit" && (
           // A new key per event, so the form starts from it.
           <EventForm
-            key={dialog.event.id ?? `new-${dialog.event.start}`}
+            key={`${dialog.event.id ?? `new-${dialog.event.start}`} ${dialog.event.instance}`}
             initial={dialog.event}
             ownEvent={dialog.ownEvent}
           />
@@ -87,17 +96,24 @@ function toInput(event: EventDetails): EventInput {
     allDay: event.allDay,
     repeat: event.recurrence?.frequency ?? null,
     attendees: event.attendees.map((attendee) => attendee.address),
+    reminder: event.reminder,
+    instance: null,
   };
 }
 
-function EventView({ eventId }: { eventId: string }) {
-  const { data: event, isError, error } = useEvent(eventId);
+/** What the buttons below an event ask about: deleting it, or which dates of a series. */
+type Asking = "delete" | "edit" | null;
+
+function EventView({ eventId, instance }: { eventId: string; instance: number | null }) {
+  const { data: event, isError, error } = useEvent(eventId, instance);
   const { data: calendars = [] } = useCalendars();
   const { data: accounts = [] } = useAccounts();
   const editEvent = useCalendarStore((s) => s.editEvent);
   const closeDialog = useCalendarStore((s) => s.closeDialog);
   const remove = useDeleteEvent();
-  const [confirming, setConfirming] = useState(false);
+  const loadSeries = useLoadSeries();
+  const [asking, setAsking] = useState<Asking>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   if (isError) {
     return (
@@ -117,6 +133,20 @@ function EventView({ eventId }: { eventId: string }) {
   }
   const calendar = calendars.find((c) => c.id === event.calendarId);
   const people = event.organizer !== null || event.attendees.length > 0;
+  // Opened as one date of a series: changes can be for it alone or for all dates.
+  const oneDate = event.recurrence !== null && event.instance !== null;
+  const deleteDates = (only: boolean) =>
+    remove.mutate(
+      { eventId: event.id, calendarId: event.calendarId, instance: only ? event.instance : null },
+      { onSuccess: closeDialog },
+    );
+  const editSeries = () => {
+    setLoadError(null);
+    loadSeries(event.id).then(
+      (series) => editEvent(toInput(series), series.ownEvent),
+      setLoadError,
+    );
+  };
 
   return (
     <div className="grid gap-4 p-5">
@@ -149,6 +179,11 @@ function EventView({ eventId }: { eventId: string }) {
             {formatAttendees(event, locale)}
           </Row>
         )}
+        {event.reminder !== null && (
+          <Row icon="bell" label={t("reminder.label")}>
+            {reminderLabel(event.reminder, locale)}
+          </Row>
+        )}
         {calendar && (
           <Row icon="inbox" label={t("calendar.calendar")}>
             {fullName(calendar, accounts)}
@@ -161,41 +196,85 @@ function EventView({ eventId }: { eventId: string }) {
         )}
       </div>
       {remove.isError && <Notice tone="error" text={describeError(remove.error).message} />}
+      {loadError !== null && <Notice tone="error" text={describeError(loadError).message} />}
       {!event.readOnly && (
         <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
-          {confirming ? (
+          {asking === "delete" && oneDate && (
+            <>
+              <p className="mr-auto text-sm text-muted-foreground">{t("calendar.deleteWhich")}</p>
+              <Button variant="ghost" size="sm" onClick={() => setAsking(null)}>
+                {t("account.add.cancel")}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={remove.isPending}
+                onClick={() => deleteDates(false)}
+              >
+                {t("calendar.allDates")}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={remove.isPending}
+                onClick={() => deleteDates(true)}
+              >
+                <Icon name="trash" />
+                {t("calendar.onlyThisDate")}
+              </Button>
+            </>
+          )}
+          {asking === "delete" && !oneDate && (
             <>
               <p className="mr-auto text-sm text-muted-foreground">
                 {event.recurrence ? t("calendar.deleteSeries") : t("calendar.deleteQuestion")}
               </p>
-              <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+              <Button variant="ghost" size="sm" onClick={() => setAsking(null)}>
                 {t("account.add.cancel")}
               </Button>
               <Button
                 variant="destructive"
                 size="sm"
                 disabled={remove.isPending}
-                onClick={() =>
-                  remove.mutate(
-                    { eventId: event.id, calendarId: event.calendarId },
-                    { onSuccess: closeDialog },
-                  )
-                }
+                onClick={() => deleteDates(false)}
               >
                 <Icon name="trash" />
                 {t("calendar.delete")}
               </Button>
             </>
-          ) : (
+          )}
+          {asking === "edit" && (
             <>
-              <Button variant="ghost" size="sm" onClick={() => setConfirming(true)}>
+              <p className="mr-auto text-sm text-muted-foreground">{t("calendar.editWhich")}</p>
+              <Button variant="ghost" size="sm" onClick={() => setAsking(null)}>
+                {t("account.add.cancel")}
+              </Button>
+              <Button variant="outline" size="sm" onClick={editSeries}>
+                {t("calendar.allDates")}
+              </Button>
+              <Button
+                size="sm"
+                data-autofocus=""
+                onClick={() =>
+                  editEvent({ ...toInput(event), instance: event.instance }, event.ownEvent)
+                }
+              >
+                {t("calendar.onlyThisDate")}
+              </Button>
+            </>
+          )}
+          {asking === null && (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => setAsking("delete")}>
                 <Icon name="trash" />
                 {t("calendar.delete")}
               </Button>
               <Button
                 size="sm"
                 data-autofocus=""
-                onClick={() => editEvent(toInput(event), event.ownEvent)}
+                onClick={() =>
+                  oneDate ? setAsking("edit") : editEvent(toInput(event), event.ownEvent)
+                }
               >
                 <Icon name="compose" />
                 {t("calendar.edit")}
@@ -269,6 +348,8 @@ function EventForm({ initial, ownEvent }: { initial: EventInput; ownEvent: boole
     ? allDayValue(Math.max(event.start, event.end - DAY_MS))
     : dateValue(new Date(event.end));
   const backwards = event.end < event.start || (event.allDay && event.end <= event.start);
+  // One date of a series: its repetition, calendar and attendees are the series'.
+  const oneDate = event.instance !== null;
 
   const setStart = (date: string, time: string) => {
     if (event.allDay) {
@@ -310,7 +391,13 @@ function EventForm({ initial, ownEvent }: { initial: EventInput; ownEvent: boole
         if (!backwards) save.mutate(event, { onSuccess: closeDialog });
       }}
     >
-      <DialogTitle>{event.id ? t("calendar.editEvent") : t("calendar.newEvent")}</DialogTitle>
+      <DialogTitle>
+        {oneDate
+          ? t("calendar.editDate")
+          : event.id
+            ? t("calendar.editEvent")
+            : t("calendar.newEvent")}
+      </DialogTitle>
       <Input
         data-autofocus=""
         aria-label={t("calendar.field.title")}
@@ -366,7 +453,7 @@ function EventForm({ initial, ownEvent }: { initial: EventInput; ownEvent: boole
         {backwards && <p className="text-xs text-destructive">{t("calendar.endBeforeStart")}</p>}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className={oneDate ? "hidden" : "grid grid-cols-2 gap-3"}>
         <label className="grid gap-1.5 text-xs text-muted-foreground">
           {t("calendar.field.repeat")}
           <select
@@ -404,12 +491,35 @@ function EventForm({ initial, ownEvent }: { initial: EventInput; ownEvent: boole
         </label>
       </div>
 
-      <Attendees
-        event={event}
-        calendar={calendars.find((calendar) => calendar.id === event.calendarId)}
-        ownEvent={ownEvent}
-        onChange={(attendees) => change({ attendees })}
-      />
+      <label className="grid gap-1.5 text-xs text-muted-foreground">
+        {t("reminder.label")}
+        <select
+          className={fieldClass}
+          value={event.reminder ?? "none"}
+          onChange={(input) =>
+            change({
+              reminder: input.target.value === "none" ? null : Number(input.target.value),
+            })
+          }
+        >
+          {[
+            ...reminderChoices,
+            ...(reminderChoices.includes(initial.reminder) ? [] : [initial.reminder]),
+          ].map((minutes) => (
+            <option key={minutes ?? "none"} value={minutes ?? "none"}>
+              {reminderLabel(minutes, locale)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!oneDate && (
+        <Attendees
+          event={event}
+          calendar={calendars.find((calendar) => calendar.id === event.calendarId)}
+          ownEvent={ownEvent}
+          onChange={(attendees) => change({ attendees })}
+        />
+      )}
       <Input
         aria-label={t("calendar.field.location")}
         placeholder={t("calendar.field.location")}

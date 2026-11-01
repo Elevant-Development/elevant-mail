@@ -25,6 +25,7 @@ import type {
 } from "./tauri";
 import { language, locale } from "./i18n";
 import { mockCalendar } from "./mock-calendar";
+import { contactSuggestions, mockContacts } from "./mock-contacts";
 import { UNIFIED_INBOX } from "./tauri";
 
 const MINUTE = 60 * 1000;
@@ -1183,6 +1184,7 @@ function suggest(email: string): SuggestedSettings {
 
 export const mockBackend: Backend = {
   ...mockCalendar((accountId) => accounts.find((a) => a.id === accountId)?.color),
+  ...mockContacts,
   listAccounts: async () => accounts,
   detectSettings: async (email) => {
     await wait(400);
@@ -1430,6 +1432,11 @@ export const mockBackend: Backend = {
     if (!needle) return [];
     const own = new Set(accounts.map((a) => a.emailAddress.toLowerCase()));
     const found = new Map<string, Address>();
+    // Contacts first, with their names.
+    for (const person of contactSuggestions(query)) {
+      const key = person.address.toLowerCase();
+      if (!own.has(key) && !found.has(key)) found.set(key, person);
+    }
     for (const m of [...messages].reverse()) {
       const people = m.folderId.endsWith(":sent") ? [...m.to, ...m.cc] : [m.from];
       for (const person of people) {

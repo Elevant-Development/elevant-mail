@@ -41,6 +41,8 @@ https://outlook.office.com/SMTP.Send offline_access openid email";
 /// a token for it comes from the same refresh token ([`graph_token`]), since one token serves
 /// only one resource.
 pub const GRAPH_CALENDARS: &str = "https://graph.microsoft.com/Calendars.ReadWrite";
+/// Contacts over Microsoft Graph, asked for at sign-in like the calendars.
+pub const GRAPH_CONTACTS: &str = "https://graph.microsoft.com/Contacts.ReadWrite";
 
 /// How long the browser sign-in may take before the app stops waiting.
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -67,7 +69,7 @@ impl Endpoints {
             authorize_url: MICROSOFT_AUTHORIZE.into(),
             token_url: MICROSOFT_TOKEN.into(),
             scopes: MICROSOFT_SCOPES.into(),
-            extra_consent: GRAPH_CALENDARS.into(),
+            extra_consent: format!("{GRAPH_CALENDARS} {GRAPH_CONTACTS}"),
         }
     }
 }
@@ -171,6 +173,12 @@ pub async fn graph_token(secrets: &dyn SecretStore, account_id: &str) -> Result<
     .await
 }
 
+/// The access token for the account's contacts over Microsoft Graph.
+/// [`Error::ContactsAccessMissing`] where the account signed in before the app asked for them.
+pub async fn graph_contacts_token(secrets: &dyn SecretStore, account_id: &str) -> Result<Secret> {
+    token_for(&Endpoints::microsoft(), secrets, account_id, GRAPH_CONTACTS).await
+}
+
 pub(crate) async fn access_token_with(
     endpoints: &Endpoints,
     secrets: &dyn SecretStore,
@@ -200,6 +208,7 @@ pub(crate) async fn token_for(
         .await
         .map_err(|error| match error {
             // Signed in before the app asked for this: allowed with the next sign-in.
+            Error::ConsentRequired if scope == GRAPH_CONTACTS => Error::ContactsAccessMissing,
             Error::ConsentRequired if scope != endpoints.scopes => Error::CalendarAccessMissing,
             other => other,
         })?;

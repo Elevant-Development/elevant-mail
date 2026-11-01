@@ -20,7 +20,7 @@ import type {
 const L = (de: string, en: string) => (language === "de" ? de : en);
 
 /** As the backend gives them: an account's calendars in the account's colour. */
-const calendars: Calendar[] = [
+const calendars: Omit<Calendar, "ownColor">[] = [
   {
     id: "cal-work",
     accountId: "acc-work",
@@ -68,6 +68,16 @@ const calendars: Calendar[] = [
   },
 ];
 
+/** What one date of a series can have of its own. */
+interface DateFields {
+  title: string;
+  location: string;
+  description: string;
+  start: number;
+  end: number;
+  reminder: number | null;
+}
+
 interface MockEvent {
   id: string;
   calendarId: string;
@@ -78,6 +88,11 @@ interface MockEvent {
   end: number;
   allDay: boolean;
   repeat: Frequency | null;
+  reminder: number | null;
+  /** Dates of the series changed on their own, by their original start. */
+  changed?: Record<number, DateFields>;
+  /** Dates of the series left out, by their original start. */
+  skipped?: number[];
   organizer: Address | null;
   attendees: Attendee[];
 }
@@ -106,6 +121,7 @@ function buildEvents(): MockEvent[] {
     description: "",
     allDay: false,
     repeat: null,
+    reminder: fields.allDay ? null : 15,
     organizer: null,
     attendees: [],
     ...fields,
@@ -227,10 +243,27 @@ function buildEvents(): MockEvent[] {
 }
 
 let events = buildEvents();
+/** Colours chosen for calendars, by calendar. */
+const chosenColors: Record<string, string> = {};
 let nextId = 1000;
 
-/** The dates of a series from its start on, as far as `to`. */
-function datesOf(event: MockEvent, to: number): { start: number; end: number }[] {
+/** The dates of a series from its start on, as far as `to`, with their original starts. */
+function datesOf(
+  event: MockEvent,
+  to: number,
+): { start: number; end: number; instance: number | null }[] {
+  return seriesDates(event, to)
+    .filter((date) => !event.skipped?.includes(date.start))
+    .map((date) => {
+      if (!event.repeat) return { ...date, instance: null };
+      const changed = event.changed?.[date.start];
+      return changed
+        ? { start: changed.start, end: changed.end, instance: date.start }
+        : { ...date, instance: date.start };
+    });
+}
+
+function seriesDates(event: MockEvent, to: number): { start: number; end: number }[] {
   const length = event.end - event.start;
   if (!event.repeat || event.repeat === "other") return [{ start: event.start, end: event.end }];
   const dates = [];
@@ -256,7 +289,12 @@ function datesOf(event: MockEvent, to: number): { start: number; end: number }[]
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function details(event: MockEvent): EventDetails {
+function details(event: MockEvent, instance: number | null = null): EventDetails {
+  const own = instance === null ? undefined : event.changed?.[instance];
+  const date =
+    instance === null
+      ? null
+      : (own ?? { start: instance, end: instance + event.end - event.start });
   return {
     id: event.id,
     calendarId: event.calendarId,
@@ -272,7 +310,19 @@ function details(event: MockEvent): EventDetails {
     organizer: event.organizer,
     attendees: event.attendees,
     readOnly: calendars.find((c) => c.id === event.calendarId)?.readOnly ?? false,
+    reminder: event.reminder,
     ownEvent: event.organizer === null || event.organizer.address.startsWith("alex"),
+    instance,
+    ...(date && {
+      start: date.start,
+      end: date.end,
+      ...(own && {
+        title: own.title || null,
+        location: own.location || null,
+        description: own.description || null,
+        reminder: own.reminder,
+      }),
+    }),
   };
 }
 
@@ -300,14 +350,17 @@ export const mockCalendar = (
   | "syncCalendars"
   | "caldavStatus"
   | "setCaldav"
+  | "dueReminders"
   | "listCalendars"
   | "setCalendarVisible"
+  | "setCalendarColor"
   | "listOccurrences"
   | "getEvent"
   | "saveEvent"
   | "deleteEvent"
 > => ({
   syncCalendars: async () => ({ changed: false }),
+  dueReminders: async () => [],
   caldavStatus: async (accountId) =>
     caldav[accountId] ?? { microsoft: false, enabled: true, url: null },
   setCaldav: async (accountId, enabled, url) => {
@@ -326,8 +379,15 @@ export const mockCalendar = (
   listCalendars: async () =>
     calendars.map((calendar) => ({
       ...calendar,
-      color: (calendar.accountId && accountColor(calendar.accountId)) || calendar.color,
+      color:
+        chosenColors[calendar.id] ??
+        ((calendar.accountId && accountColor(calendar.accountId)) || calendar.color),
+      ownColor: calendar.id in chosenColors,
     })),
+  setCalendarColor: async (calendarId, color) => {
+    if (color === null) delete chosenColors[calendarId];
+    else chosenColors[calendarId] = color;
+  },
   setCalendarVisible: async (calendarId, visible) => {
     const calendar = calendars.find((c) => c.id === calendarId);
     if (calendar) calendar.visible = visible;
@@ -337,27 +397,46 @@ export const mockCalendar = (
       .flatMap((event) =>
         datesOf(event, to)
           .filter((date) => date.start < to && Math.max(date.end, date.start + 1) > from)
-          .map((date) => ({
-            eventId: event.id,
-            calendarId: event.calendarId,
-            title: event.title || null,
-            location: event.location || null,
-            start: date.start,
-            end: date.end,
-            allDay: event.allDay,
-            recurring: event.repeat !== null,
-          })),
+          .map((date) => {
+            const own = date.instance === null ? undefined : event.changed?.[date.instance];
+            return {
+              eventId: event.id,
+              calendarId: event.calendarId,
+              title: (own ?? event).title || null,
+              location: (own ?? event).location || null,
+              start: date.start,
+              end: date.end,
+              allDay: event.allDay,
+              recurring: event.repeat !== null,
+              instance: date.instance,
+            };
+          }),
       )
       .sort((a, b) => a.start - b.start || a.end - b.end),
-  getEvent: async (eventId) => {
+  getEvent: async (eventId, instance = null) => {
     const event = events.find((e) => e.id === eventId);
     if (!event) throw { kind: "notFound", hint: null };
-    return details(event);
+    return details(event, event.repeat ? instance : null);
   },
   saveEvent: async (input: EventInput) => {
     await wait(300);
     if (input.end < input.start) throw { kind: "invalidInput", hint: null };
     writable(input.calendarId);
+    const series = input.id ? events.find((e) => e.id === input.id) : undefined;
+    if (series && input.instance !== null) {
+      series.changed = {
+        ...series.changed,
+        [input.instance]: {
+          title: input.title.trim(),
+          location: input.location.trim(),
+          description: input.description.trim(),
+          start: input.start,
+          end: input.end,
+          reminder: input.reminder,
+        },
+      };
+      return series.id;
+    }
     const fields = {
       calendarId: input.calendarId,
       title: input.title.trim(),
@@ -367,6 +446,7 @@ export const mockCalendar = (
       end: input.end,
       allDay: input.allDay,
       repeat: input.repeat,
+      reminder: input.reminder,
       attendees: input.attendees.map((address) => ({
         address,
         status: "needsAction" as const,
@@ -383,11 +463,15 @@ export const mockCalendar = (
     events = [...events, { id, ...fields }];
     return id;
   },
-  deleteEvent: async (eventId) => {
+  deleteEvent: async (eventId, instance = null) => {
     await wait(200);
     const event = events.find((e) => e.id === eventId);
     if (!event) throw { kind: "notFound", hint: null };
     writable(event.calendarId);
+    if (instance !== null && event.repeat) {
+      event.skipped = [...(event.skipped ?? []), instance];
+      return;
+    }
     events = events.filter((e) => e.id !== eventId);
   },
 });

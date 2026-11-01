@@ -22,12 +22,18 @@ import type { DraftAttachment } from "./bindings/DraftAttachment";
 import type { ImapSettings } from "./bindings/ImapSettings";
 import type { ImportPreview } from "./bindings/ImportPreview";
 import type { InvitationAnswer } from "./bindings/InvitationAnswer";
+import type { AddressBook } from "./bindings/AddressBook";
 import type { Calendar } from "./bindings/Calendar";
+import type { ContactDetails } from "./bindings/ContactDetails";
+import type { ContactInput } from "./bindings/ContactInput";
+import type { ContactSummary } from "./bindings/ContactSummary";
+import type { ContactsSyncReport } from "./bindings/ContactsSyncReport";
 import type { CaldavStatus } from "./bindings/CaldavStatus";
 import type { CalendarSyncReport } from "./bindings/CalendarSyncReport";
 import type { EventDetails } from "./bindings/EventDetails";
 import type { EventInput } from "./bindings/EventInput";
 import type { Occurrence } from "./bindings/Occurrence";
+import type { Reminder } from "./bindings/Reminder";
 import type { ListCursor } from "./bindings/ListCursor";
 import type { ListFilter } from "./bindings/ListFilter";
 import type { ListPage } from "./bindings/ListPage";
@@ -86,12 +92,20 @@ export type { Invitation } from "./bindings/Invitation";
 export type { InvitationAnswer } from "./bindings/InvitationAnswer";
 export type { Participation } from "./bindings/Participation";
 export type { Recurrence } from "./bindings/Recurrence";
+export type { AddressBook } from "./bindings/AddressBook";
 export type { Calendar } from "./bindings/Calendar";
+export type { ContactDetails } from "./bindings/ContactDetails";
+export type { ContactInput } from "./bindings/ContactInput";
+export type { ContactLabel } from "./bindings/ContactLabel";
+export type { ContactSummary } from "./bindings/ContactSummary";
+export type { Labeled } from "./bindings/Labeled";
+export type { PostalAddress } from "./bindings/PostalAddress";
 export type { CaldavStatus } from "./bindings/CaldavStatus";
 export type { EventDetails } from "./bindings/EventDetails";
 export type { EventInput } from "./bindings/EventInput";
 export type { Frequency } from "./bindings/Frequency";
 export type { Occurrence } from "./bindings/Occurrence";
+export type { Reminder } from "./bindings/Reminder";
 export type { SyncStage } from "./bindings/SyncStage";
 
 /** Mailbox id that shows the inboxes of all accounts together (same value in Rust). */
@@ -168,16 +182,31 @@ export interface Backend {
   /** The calendars of all accounts, and the one on this computer last. */
   listCalendars(): Promise<Calendar[]>;
   setCalendarVisible(calendarId: string, visible: boolean): Promise<void>;
+  /** A colour of its own for a calendar; `null` shows it in its account's colour again. */
+  setCalendarColor(calendarId: string, color: string | null): Promise<void>;
   /**
    * The dates of all events that overlap `from..to` (Unix milliseconds), series expanded, hidden
    * calendars included.
    */
   listOccurrences(from: number, to: number): Promise<Occurrence[]>;
-  getEvent(eventId: string): Promise<EventDetails>;
+  /** With `instance`, that date of the series (its original start) as it is. */
+  getEvent(eventId: string, instance?: number | null): Promise<EventDetails>;
+  /** The reminders due in `from..=to` (Unix milliseconds). */
+  dueReminders(from: number, to: number): Promise<Reminder[]>;
   /** A new event or the changes to one; resolves with its id. */
   saveEvent(event: EventInput): Promise<string>;
-  /** A series goes with all its dates. */
-  deleteEvent(eventId: string): Promise<void>;
+  /** A series goes with all its dates; with `instance` only that date. */
+  deleteEvent(eventId: string, instance?: number | null): Promise<void>;
+  /** The address books of all accounts, and the one on this computer last. */
+  listAddressBooks(): Promise<AddressBook[]>;
+  /** The contacts of one address book or of all (`null`), by name, narrowed by `query`. */
+  listContacts(addressBookId: string | null, query: string): Promise<ContactSummary[]>;
+  getContact(contactId: string): Promise<ContactDetails>;
+  /** A new contact or the changes to one; resolves with its id. */
+  saveContact(contact: ContactInput): Promise<string>;
+  deleteContact(contactId: string): Promise<void>;
+  /** Sends the contact changes made here and takes the server's (CardDAV). */
+  syncContacts(accountId: string): Promise<ContactsSyncReport>;
   /** Sends the calendar changes made here and takes the server's (CalDAV). */
   syncCalendars(accountId: string): Promise<CalendarSyncReport>;
   caldavStatus(accountId: string): Promise<CaldavStatus>;
@@ -409,12 +438,20 @@ const tauriBackend: Backend = {
   sendMessage: (mail, draftKey) => invoke("send_message", { mail, draftKey }),
   answerInvitation: (answer) => invoke("answer_invitation", { answer }),
   listCalendars: () => invoke("list_calendars"),
+  setCalendarColor: (calendarId, color) => invoke("set_calendar_color", { calendarId, color }),
   setCalendarVisible: (calendarId, visible) =>
     invoke("set_calendar_visible", { calendarId, visible }),
   listOccurrences: (from, to) => invoke("list_occurrences", { from, to }),
-  getEvent: (eventId) => invoke("get_event", { eventId }),
+  getEvent: (eventId, instance = null) => invoke("get_event", { eventId, instance }),
+  dueReminders: (from, to) => invoke("due_reminders", { from, to }),
   saveEvent: (event) => invoke("save_event", { event }),
-  deleteEvent: (eventId) => invoke("delete_event", { eventId }),
+  deleteEvent: (eventId, instance = null) => invoke("delete_event", { eventId, instance }),
+  listAddressBooks: () => invoke("list_address_books"),
+  listContacts: (addressBookId, query) => invoke("list_contacts", { addressBookId, query }),
+  getContact: (contactId) => invoke("get_contact", { contactId }),
+  saveContact: (contact) => invoke("save_contact", { contact }),
+  deleteContact: (contactId) => invoke("delete_contact", { contactId }),
+  syncContacts: (accountId) => invoke("sync_contacts", { accountId }),
   syncCalendars: (accountId) => invoke("sync_calendars", { accountId }),
   caldavStatus: (accountId) => invoke("caldav_status", { accountId }),
   setCaldav: (accountId, enabled, url) => invoke("set_caldav", { accountId, enabled, url }),
