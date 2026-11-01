@@ -3,7 +3,9 @@
 What changed in each version of Elevant Mail. The release workflow takes a version's section as
 the text of its GitHub release, so every version gets its entry before it is tagged.
 
-## Unreleased
+## 0.6.0 – 2026-11-01
+
+Elevant Mail 0.6 brings your calendars and contacts next to your mail, keeps running in the tray, and lets AI agents work with the mail you share with them.
 
 ### New
 
@@ -21,7 +23,6 @@ the text of its GitHub release, so every version gets its entry before it is tag
 - **A colour per calendar.** The button beside a calendar in the sidebar gives it a colour of its own, or back to the account's.
 - **Invitations meet the calendar.** An invitation says what else is on at that time and whether it is in your calendar already. Accepting puts it there, declining takes it out, and a cancellation offers to remove it. Events in calendars whose server sends invitations (Microsoft 365, Mailcow/SOGo, Nextcloud) can have attendees; the server invites them.
 - **Invitations in the reader.** A mail with an invitation shows above its text when and where the event is, who is invited and how a series repeats ("Weekly on Tuesday, 4 times"), with the buttons Accept, Maybe and Decline. The answer goes to the organizer by mail; the app remembers it and offers the buttons again when the organizer changes the event. Cancellations and answers from others show as well.
-
 - **Contacts as you type.** Writing a recipient or inviting to an event offers your contacts first, by name, company or address ("muller" finds "Müller"), then the addresses from your mail.
 - **A menu for mails.** A right-click on a mail in the list offers reply, reply all and forward, read or unread, the star, archive, move and delete, each with its key. On a selected mail it acts on the whole selection.
 
@@ -29,6 +30,15 @@ the text of its GitHub release, so every version gets its entry before it is tag
 
 - **No browser menu.** A right-click no longer offers the web view's "Reload" and "Back"; in text fields and on selected text the menu for copying and pasting stays. F5 and Ctrl+R no longer reload the window.
 - **After signing in to Microsoft**, calendars and contacts come in at once; while Microsoft still takes a few seconds to apply what was just allowed, the app asks again.
+
+### Updating
+
+Install over the previous version; your accounts and mail stay. On the first start the app looks for calendars and address books on your accounts' servers. Microsoft 365 and Outlook.com accounts added before ask once to allow calendars and contacts: a new sign-in in the browser. Closing the window now keeps the app in the tray; quit it from the tray menu, or switch this off under Settings → Notifications.
+
+### Known limits
+
+- Google calendars and contacts are not supported yet.
+- Agents (MCP) change mail only on your computer while the app is closed; it reaches your server once the app runs.
 
 ## 0.5.0 – 2026-10-30
 
