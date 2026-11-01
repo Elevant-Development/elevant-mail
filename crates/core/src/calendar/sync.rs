@@ -1348,8 +1348,12 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
                     .values()
                     .find(|(_, event)| event["subject"] == "Mittagessen")
                     .unwrap();
-                // 13:00 in Berlin (12:00 UTC), sent in Berlin time.
-                assert_eq!(lunch.1["originalStartTimeZone"], "Europe/Berlin");
+                // Sent in the system's zone, whichever it is (UTC on the CI machines).
+                let zone = crate::calendar::local_time_zone_name()
+                    .and_then(|name| name.parse::<chrono_tz::Tz>().ok())
+                    .unwrap_or(chrono_tz::UTC);
+                assert_eq!(lunch.1["originalStartTimeZone"], zone.name());
+                // The test server keeps the start in UTC, as Graph hands it out.
                 assert_eq!(lunch.1["start"]["dateTime"], "2026-11-03T12:00:00.0000000");
             }
             // The server's versions came back: the new event once, under its id there.
