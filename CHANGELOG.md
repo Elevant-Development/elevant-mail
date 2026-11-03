@@ -3,7 +3,9 @@
 What changed in each version of Elevant Mail. The release workflow takes a version's section as
 the text of its GitHub release, so every version gets its entry before it is tagged.
 
-## Unreleased
+## 0.7.0 – 2026-11-03
+
+Elevant Mail 0.7 lets AI agents read your shared mail in full: large HTML mails with their text, and attachments whole.
 
 ### New
 
