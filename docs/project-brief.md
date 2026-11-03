@@ -553,7 +553,11 @@ Settings → AI agents, every call logged (table `agent_log`, newest 1000). Per 
 grants rights on top of reading (bits in `accounts.agent_permissions`): mark, move and archive,
 trash, drafts. Changes go into the cache and its queue like the user's own; the app watches the log
 (`src-tauri/src/agent_changes.rs`), refreshes, uploads agent drafts and pushes the queue after the
-undo window. Never sending, never deleting for good.
+undo window. Never sending, never deleting for good. What the cache does not have yet (the whole of
+a large mail, an attachment's bytes) the MCP server asks the running app for (table
+`agent_requests`); the app fetches it with the account's lock, keeps it in the cache (attachment
+bytes in `agent_files`, a day) and answers, so the MCP server still has no credentials. Attachments
+reach the agent as a file in `agent-files` next to the database, and inline as text or picture.
 
 Elevant Mail offers the local mail store over the Model Context Protocol, so AI agents (Claude
 Code and other MCP clients) can search and read mail without their own IMAP access.

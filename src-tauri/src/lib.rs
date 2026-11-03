@@ -34,6 +34,7 @@ pub fn run() {
             window::create_main(app.handle(), !hidden)?;
             tray::init(app.handle());
             agent_changes::watch(app.handle());
+            agent_changes::serve_requests(app.handle());
             let state = app.state::<state::AppState>();
             for account in elevant_mail_core::accounts::list(&state.db.conn())? {
                 state.watchers.start(app.handle(), &account.id);
@@ -164,7 +165,10 @@ pub fn run_mcp() -> i32 {
         }
     };
     let stdin = std::io::stdin().lock();
-    match elevant_mail_mcp::serve(&db, stdin, std::io::stdout().lock()) {
+    // Attachments for agents, as files they read with their own tools; next to the cache.
+    let files_dir = path.with_file_name(AGENT_FILES);
+    let options = elevant_mail_mcp::Options::new(files_dir);
+    match elevant_mail_mcp::serve(&db, &options, stdin, std::io::stdout().lock()) {
         Ok(()) => 0,
         Err(error) => {
             tracing::error!(%error, "MCP connection failed");
@@ -172,6 +176,9 @@ pub fn run_mcp() -> i32 {
         }
     }
 }
+
+/// The folder next to the database where agents find the attachments they read.
+const AGENT_FILES: &str = "agent-files";
 
 /// tauri.conf.json's identifier: Tauri keeps the app's data in a folder of this name.
 const IDENTIFIER: &str = "dev.elevant.mail";

@@ -363,6 +363,22 @@ Content-Transfer-Encoding: base64\r\n\r\nJVBERi0=\r\n--b--\r\n";
     }
 
     #[test]
+    fn html_with_embedded_pictures_and_no_plain_part_still_has_its_text() {
+        let raw = b"From: a@example.org\r\nSubject: Newsletter\r\n\
+Content-Type: multipart/related; boundary=\"r\"\r\n\r\n\
+--r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+<html><body><img src=\"cid:logo@x\"><h1>Herbst</h1><p>Alle M\xc3\xa4ntel 20 % g\xc3\xbcnstiger.</p></body></html>\r\n\
+--r\r\nContent-Type: image/png\r\nContent-ID: <logo@x>\r\nContent-Disposition: inline\r\n\
+Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n";
+        let parsed = parse_message(raw);
+        let text = parsed.body_text.unwrap();
+        assert!(text.contains("Alle Mäntel 20 % günstiger."));
+        assert!(parsed.body_html.is_some());
+        assert_eq!(parsed.inline_images.len(), 1);
+        assert!(!parsed.has_attachments);
+    }
+
+    #[test]
     fn headers_only_leave_the_body_empty() {
         let raw = b"From: a@example.org\r\nSubject: Big\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n";
         let parsed = parse_headers(raw);
