@@ -3,6 +3,17 @@
 What changed in each version of Elevant Mail. The release workflow takes a version's section as
 the text of its GitHub release, so every version gets its entry before it is tagged.
 
+## Unreleased
+
+### New
+
+- **Agents read attachments.** `read_attachment` hands an attachment of a shared mail to an agent whole: text files as text, pictures as pictures, and every file written to a folder next to the mail cache, where the agent reads PDFs and office documents with its own tools. Program files are never handed out.
+
+### Fixed
+
+- **Agents read large mails in full.** Mails over 512 KB, typically HTML mails with embedded pictures, are cached with their start only until opened; agents got little more than that. Now the running app fetches the whole mail when an agent reads it and keeps its text in the cache, so the next read and the search have it too.
+- **HTML mails read as their text.** Where a mail's plain part only says to view the HTML, or is missing, agents get the text of the HTML instead.
+
 ## 0.6.0 – 2026-11-01
 
 Elevant Mail 0.6 brings your calendars and contacts next to your mail, keeps running in the tray, and lets AI agents work with the mail you share with them.

@@ -30,6 +30,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0022_contacts.sql"),
     include_str!("migrations/0023_carddav.sql"),
     include_str!("migrations/0024_agent_permissions.sql"),
+    include_str!("migrations/0025_agent_requests.sql"),
 ];
 
 /// Schema version after all migrations of this build have run.

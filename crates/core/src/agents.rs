@@ -385,6 +385,8 @@ pub struct MessageText {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AttachmentInfo {
+    /// For read_attachment.
+    pub id: String,
     pub name: String,
     pub mime_type: String,
     pub size: u64,
@@ -477,18 +479,20 @@ pub fn read_message(conn: &Connection, access: &Access, message_id: &str) -> Res
     };
     let opened = mailbox::get_message(conn, message_id, view)?.ok_or(Error::MessageNotFound)?;
     let message = opened.message;
+    let body_text = agent_text(conn, message_id, message.body_text.as_deref())?;
     let paths = folder_paths(conn)?;
     let addresses = |list: &[Address]| list.iter().map(address).collect();
     Ok(MessageText {
         to: addresses(&message.to),
         cc: addresses(&message.cc),
         reply_to: addresses(&message.reply_to),
-        body_text: message.body_text.unwrap_or_default(),
+        body_text,
         body_complete: message.body_complete,
         attachments: message
             .attachments
             .into_iter()
             .map(|a| AttachmentInfo {
+                id: a.id,
                 name: a.file_name,
                 mime_type: a.mime_type,
                 size: a.size,
@@ -496,6 +500,242 @@ pub fn read_message(conn: &Connection, access: &Access, message_id: &str) -> Res
             .collect(),
         info: info(message.summary, &paths),
     })
+}
+
+/// The text an agent reads. Many HTML mails carry a plain part that only says to open the HTML
+/// ("Your mail program cannot show this message"), or none at all: then the text comes from the
+/// HTML, without its images, so the agent reads what the user sees.
+fn agent_text(conn: &Connection, message_id: &str, plain: Option<&str>) -> Result<String> {
+    let plain = plain.map(str::trim).unwrap_or_default();
+    if plain.chars().filter(|c| !c.is_whitespace()).count() >= PLAIN_ENOUGH {
+        return Ok(plain.to_owned());
+    }
+    let html: Option<String> = conn
+        .query_row(
+            "SELECT body_html FROM messages WHERE id = ?1",
+            [message_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    let from_html = html
+        .map(|html| mail_parser::decoders::html::html_to_text(&html))
+        .map(|text| text.trim().to_owned())
+        .unwrap_or_default();
+    Ok(if from_html.len() > plain.len() {
+        from_html
+    } else {
+        plain.to_owned()
+    })
+}
+
+/// A plain part shorter than this is taken as a stand-in for the HTML (see [`agent_text`]).
+const PLAIN_ENOUGH: usize = 80;
+
+// ---- What agents need from the mail server ----
+//
+// The MCP server has no credentials and no network. When an agent reads a large mail whose body
+// is not cached yet, or an attachment, the server leaves a request; the running app fetches it
+// with the user's account, stores it in the cache and marks the request (src-tauri
+// agent_changes.rs). The MCP server waits for that, a while.
+
+/// Requests and fetched files are dropped after this long.
+const REQUEST_KEPT_MS: i64 = 24 * 60 * 60 * 1000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestKind {
+    /// The whole mail, as the reader loads it when opened.
+    Body,
+    /// The bytes of one attachment.
+    Attachment,
+}
+
+impl RequestKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Body => "body",
+            Self::Attachment => "attachment",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Request {
+    pub id: String,
+    pub kind: RequestKind,
+    pub message_id: String,
+    pub attachment_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequestState {
+    Open,
+    Done,
+    Failed(String),
+}
+
+/// Asks the app for something from the server; an open request for the same thing is reused.
+pub fn request(
+    conn: &Connection,
+    kind: RequestKind,
+    message_id: &str,
+    attachment_id: Option<&str>,
+) -> Result<String> {
+    let open: Option<String> = conn
+        .query_row(
+            "SELECT id FROM agent_requests
+             WHERE state = 'open' AND kind = ?1 AND message_id = ?2
+               AND attachment_id IS ?3",
+            params![kind.as_str(), message_id, attachment_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(id) = open {
+        return Ok(id);
+    }
+    let id = new_id();
+    conn.execute(
+        "INSERT INTO agent_requests (id, kind, message_id, attachment_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, kind.as_str(), message_id, attachment_id, now_millis()],
+    )?;
+    Ok(id)
+}
+
+pub fn request_state(conn: &Connection, id: &str) -> Result<RequestState> {
+    let row: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT state, error FROM agent_requests WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    Ok(match row {
+        Some((state, _)) if state == "done" => RequestState::Done,
+        Some((state, error)) if state == "failed" => {
+            RequestState::Failed(error.unwrap_or_default())
+        }
+        Some(_) => RequestState::Open,
+        None => RequestState::Failed("the request is gone".into()),
+    })
+}
+
+/// Open requests, oldest first, for the app to work through. Only those the agents may still
+/// read: if the user took an account back meanwhile, its requests fail.
+pub fn open_requests(conn: &Connection) -> Result<Vec<Request>> {
+    let access = Access::check(conn).ok();
+    let mut statement = conn.prepare(
+        "SELECT r.id, r.kind, r.message_id, r.attachment_id, m.account_id
+         FROM agent_requests r LEFT JOIN messages m ON m.id = r.message_id
+         WHERE r.state = 'open' ORDER BY r.created_at",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut open = Vec::new();
+    for (id, kind, message_id, attachment_id, account) in rows {
+        let allowed = account.is_some_and(|account| {
+            access
+                .as_ref()
+                .is_some_and(|access| access.allows(&account))
+        });
+        if !allowed {
+            finish_request(conn, &id, Err("not shared with agents".into()))?;
+            continue;
+        }
+        let kind = if kind == "body" {
+            RequestKind::Body
+        } else {
+            RequestKind::Attachment
+        };
+        open.push(Request {
+            id,
+            kind,
+            message_id,
+            attachment_id,
+        });
+    }
+    Ok(open)
+}
+
+pub fn finish_request(
+    conn: &Connection,
+    id: &str,
+    outcome: std::result::Result<(), String>,
+) -> Result<()> {
+    let (state, error) = match outcome {
+        Ok(()) => ("done", None),
+        Err(error) => ("failed", Some(error)),
+    };
+    conn.execute(
+        "UPDATE agent_requests SET state = ?2, error = ?3, done_at = ?4 WHERE id = ?1",
+        params![id, state, error, now_millis()],
+    )?;
+    Ok(())
+}
+
+/// Keeps the bytes of an attachment fetched for an agent.
+pub fn store_file(conn: &Connection, attachment_id: &str, data: &[u8]) -> Result<()> {
+    conn.execute(
+        "INSERT INTO agent_files (attachment_id, data, fetched_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT (attachment_id) DO UPDATE SET data = excluded.data,
+           fetched_at = excluded.fetched_at",
+        params![attachment_id, data, now_millis()],
+    )?;
+    Ok(())
+}
+
+pub fn stored_file(conn: &Connection, attachment_id: &str) -> Result<Option<Vec<u8>>> {
+    Ok(conn
+        .query_row(
+            "SELECT data FROM agent_files WHERE attachment_id = ?1",
+            [attachment_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// Drops requests and fetched files older than a day.
+pub fn forget_old(conn: &Connection) -> Result<()> {
+    let before = now_millis() - REQUEST_KEPT_MS;
+    conn.execute("DELETE FROM agent_requests WHERE created_at < ?1", [before])?;
+    conn.execute("DELETE FROM agent_files WHERE fetched_at < ?1", [before])?;
+    Ok(())
+}
+
+/// Whether the cached mail is all there, or only its start (large mails until opened).
+pub fn body_complete(conn: &Connection, access: &Access, message_id: &str) -> Result<bool> {
+    let account = mailbox::message_account(conn, message_id)?;
+    if !account.is_some_and(|account| access.allows(&account)) {
+        return Err(Error::MessageNotFound);
+    }
+    let state: String = conn.query_row(
+        "SELECT body_state FROM messages WHERE id = ?1",
+        [message_id],
+        |row| row.get(0),
+    )?;
+    Ok(state == "full")
+}
+
+/// An attachment of a message the agent may read.
+pub fn attachment(
+    conn: &Connection,
+    access: &Access,
+    message_id: &str,
+    attachment_id: &str,
+) -> Result<crate::model::Attachment> {
+    let source = crate::attachments::source(conn, attachment_id)?
+        .filter(|source| source.message_id == message_id && access.allows(&source.account_id))
+        .ok_or(Error::AttachmentNotFound)?;
+    Ok(source.attachment)
 }
 
 /// The subject of a message, for the log; none for one the agent may not read.
