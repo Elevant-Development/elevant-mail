@@ -1,5 +1,5 @@
 import { type Editor, useEditorState } from "@tiptap/react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 
 import { Icon, type IconName } from "@/components/common/Icon";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
-function ToolButton({
+export function ToolButton({
   label,
   icon,
   active = false,
@@ -95,8 +95,11 @@ function LinkButton({ editor, active }: { editor: Editor; active: boolean }) {
   );
 }
 
-/** Bold, italic, underline, lists, quote, link and plain text again. */
-export function EditorToolbar({ editor }: { editor: Editor }) {
+/**
+ * Bold, italic, underline, lists, quote, link and plain text again; `children` adds buttons of
+ * the place it is used, at the end (the composer's signature).
+ */
+export function EditorToolbar({ editor, children }: { editor: Editor; children?: ReactNode }) {
   const state = useEditorState({
     editor,
     selector: ({ editor }) => ({
@@ -162,6 +165,12 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         icon="removeFormat"
         onClick={() => run((c) => c.unsetAllMarks().clearNodes())}
       />
+      {children && (
+        <>
+          <span aria-hidden className="mx-1 h-4 w-px bg-border" />
+          {children}
+        </>
+      )}
     </div>
   );
 }

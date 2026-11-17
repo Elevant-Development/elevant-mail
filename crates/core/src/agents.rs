@@ -870,9 +870,21 @@ pub struct DraftRequest<'a> {
     pub reply_to: Option<&'a str>,
 }
 
+/// A draft an agent wrote: its key, and whether the account's signature went below the text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatedDraft {
+    pub key: String,
+    pub signed: bool,
+}
+
 /// A draft kept here like the user's own; the app puts it into the drafts folder, where the user
-/// finishes and sends it. Returns its key.
-pub fn create_draft(db: &Database, access: &Access, request: &DraftRequest<'_>) -> Result<String> {
+/// finishes and sends it. Gets the account's signature below the text where the user lets
+/// agents' drafts have it.
+pub fn create_draft(
+    db: &Database,
+    access: &Access,
+    request: &DraftRequest<'_>,
+) -> Result<CreatedDraft> {
     access.grants(request.account_id, Right::Drafts)?;
     let conn = db.conn();
     if let Some(source) = request.reply_to
@@ -881,6 +893,21 @@ pub fn create_draft(db: &Database, access: &Access, request: &DraftRequest<'_>) 
         return Err(Error::MessageNotFound);
     }
     let addresses = |list: &[String]| list.iter().filter_map(|a| parse_address(a)).collect();
+    let mut html = text_to_html(request.text);
+    let mut text = request.text.trim_end().to_owned();
+    let settings = crate::accounts::settings(&conn, request.account_id)?;
+    let signed = settings.signature_use.agent_drafts && !settings.signature.trim().is_empty();
+    if signed {
+        let (block, plain) = signature_block(&settings.signature, settings.signature_html);
+        html.push_str(&block);
+        if !plain.is_empty() {
+            text = if text.is_empty() {
+                plain
+            } else {
+                format!("{text}\n\n{plain}")
+            };
+        }
+    }
     let draft = Draft {
         key: format!("{DRAFT_PREFIX}{}", new_id()),
         mode: if request.reply_to.is_some() {
@@ -894,11 +921,29 @@ pub fn create_draft(db: &Database, access: &Access, request: &DraftRequest<'_>) 
         cc: addresses(request.cc),
         bcc: Vec::new(),
         subject: request.subject.trim().to_owned(),
-        html: text_to_html(request.text),
-        text: request.text.trim_end().to_owned(),
+        html,
+        text,
     };
     drafts::save(&conn, &draft)?;
-    Ok(draft.key)
+    Ok(CreatedDraft {
+        key: draft.key,
+        signed,
+    })
+}
+
+/// The signature as the composer holds it (`<div data-signature>`, see the frontend's
+/// signatureBlock), so the user's editor finds it and switching the sender swaps it; and its
+/// plain text for the mail's text version.
+fn signature_block(signature: &str, pasted: bool) -> (String, String) {
+    let block = if pasted {
+        format!("<div data-signature=\"\" data-signature-html=\"\">{signature}</div>")
+    } else {
+        format!("<div data-signature=\"\">{signature}</div>")
+    };
+    let plain = mail_parser::decoders::html::html_to_text(signature)
+        .trim()
+        .to_owned();
+    (block, plain)
 }
 
 /// "Name <address>" or a bare address.
@@ -1175,25 +1220,28 @@ mod tests {
             Err(Error::AgentNotAllowed("delete mail for good"))
         ));
 
-        let key = create_draft(
-            &db,
-            &access,
-            &DraftRequest {
-                account_id: "private",
-                to: &["Lena <lena@example.org>".to_owned(), "kein Mail".to_owned()],
-                subject: "Re: Termin",
-                text: "Passt.\n\nBis <bald> & tschüss",
-                reply_to: Some("private-mail"),
-                ..DraftRequest::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(drafts_to_upload(&db.conn()).unwrap(), [key.as_str()]);
-        let draft = drafts::list(&db.conn())
-            .unwrap()
-            .into_iter()
-            .find(|d| d.key == key)
-            .unwrap();
+        let request = DraftRequest {
+            account_id: "private",
+            to: &["Lena <lena@example.org>".to_owned(), "kein Mail".to_owned()],
+            subject: "Re: Termin",
+            text: "Passt.\n\nBis <bald> & tschüss",
+            reply_to: Some("private-mail"),
+            ..DraftRequest::default()
+        };
+        let draft_of = |key: &str| {
+            drafts::list(&db.conn())
+                .unwrap()
+                .into_iter()
+                .find(|d| d.key == key)
+                .unwrap()
+        };
+        let created = create_draft(&db, &access, &request).unwrap();
+        assert!(!created.signed, "the account has no signature");
+        assert_eq!(
+            drafts_to_upload(&db.conn()).unwrap(),
+            [created.key.as_str()]
+        );
+        let draft = draft_of(&created.key);
         assert_eq!(draft.to.len(), 1);
         assert_eq!(draft.to[0].name.as_deref(), Some("Lena"));
         assert_eq!(draft.mode, ComposeMode::Reply);
@@ -1201,6 +1249,38 @@ mod tests {
             draft.html,
             "<p>Passt.</p><p>Bis &lt;bald&gt; &amp; tschüss</p>"
         );
+
+        // The account's signature goes below the text, as the composer holds it.
+        crate::accounts::set_signature(&db.conn(), "private", "<p>Viele Grüße<br>Alex</p>", false)
+            .unwrap();
+        let created = create_draft(&db, &access, &request).unwrap();
+        assert!(created.signed);
+        let draft = draft_of(&created.key);
+        assert_eq!(
+            draft.html,
+            "<p>Passt.</p><p>Bis &lt;bald&gt; &amp; tschüss</p>\
+             <div data-signature=\"\"><p>Viele Grüße<br>Alex</p></div>"
+        );
+        assert!(
+            draft
+                .text
+                .starts_with("Passt.\n\nBis <bald> & tschüss\n\nViele Grüße")
+        );
+        assert!(draft.text.trim_end().ends_with("Alex"));
+
+        // Not where the user keeps agents' drafts without it.
+        crate::accounts::set_signature_use(
+            &db.conn(),
+            "private",
+            &crate::accounts::SignatureUse {
+                agent_drafts: false,
+                ..crate::accounts::SignatureUse::default()
+            },
+        )
+        .unwrap();
+        let created = create_draft(&db, &access, &request).unwrap();
+        assert!(!created.signed);
+        assert!(!draft_of(&created.key).html.contains("data-signature"));
 
         let before = last_change(&db.conn()).unwrap();
         log(

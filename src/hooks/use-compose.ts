@@ -8,6 +8,7 @@ import {
   replyQuote,
   replyRecipients,
   replySubject,
+  signsByItself,
   withSignature,
 } from "@/lib/compose";
 import { type Address, api, UNIFIED_INBOX } from "@/lib/tauri";
@@ -26,13 +27,18 @@ export function useCompose() {
   const { data: folders = [] } = useFolders();
   const openDraft = useUiStore((s) => s.openDraft);
 
-  /** The account's signature, from its settings, and whether it was pasted as HTML. */
-  const signatureOf = async (accountId: string) => {
+  /**
+   * The text to start with, with the account's signature where its settings put one into this
+   * kind of mail: above the quote, or below it.
+   */
+  const signed = async (accountId: string, mode: ComposeMode, html: string) => {
     const settings = await queryClient.fetchQuery({
       queryKey: ["account-settings", accountId],
       queryFn: () => api.getAccountSettings(accountId),
     });
-    return [settings.signature, settings.signatureHtml] as const;
+    const use = settings.signatureUse;
+    if (!signsByItself(use, mode)) return withSignature(html, "");
+    return withSignature(html, settings.signature, settings.signatureHtml, use.belowQuote);
   };
 
   /** A new mail, to `to` if given (e.g. from a contact). */
@@ -55,7 +61,7 @@ export function useCompose() {
       cc: [],
       bcc: [],
       subject: "",
-      html: withSignature("", ...(await signatureOf(accountId))),
+      html: await signed(accountId, "new", ""),
       text: "",
     });
   };
@@ -86,9 +92,10 @@ export function useCompose() {
       cc,
       bcc: [],
       subject: forward ? forwardSubject(message.subject) : replySubject(message.subject),
-      html: withSignature(
+      html: await signed(
+        message.accountId,
+        mode,
         forward ? forwardQuote(message) : replyQuote(message),
-        ...(await signatureOf(message.accountId)),
       ),
       // The composer fills it in from the editor.
       text: "",

@@ -296,10 +296,13 @@ impl Server<'_> {
                         text: args.get("text").and_then(Value::as_str).unwrap_or_default(),
                         reply_to: text_arg("reply_to_message_id"),
                     };
-                    agents::create_draft(db, &access, &request).map(|_| Done {
+                    agents::create_draft(db, &access, &request).map(|created| Done {
                         detail: subject.to_owned(),
                         results: 1,
-                        value: json!({ "saved": "The draft goes into the drafts folder; the user reviews and sends it." }),
+                        value: json!({
+                            "saved": "The draft goes into the drafts folder; the user reviews and sends it.",
+                            "signature_added": created.signed,
+                        }),
                         changed: vec![account_id.to_owned()],
                         untrusted: false,
                         blocks: Vec::new(),
@@ -726,7 +729,9 @@ fn tools() -> Value {
             "name": "create_draft",
             "description": "Writes a draft into an account's drafts folder; it is not sent. The \
                 user reviews and sends it. Needs the account's `drafts` permission. For a reply, \
-                give the message answered and a subject like \"Re: …\".",
+                give the message answered and a subject like \"Re: …\". Where the user set a \
+                signature for the account, it is put below the text (`signature_added` in the \
+                result); then end the text with the closing at most, no signature of your own.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
