@@ -3,6 +3,28 @@
 What changed in each version of Elevant Mail. The release workflow takes a version's section as
 the text of its GitHub release, so every version gets its entry before it is tagged.
 
+## 0.8.0 – 2026-11-17
+
+Elevant Mail 0.8 lets you choose when and where your signature goes, adds it with a button where it is missing, and puts it into the drafts AI agents write.
+
+### New
+
+- **Choose where the signature goes.** Per account, Settings → the account → Sending sets which mail gets the signature by itself: new mail, replies, forwards and drafts AI agents write. In replies and forwards it can go below the quote instead of above it.
+- **Insert signature.** A button in the composer's toolbar adds the account's signature where it is missing, say to a draft an agent wrote or a reply that left it out: below the line with the cursor, or, where you did not place one, below your text above the quote. A signature already in the mail moves there and is brought up to date.
+- **Signatures in agents' drafts.** Drafts written over MCP (`create_draft`) get the account's signature below their text, like mail written in the app; the tool's result says whether it was added.
+
+### Changed
+
+- **Moving accounts** to another computer takes these signature settings along; files from earlier versions keep the defaults.
+
+### Security
+
+- **Mail HTML is cleaned with ammonia 4.2.5**, which fixes a flaw where crafted MathML or SVG could change meaning after cleaning (RUSTSEC-2026-0533). Mail is shown sandboxed without scripts in any case; this closes the gap in the cleaning itself.
+
+### Updating
+
+Install over the previous version; your accounts and mail stay. Every account starts as before: the signature in new mail, replies and forwards, above the quote, and from now on in agents' drafts too. Drafts agents wrote before stay without it; "Insert signature" adds it.
+
 ## 0.7.0 – 2026-11-03
 
 Elevant Mail 0.7 lets AI agents read your shared mail in full: large HTML mails with their text, and attachments whole.
