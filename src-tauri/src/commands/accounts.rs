@@ -85,6 +85,20 @@ pub async fn set_signature(
     )?)
 }
 
+/// Which mail gets the signature by itself, and where.
+#[tauri::command]
+pub async fn set_signature_use(
+    state: State<'_, AppState>,
+    account_id: String,
+    rules: accounts::SignatureUse,
+) -> Result<(), CommandError> {
+    Ok(accounts::set_signature_use(
+        &state.db.conn(),
+        &account_id,
+        &rules,
+    )?)
+}
+
 /// The name mail goes out under; empty takes the one from Sent again.
 #[tauri::command]
 pub async fn set_sender_name(

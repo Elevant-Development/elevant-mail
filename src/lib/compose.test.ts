@@ -8,6 +8,8 @@ import {
   replyQuote,
   replyRecipients,
   replySubject,
+  signatureIndex,
+  signsByItself,
   withSignature,
 } from "./compose";
 
@@ -140,5 +142,46 @@ describe("signatures", () => {
       '<p></p><div data-signature=""><p>Alex</p></div><p></p><p>Am …</p>',
     );
     expect(withSignature("<p></p><p>Zitat</p>", "")).toBe("<p></p><p>Zitat</p>");
+  });
+
+  it("go below the quote at the end when set so", () => {
+    expect(withSignature("<p></p><p></p><p>Am …</p>", "<p>Alex</p>", false, true)).toBe(
+      '<p></p><p></p><p>Am …</p><p></p><div data-signature=""><p>Alex</p></div>',
+    );
+    // Without a quote it is the same as above.
+    expect(withSignature("", "<p>Alex</p>", false, true)).toBe(
+      '<p></p><div data-signature=""><p>Alex</p></div>',
+    );
+  });
+
+  it("come by themselves into the kinds of mail the settings name", () => {
+    const use = {
+      newMail: true,
+      replies: false,
+      forwards: true,
+      agentDrafts: false,
+      belowQuote: false,
+    };
+    expect(signsByItself(use, "new")).toBe(true);
+    expect(signsByItself(use, "reply")).toBe(false);
+    expect(signsByItself(use, "replyAll")).toBe(false);
+    expect(signsByItself(use, "forward")).toBe(true);
+  });
+
+  it("are inserted below the text written above the quote", () => {
+    const text = { empty: false, signature: false, quote: false };
+    const empty = { empty: true, signature: false, quote: false };
+    const quote = { empty: false, signature: false, quote: true };
+    const signature = { empty: false, signature: true, quote: false };
+    // A draft an agent wrote: below its last line, before trailing empty ones.
+    expect(signatureIndex([text, empty, text, empty])).toBe(3);
+    // A reply: above the attribution line, below what was written.
+    expect(signatureIndex([text, text, empty, empty, quote, quote])).toBe(2);
+    expect(signatureIndex([text, text, empty, empty, quote, quote], true)).toBe(6);
+    // Nothing written yet: below the first, empty line.
+    expect(signatureIndex([empty, empty, quote])).toBe(1);
+    expect(signatureIndex([])).toBe(0);
+    // A signature there is no text to go below.
+    expect(signatureIndex([text, signature, empty])).toBe(1);
   });
 });

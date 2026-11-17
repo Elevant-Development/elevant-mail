@@ -10,10 +10,11 @@ import { Icon } from "@/components/common/Icon";
 import { Notice } from "@/components/common/Notice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { describeError } from "@/lib/errors";
 import { formatServer } from "@/lib/formatting";
-import { t } from "@/lib/i18n";
-import { type Account, type AccountSettings, api } from "@/lib/tauri";
+import { type MessageKey, t } from "@/lib/i18n";
+import { type Account, type AccountSettings, api, type SignatureUse } from "@/lib/tauri";
 import { useChangeSmtp, useSetSenderName } from "@/queries/accounts";
 
 function errorText(error: unknown): string {
@@ -256,6 +257,71 @@ function SignatureEditor({ account, settings }: { account: Account; settings: Ac
   );
 }
 
+const signatureCases: { key: Exclude<keyof SignatureUse, "belowQuote">; label: MessageKey }[] = [
+  { key: "newMail", label: "settings.account.signatureUse.newMail" },
+  { key: "replies", label: "settings.account.signatureUse.replies" },
+  { key: "forwards", label: "settings.account.signatureUse.forwards" },
+  { key: "agentDrafts", label: "settings.account.signatureUse.agentDrafts" },
+];
+
+/**
+ * Which mail gets the signature by itself, and in replies and forwards on which side of the
+ * quote. Saved with each change.
+ */
+function SignatureRules({ account, settings }: { account: Account; settings: AccountSettings }) {
+  const queryClient = useQueryClient();
+  const [rules, setRules] = useState(settings.signatureUse);
+  const [failed, setFailed] = useState<unknown>(null);
+
+  const change = (next: SignatureUse) => {
+    const before = rules;
+    setRules(next);
+    setFailed(null);
+    api
+      .setSignatureUse(account.id, next)
+      .then(() => queryClient.invalidateQueries({ queryKey: ["account-settings", account.id] }))
+      .catch((error: unknown) => {
+        setRules(before);
+        setFailed(error);
+      });
+  };
+
+  return (
+    <div className="grid gap-3 rounded-lg border p-3">
+      <div className="grid gap-2">
+        <h3 className="text-xs font-medium text-muted-foreground">
+          {t("settings.account.signatureUse")}
+        </h3>
+        <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+          {signatureCases.map(({ key, label }) => (
+            <label key={key} className="flex items-center justify-between gap-3 text-sm">
+              {t(label)}
+              <Switch
+                checked={rules[key]}
+                onCheckedChange={(on) => change({ ...rules, [key]: on })}
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+      <Segmented
+        label={t("settings.account.signaturePlacement")}
+        value={rules.belowQuote ? "below" : "above"}
+        options={[
+          { value: "above", label: t("settings.account.signaturePlacement.above") },
+          { value: "below", label: t("settings.account.signaturePlacement.below") },
+        ]}
+        onChange={(value) => change({ ...rules, belowQuote: value === "below" })}
+      />
+      {failed ? (
+        <Notice tone="error" text={errorText(failed)} />
+      ) : (
+        <p className="text-xs text-muted-foreground">{t("settings.account.signatureUseHint")}</p>
+      )}
+    </div>
+  );
+}
+
 /** Settings for writing mail: the sender's name, the signature and the outgoing server. */
 export function SendingSettings({
   account,
@@ -268,6 +334,7 @@ export function SendingSettings({
     <div className="grid gap-4">
       <SenderName account={account} settings={settings} />
       <SignatureEditor account={account} settings={settings} />
+      <SignatureRules account={account} settings={settings} />
       <div className="grid gap-1.5">
         <p className="text-sm font-medium">{t("settings.account.smtp")}</p>
         <OutgoingServer account={account} settings={settings} />

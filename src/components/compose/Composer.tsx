@@ -2,13 +2,13 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import { Placeholder } from "@tiptap/extensions";
 import StarterKit from "@tiptap/starter-kit";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type KeyboardEvent, useEffect, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/common/Icon";
 import { IconButton } from "@/components/common/IconButton";
 import { Notice } from "@/components/common/Notice";
 import { Button } from "@/components/ui/button";
-import { documentText, signatureBlock } from "@/lib/compose";
+import { type BlockInfo, documentText, signatureBlock, signatureIndex } from "@/lib/compose";
 import { formatSize } from "@/lib/formatting";
 import { describeError, type UserError } from "@/lib/errors";
 import { locale, t } from "@/lib/i18n";
@@ -19,7 +19,7 @@ import { type Draft, useUiStore } from "@/stores/ui";
 import { useUndoStore } from "@/stores/undo";
 
 import { AddressField } from "./AddressField";
-import { EditorToolbar } from "./EditorToolbar";
+import { EditorToolbar, ToolButton } from "./EditorToolbar";
 import { HtmlSignature, Signature } from "./signature";
 
 interface ComposerProps {
@@ -52,6 +52,8 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
   });
   const [attaching, setAttaching] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // The user put the cursor somewhere (click or key), not just the autofocus at the start.
+  const placed = useRef(false);
 
   /** Saves the draft first: files hang on it in the backend. */
   const attach = async (how: (key: string) => Promise<unknown>) => {
@@ -108,6 +110,16 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
         "aria-label": t("compose.body"),
         "aria-multiline": "true",
       },
+      handleDOMEvents: {
+        mousedown: () => {
+          placed.current = true;
+          return false;
+        },
+        keydown: () => {
+          placed.current = true;
+          return false;
+        },
+      },
     },
     onCreate: ({ editor }) => update({ text: documentText(editor.getJSON()) }),
     onUpdate: ({ editor }) =>
@@ -163,6 +175,69 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
     const block = signatureBlock(signature, signatureHtml);
     if (block) editor.chain().insertContentAt(range, block).run();
     else editor.chain().deleteRange(range).run();
+  };
+
+  /**
+   * The account's signature into this mail, also where its settings leave it out: below the
+   * line with the cursor, or where the user did not place one, below the text written above the
+   * quote. One there already moves (and is brought up to date).
+   */
+  const insertSignature = async () => {
+    if (!editor) return;
+    const accountId = useUiStore.getState().drafts[draft.key]?.accountId ?? draft.accountId;
+    const { signature, signatureHtml, signatureUse } = await queryClient.fetchQuery({
+      queryKey: ["account-settings", accountId],
+      queryFn: () => api.getAccountSettings(accountId),
+    });
+    const block = signatureBlock(signature, signatureHtml);
+    if (!block) {
+      setError({
+        message: t("compose.noSignature"),
+        action: t("compose.noSignatureAction"),
+        kind: null,
+      });
+      return;
+    }
+    setError(null);
+
+    const { doc, selection } = editor.state;
+    const isSignature = (name: string) => name === "signature" || name === "htmlSignature";
+    const blocks: BlockInfo[] = [];
+    const starts: number[] = [];
+    doc.forEach((node, offset, index) => {
+      const next = index + 1 < doc.childCount ? doc.child(index + 1) : null;
+      const text = node.textContent.trim();
+      starts.push(offset);
+      blocks.push({
+        signature: isSignature(node.type.name),
+        empty: !isSignature(node.type.name) && text === "",
+        quote:
+          node.type.name === "blockquote" ||
+          (next?.type.name === "blockquote" && text.endsWith(":")) ||
+          text.startsWith(t("compose.forwarded")),
+      });
+    });
+    const at = (index: number) => starts[index] ?? doc.content.size;
+
+    // Before which top-level block it goes: below the cursor's, in place of a signature there.
+    const cursor = selection.$from.index(0);
+    const atCursor = blocks[cursor]?.signature ? cursor : cursor + 1;
+    const target = placed.current ? atCursor : signatureIndex(blocks, signatureUse.belowQuote);
+    const existing = blocks.findIndex((b) => b.signature);
+    if (existing < 0) {
+      editor.chain().insertContentAt(at(target), block).run();
+      return;
+    }
+    const from = at(existing);
+    const to = from + doc.child(existing).nodeSize;
+    // Right there already: brought up to date in place.
+    if (target === existing || target === existing + 1) {
+      editor.chain().insertContentAt({ from, to }, block).run();
+      return;
+    }
+    // Moved: what follows the removed block moves up by its size.
+    const position = target > existing ? at(target) - (to - from) : at(target);
+    editor.chain().deleteRange({ from, to }).insertContentAt(position, block).run();
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -272,7 +347,15 @@ function DraftEditor({ draft, className, onBack }: ComposerProps & { draft: Draf
         </div>
       </div>
 
-      {editor && <EditorToolbar editor={editor} />}
+      {editor && (
+        <EditorToolbar editor={editor}>
+          <ToolButton
+            label={t("compose.insertSignature")}
+            icon="signature"
+            onClick={() => void insertSignature()}
+          />
+        </EditorToolbar>
+      )}
       <div
         className="min-h-0 flex-1 cursor-text overflow-y-auto px-5 py-4"
         onMouseDown={(event) => {

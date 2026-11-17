@@ -22,6 +22,7 @@ import type {
   Message,
   MessageSummary,
   MoveOutcome,
+  SignatureUse,
   SuggestedSettings,
 } from "./tauri";
 import { language, locale } from "./i18n";
@@ -140,6 +141,15 @@ const mockAgents = {
   ] as AgentLogEntry[],
 };
 
+/** As the backend sets up a new account: everything gets the signature, above the quote. */
+const defaultSignatureUse: SignatureUse = {
+  newMail: true,
+  replies: true,
+  forwards: true,
+  agentDrafts: true,
+  belowQuote: false,
+};
+
 const accountSettings: Record<string, AccountSettings> = {
   "acc-private": {
     signIn: "password",
@@ -148,6 +158,7 @@ const accountSettings: Record<string, AccountSettings> = {
     senderName: "Alex Berger",
     signature: L("<p>Viele Grüße<br>Alex</p>", "<p>Best,<br>Alex</p>"),
     signatureHtml: false,
+    signatureUse: { ...defaultSignatureUse },
     keepDays: 90,
   },
   "acc-work": {
@@ -170,6 +181,7 @@ const accountSettings: Record<string, AccountSettings> = {
       "<p>Kind regards<br>Alex Berger<br>Project lead</p>",
     ),
     signatureHtml: false,
+    signatureUse: { ...defaultSignatureUse },
     keepDays: 365,
   },
 };
@@ -1231,6 +1243,7 @@ export const mockBackend: Backend = {
       senderName: "",
       signature: "",
       signatureHtml: false,
+      signatureUse: { ...defaultSignatureUse },
       keepDays: 90,
     };
     folders = [
@@ -1249,6 +1262,7 @@ export const mockBackend: Backend = {
       senderName: "",
       signature: "",
       signatureHtml: false,
+      signatureUse: { ...defaultSignatureUse },
       keepDays: 90,
     };
     return added;
@@ -1315,6 +1329,11 @@ export const mockBackend: Backend = {
       : html;
     const signature = cleaned === "<p></p>" ? "" : cleaned;
     accountSettings[accountId] = { ...current, signature, signatureHtml: pasted && !!signature };
+  },
+  setSignatureUse: async (accountId, rules) => {
+    const current = accountSettings[accountId];
+    if (!current) throw { kind: "notFound", hint: null };
+    accountSettings[accountId] = { ...current, signatureUse: rules };
   },
   setSenderName: async (accountId, name) => {
     const current = accountSettings[accountId];

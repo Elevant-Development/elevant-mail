@@ -65,8 +65,39 @@ pub struct AccountSettings {
     pub signature: String,
     /// Pasted as HTML and cleaned ([`set_signature`]): shown as it is, not edited in the editor.
     pub signature_html: bool,
+    /// Which mail gets the signature by itself, and where ([`set_signature_use`]).
+    pub signature_use: SignatureUse,
     /// How many days back the cache keeps mail; `None` keeps everything ([`set_keep_days`]).
     pub keep_days: Option<u32>,
+}
+
+/// Which mail gets the account's signature by itself, and where it goes in replies and
+/// forwards. A mail without it can still get it from the composer's toolbar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SignatureUse {
+    pub new_mail: bool,
+    /// Replies, to the sender and to all.
+    pub replies: bool,
+    pub forwards: bool,
+    /// Drafts AI agents write over MCP: below their text.
+    pub agent_drafts: bool,
+    /// In replies and forwards below the quote, at the very end; otherwise above it, right below
+    /// the line to write on.
+    pub below_quote: bool,
+}
+
+impl Default for SignatureUse {
+    fn default() -> Self {
+        Self {
+            new_mail: true,
+            replies: true,
+            forwards: true,
+            agent_drafts: true,
+            below_quote: false,
+        }
+    }
 }
 
 /// What changes without a login.
@@ -335,7 +366,8 @@ pub fn settings(conn: &Connection, account_id: &str) -> Result<AccountSettings> 
         .query_row(
             "SELECT imap_host, imap_port, imap_security, imap_username, auth_method, keep_days,
                email_address, smtp_host, smtp_port, smtp_security, smtp_username, sender_name,
-               signature, signature_html
+               signature, signature_html, signature_new, signature_replies, signature_forwards,
+               signature_agents, signature_below_quote
              FROM accounts WHERE id = ?1",
             [account_id],
             |row| {
@@ -373,6 +405,13 @@ pub fn settings(conn: &Connection, account_id: &str) -> Result<AccountSettings> 
                     sender_name: row.get::<_, Option<String>>(11)?.unwrap_or_default(),
                     signature: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
                     signature_html: row.get(13)?,
+                    signature_use: SignatureUse {
+                        new_mail: row.get(14)?,
+                        replies: row.get(15)?,
+                        forwards: row.get(16)?,
+                        agent_drafts: row.get(17)?,
+                        below_quote: row.get(18)?,
+                    },
                     keep_days: row.get(5)?,
                 };
                 Ok((settings, email))
@@ -470,6 +509,27 @@ pub fn set_signature(conn: &Connection, account_id: &str, html: &str, pasted: bo
     let updated = conn.execute(
         "UPDATE accounts SET signature = ?2, signature_html = ?3 WHERE id = ?1",
         params![account_id, (!empty).then_some(html), pasted && !empty],
+    )?;
+    if updated == 0 {
+        return Err(Error::AccountNotFound);
+    }
+    Ok(())
+}
+
+/// Which mail gets the signature by itself, and where.
+pub fn set_signature_use(conn: &Connection, account_id: &str, rules: &SignatureUse) -> Result<()> {
+    let updated = conn.execute(
+        "UPDATE accounts SET signature_new = ?2, signature_replies = ?3, signature_forwards = ?4,
+           signature_agents = ?5, signature_below_quote = ?6
+         WHERE id = ?1",
+        params![
+            account_id,
+            rules.new_mail,
+            rules.replies,
+            rules.forwards,
+            rules.agent_drafts,
+            rules.below_quote
+        ],
     )?;
     if updated == 0 {
         return Err(Error::AccountNotFound);
@@ -914,6 +974,7 @@ mod tests {
                 sender_name: String::new(),
                 signature: String::new(),
                 signature_html: false,
+                signature_use: SignatureUse::default(),
                 keep_days: Some(90),
             }
         );
@@ -959,6 +1020,25 @@ mod tests {
         let saved = settings(&db.conn(), &password.id).unwrap();
         assert!(saved.signature_html);
         assert!(saved.signature.contains("<td>Alex</td>"));
+
+        // Which mail gets it by itself, and where.
+        let rules = SignatureUse {
+            new_mail: true,
+            replies: false,
+            forwards: true,
+            agent_drafts: false,
+            below_quote: true,
+        };
+        set_signature_use(&db.conn(), &password.id, &rules).unwrap();
+        assert_eq!(
+            settings(&db.conn(), &password.id).unwrap().signature_use,
+            rules
+        );
+        assert!(matches!(
+            set_signature_use(&db.conn(), "missing", &rules),
+            Err(Error::AccountNotFound)
+        ));
+
         set_keep_days(&db.conn(), &password.id, None).unwrap();
         assert_eq!(settings(&db.conn(), &password.id).unwrap().keep_days, None);
         set_keep_days(&db.conn(), &password.id, Some(0)).unwrap();

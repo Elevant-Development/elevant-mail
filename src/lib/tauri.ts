@@ -43,6 +43,7 @@ import type { MessageSummary } from "./bindings/MessageSummary";
 import type { MoveOutcome } from "./bindings/MoveOutcome";
 import type { NewAccount } from "./bindings/NewAccount";
 import type { OutgoingMail } from "./bindings/OutgoingMail";
+import type { SignatureUse } from "./bindings/SignatureUse";
 import type { SmtpSettings } from "./bindings/SmtpSettings";
 import type { SuggestedSettings } from "./bindings/SuggestedSettings";
 import type { SyncProgress } from "./bindings/SyncProgress";
@@ -81,6 +82,7 @@ export type { NewMail } from "./bindings/NewMail";
 export type { Provider } from "./bindings/Provider";
 export type { Security } from "./bindings/Security";
 export type { SignInMethod } from "./bindings/SignInMethod";
+export type { SignatureUse } from "./bindings/SignatureUse";
 export type { SuggestedSettings } from "./bindings/SuggestedSettings";
 export type { SuggestionSource } from "./bindings/SuggestionSource";
 export type { SyncProgress } from "./bindings/SyncProgress";
@@ -173,6 +175,8 @@ export interface Backend {
    * the like. Empty removes it.
    */
   setSignature(accountId: string, html: string, pasted: boolean): Promise<void>;
+  /** Which mail gets the signature by itself, and where in replies and forwards. */
+  setSignatureUse(accountId: string, rules: SignatureUse): Promise<void>;
   /**
    * Hands the mail to the account's outgoing server; resolves once the server took it. The
    * draft it was written in (`draftKey`) goes. Filing in Sent follows
@@ -438,6 +442,7 @@ const tauriBackend: Backend = {
   changeSmtp: (accountId, smtp, password) => invoke("change_smtp", { accountId, smtp, password }),
   setSenderName: (accountId, name) => invoke("set_sender_name", { accountId, name }),
   setSignature: (accountId, html, pasted) => invoke("set_signature", { accountId, html, pasted }),
+  setSignatureUse: (accountId, rules) => invoke("set_signature_use", { accountId, rules }),
   sendMessage: (mail, draftKey) => invoke("send_message", { mail, draftKey }),
   answerInvitation: (answer) => invoke("answer_invitation", { answer }),
   listCalendars: () => invoke("list_calendars"),

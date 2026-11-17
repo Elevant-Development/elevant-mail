@@ -13,7 +13,7 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::accounts::{self, NewAccount, SignInMethod};
+use crate::accounts::{self, NewAccount, SignInMethod, SignatureUse};
 use crate::db::Database;
 use crate::ids::now_millis;
 use crate::mail::settings::{ImapSettings, SmtpSettings};
@@ -47,6 +47,9 @@ struct ExportedAccount {
     sender_name: String,
     signature: String,
     signature_html: bool,
+    /// Files from before 0.8 have none: everything on, as it was then.
+    #[serde(default)]
+    signature_use: SignatureUse,
     keep_days: Option<u32>,
     in_unified_inbox: bool,
 }
@@ -139,6 +142,7 @@ pub fn export(
             sender_name: stored_sender.unwrap_or_default(),
             signature: settings.signature,
             signature_html: settings.signature_html,
+            signature_use: settings.signature_use,
             keep_days: settings.keep_days,
             in_unified_inbox: account.in_unified_inbox,
         });
@@ -288,6 +292,7 @@ impl Import {
             &exported.signature,
             exported.signature_html,
         )?;
+        accounts::set_signature_use(&conn, &account.id, &exported.signature_use)?;
         if let Some(password) = self
             .access
             .get(&account.email_address.to_lowercase())
@@ -392,6 +397,12 @@ mod tests {
             (Database::open_in_memory().unwrap(), MemoryStore::default());
         let account = add(&laptop, &laptop_secrets, "alex@example.org");
         accounts::set_signature(&laptop.conn(), &account.id, "<p>Alex</p>", false).unwrap();
+        let rules = SignatureUse {
+            agent_drafts: false,
+            below_quote: true,
+            ..SignatureUse::default()
+        };
+        accounts::set_signature_use(&laptop.conn(), &account.id, &rules).unwrap();
         accounts::set_sender_name(&laptop.conn(), &account.id, "Alex Berger").unwrap();
         accounts::set_in_unified_inbox(&laptop.conn(), &account.id, false).unwrap();
         crate::image_senders::allow(&laptop.conn(), "shop@example.net").unwrap();
@@ -433,6 +444,7 @@ mod tests {
         import.apply(&pc, &pc_secrets, &added).unwrap();
         let settings = accounts::settings(&pc.conn(), &added.id).unwrap();
         assert_eq!(settings.signature, "<p>Alex</p>");
+        assert_eq!(settings.signature_use, rules);
         assert_eq!(settings.sender_name, "Alex Berger");
         assert!(!accounts::list(&pc.conn()).unwrap()[0].in_unified_inbox);
         assert_eq!(

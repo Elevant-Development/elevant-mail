@@ -34,7 +34,9 @@ contacts beside it.
   them later or on your phone
 - **Attachments** with the paperclip or by dragging files onto the mail; forwarding takes the
   original's files along
-- **Signatures** per account, written in the app or pasted as HTML with logo and table
+- **Signatures** per account, written in the app or pasted as HTML with logo and table; you
+  choose which mail gets one by itself and whether it goes above or below the quote, and a button
+  in the composer adds it where it is missing
 - **New mail right away** (IMAP IDLE) with a desktop notification, with or without sender and
   subject
 - **Conversations:** replies sit with the mail they answer, your own replies from Sent included.

@@ -6,7 +6,7 @@ import type { JSONContent } from "@tiptap/react";
 
 import { displayName, formatFullDate } from "./formatting";
 import { locale, t } from "./i18n";
-import type { Address, Message } from "./tauri";
+import type { Address, ComposeMode, Message, SignatureUse } from "./tauri";
 
 export type { ComposeMode } from "./tauri";
 
@@ -193,11 +193,57 @@ export function signatureBlock(signature: string, pasted = false): string {
     : `<div data-signature="">${signature}</div>`;
 }
 
-/** The signature right below the line to write on: in a reply above the quote. */
-export function withSignature(html: string, signature: string, pasted = false): string {
+/** Whether a mail of this kind gets the account's signature by itself. */
+export function signsByItself(use: SignatureUse, mode: ComposeMode): boolean {
+  switch (mode) {
+    case "new":
+      return use.newMail;
+    case "forward":
+      return use.forwards;
+    default:
+      return use.replies;
+  }
+}
+
+/**
+ * The signature right below the line to write on: in a reply or forward above the quote, or
+ * with `belowQuote` at the very end, below it.
+ */
+export function withSignature(
+  html: string,
+  signature: string,
+  pasted = false,
+  belowQuote = false,
+): string {
   const block = signatureBlock(signature, pasted);
   if (!block) return html || "<p></p>";
-  return html.startsWith("<p></p>")
-    ? `<p></p>${block}${html.slice("<p></p>".length)}`
-    : `<p></p>${block}${html}`;
+  const rest = html.startsWith("<p></p>") ? html.slice("<p></p>".length) : html;
+  if (belowQuote && rest) return `<p></p>${rest}<p></p>${block}`;
+  return `<p></p>${block}${rest}`;
+}
+
+/** What the composer needs to know of a top-level block to place a signature. */
+export interface BlockInfo {
+  /** Holds no text (an empty line). */
+  empty: boolean;
+  /** A signature block already. */
+  signature: boolean;
+  /** Where a quote begins: a quoted block, or the line before it ("On … Lena wrote:"). */
+  quote: boolean;
+}
+
+/**
+ * Where "Insert signature" puts it when the cursor was not placed: right after the last line
+ * written above the quote (or above the end, without one). Counted in top-level blocks: the
+ * signature goes before the block with this index. A mail with nothing written gets it below
+ * the first, empty line, so there is still one to write on.
+ */
+export function signatureIndex(blocks: BlockInfo[], belowQuote = false): number {
+  const firstQuote = blocks.findIndex((block) => block.quote);
+  const end = belowQuote || firstQuote < 0 ? blocks.length : firstQuote;
+  for (let index = end - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block && !block.empty && !block.signature) return index + 1;
+  }
+  return Math.min(1, blocks.length);
 }
