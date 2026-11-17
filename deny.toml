@@ -6,6 +6,13 @@ version = 2
 # Vulnerabilities fail everywhere. "Unmaintained" only for our direct dependencies: the ones
 # deep in Tauri's and the keyring's trees (gtk-rs macros, zbus) are theirs to replace.
 unmaintained = "workspace"
+# chrono and chrono-tz were declared unmaintained in November 2026, with no version that fixes
+# it. The calendar builds on them, calcard too. Moving to jiff is a change of its own; until then
+# they stay, as they work as before.
+ignore = [
+  { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, no upgrade; moving to jiff separately" },
+  { id = "RUSTSEC-2026-0555", reason = "chrono-tz: unmaintained, no upgrade; calcard needs it too" },
+]
 
 [licenses]
 version = 2
