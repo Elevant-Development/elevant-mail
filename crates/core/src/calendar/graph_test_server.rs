@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use jiff::{Span, Timestamp, civil};
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -119,40 +120,33 @@ fn in_utc(event: &mut Value) {
         ) else {
             continue;
         };
-        let Ok(zone) = zone.parse::<chrono_tz::Tz>() else {
+        let Some(zone) = super::zone_named(&zone) else {
             continue;
         };
-        let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S") else {
+        let Ok(wall) = text.parse::<civil::DateTime>() else {
             continue;
         };
-        use chrono::TimeZone;
-        let Some(local) = zone.from_local_datetime(&naive).earliest() else {
+        let Ok(local) = zone.to_ambiguous_zoned(wall).earlier() else {
             continue;
         };
         event[key] = json!({
-            "dateTime": local.naive_utc().format("%Y-%m-%dT%H:%M:%S.0000000").to_string(),
+            "dateTime": local.timestamp().strftime("%Y-%m-%dT%H:%M:%S.0000000").to_string(),
             "timeZone": "UTC",
         });
         if key == "start" {
-            event["originalStartTimeZone"] = json!(zone.name());
+            event["originalStartTimeZone"] = json!(super::zone_name(&zone));
         }
     }
 }
 
 /// A UTC time as Graph writes it in `dateTime`.
-fn graph_time(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f")
-        .ok()
-        .map(|naive| naive.and_utc())
+fn graph_time(text: &str) -> Option<Timestamp> {
+    let wall = text.parse::<civil::DateTime>().ok()?;
+    Some(wall.to_zoned(jiff::tz::TimeZone::UTC).ok()?.timestamp())
 }
 
 /// The original starts of a series' dates in `from..to`, in its own zone's local time.
-fn series_dates(
-    master: &Value,
-    from: chrono::DateTime<chrono::Utc>,
-    to: chrono::DateTime<chrono::Utc>,
-) -> Vec<chrono::DateTime<chrono::Utc>> {
-    use chrono::TimeZone;
+fn series_dates(master: &Value, from: Timestamp, to: Timestamp) -> Vec<Timestamp> {
     let zone = super::graph::zone_of(master["originalStartTimeZone"].as_str());
     let Some(first) = master["start"]["dateTime"].as_str().and_then(graph_time) else {
         return Vec::new();
@@ -164,12 +158,14 @@ fn series_dates(
         Some("weekly") => 7 * interval,
         _ => return Vec::new(),
     };
-    let local = first.with_timezone(&zone).naive_local();
+    let local = first.to_zoned(zone.clone()).datetime();
     (0..1000)
         .filter_map(|n| {
-            zone.from_local_datetime(&(local + chrono::Duration::days(n * step)))
-                .earliest()
-                .map(|date| date.with_timezone(&chrono::Utc))
+            let wall = local.checked_add(Span::new().days(n * step)).ok()?;
+            zone.to_ambiguous_zoned(wall)
+                .earlier()
+                .ok()
+                .map(|date| date.timestamp())
         })
         .take_while(|date| *date < to)
         .filter(|date| *date >= from)
@@ -177,29 +173,25 @@ fn series_dates(
 }
 
 /// The series and original start an `OID.<series>.<date>` id names.
-fn occurrence_of(store: &Store, id: &str) -> Option<(String, chrono::DateTime<chrono::Utc>)> {
+fn occurrence_of(store: &Store, id: &str) -> Option<(String, Timestamp)> {
     let (series, date) = id.strip_prefix("OID.")?.rsplit_once('.')?;
     let master = &store.events.get(series)?.1;
-    let start = series_dates(
-        master,
-        chrono::DateTime::<chrono::Utc>::MIN_UTC,
-        chrono::DateTime::<chrono::Utc>::MAX_UTC,
-    )
-    .into_iter()
-    .find(|start| start.format("%Y-%m-%d").to_string() == date)?;
+    let start = series_dates(master, Timestamp::MIN, Timestamp::MAX)
+        .into_iter()
+        .find(|start| start.strftime("%Y-%m-%d").to_string() == date)?;
     Some((series.to_owned(), start))
 }
 
 /// The series and original start of a changed date, by its id.
-fn exception_of(store: &Store, id: &str) -> Option<(String, chrono::DateTime<chrono::Utc>)> {
+fn exception_of(store: &Store, id: &str) -> Option<(String, Timestamp)> {
     store.events.iter().find_map(|(series, (_, master))| {
         master["exceptionOccurrences"]
             .as_array()?
             .iter()
             .find(|exception| exception["id"] == id)
             .and_then(|exception| exception["originalStart"].as_str())
-            .and_then(|start| chrono::DateTime::parse_from_rfc3339(start).ok())
-            .map(|start| (series.clone(), start.with_timezone(&chrono::Utc)))
+            .and_then(|start| start.parse::<Timestamp>().ok())
+            .map(|start| (series.clone(), start))
     })
 }
 
@@ -376,11 +368,7 @@ fn handle(request: &Request, shared: &Mutex<Store>, port: u16) -> (&'static str,
             let Some((_, master)) = store.events.get(*id) else {
                 return ("404 Not Found", None);
             };
-            let bound = |name| {
-                query(path, name)
-                    .and_then(|text| chrono::DateTime::parse_from_rfc3339(&text).ok())
-                    .map(|time| time.with_timezone(&chrono::Utc))
-            };
+            let bound = |name| query(path, name).and_then(|text| text.parse::<Timestamp>().ok());
             let (Some(from), Some(to)) = (bound("startDateTime"), bound("endDateTime")) else {
                 return ("400 Bad Request", None);
             };
@@ -395,14 +383,14 @@ fn handle(request: &Request, shared: &Mutex<Store>, port: u16) -> (&'static str,
             let value: Vec<Value> = series_dates(master, from, to)
                 .into_iter()
                 .filter_map(|start| {
-                    let date = start.format("%Y-%m-%d").to_string();
+                    let date = start.strftime("%Y-%m-%d").to_string();
                     if cancelled
                         .iter()
                         .any(|oid| oid.as_str().is_some_and(|oid| oid.ends_with(&date)))
                     {
                         return None;
                     }
-                    let original = start.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+                    let original = start.strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
                     let id = exceptions
                         .iter()
                         .find(|exception| exception["originalStart"] == original)
@@ -422,7 +410,7 @@ fn handle(request: &Request, shared: &Mutex<Store>, port: u16) -> (&'static str,
                 return ("404 Not Found", None);
             };
             let (calendar, mut master) = store.events[&series].clone();
-            let original = start.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            let original = start.strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
             let mut exceptions = master["exceptionOccurrences"]
                 .as_array()
                 .cloned()
@@ -433,7 +421,7 @@ fn handle(request: &Request, shared: &Mutex<Store>, port: u16) -> (&'static str,
             let mut exception = match at {
                 Some(at) => exceptions.remove(at),
                 None => json!({
-                    "id": format!("exc-{series}-{}", start.format("%Y%m%d")),
+                    "id": format!("exc-{series}-{}", start.strftime("%Y%m%d")),
                     "subject": master["subject"],
                     "start": master["start"],
                     "end": master["end"],
@@ -463,7 +451,7 @@ fn handle(request: &Request, shared: &Mutex<Store>, port: u16) -> (&'static str,
                 return ("404 Not Found", None);
             };
             let (calendar, mut master) = store.events[&series].clone();
-            let original = start.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            let original = start.strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
             if let Some(exceptions) = master["exceptionOccurrences"].as_array_mut() {
                 exceptions.retain(|exception| exception["originalStart"] != original);
             }
@@ -471,7 +459,10 @@ fn handle(request: &Request, shared: &Mutex<Store>, port: u16) -> (&'static str,
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
-            cancelled.push(json!(format!("OID.{series}.{}", start.format("%Y-%m-%d"))));
+            cancelled.push(json!(format!(
+                "OID.{series}.{}",
+                start.strftime("%Y-%m-%d")
+            )));
             master["cancelledOccurrences"] = json!(cancelled);
             store.put(&calendar, master);
             ("204 No Content", None)

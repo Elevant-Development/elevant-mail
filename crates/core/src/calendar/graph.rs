@@ -11,7 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use calcard::icalendar::{ICalendar, ICalendarProperty};
-use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, Timestamp, civil};
 use reqwest::{Method, StatusCode};
 use rustls::ClientConfig;
 use rustls_platform_verifier::BuilderVerifierExt;
@@ -430,12 +431,15 @@ impl Graph {
     /// moved or not; `None` when the series has no such date (any more).
     pub async fn instance_id(&self, series_id: &str, instance: i64) -> Result<Option<String>> {
         // A changed date is looked for where it may have moved to.
-        let reach = chrono::Duration::days(31);
-        let at = DateTime::<Utc>::from_timestamp_millis(instance).ok_or(Error::InvalidEventTime)?;
+        let reach = SignedDuration::from_hours(31 * 24);
+        let at = Timestamp::from_millisecond(instance).map_err(|_| Error::InvalidEventTime)?;
+        let (Ok(from), Ok(to)) = (at.checked_sub(reach), at.checked_add(reach)) else {
+            return Err(Error::InvalidEventTime);
+        };
         let mut url = self.url(&format!("me/events/{series_id}/instances"))?;
         url.query_pairs_mut()
-            .append_pair("startDateTime", &(at - reach).to_rfc3339())
-            .append_pair("endDateTime", &(at + reach).to_rfc3339())
+            .append_pair("startDateTime", &from.to_string())
+            .append_pair("endDateTime", &to.to_string())
             .append_pair("$select", "id,originalStart")
             .append_pair("$top", "100");
         let dates: Vec<Instance> = match self.pages(url).await {
@@ -446,8 +450,8 @@ impl Graph {
         Ok(dates
             .into_iter()
             .filter_map(|date| {
-                let start = DateTime::parse_from_rfc3339(date.original_start.as_deref()?).ok()?;
-                let off = (start.timestamp_millis() - instance).abs();
+                let start = date.original_start.as_deref()?.parse::<Timestamp>().ok()?;
+                let off = (start.as_millisecond() - instance).abs();
                 (off <= 14 * 3_600_000).then_some((off, date.id))
             })
             .min_by_key(|(off, _)| *off)
@@ -468,51 +472,44 @@ impl Graph {
 }
 
 /// The zone an event was made in: IANA or Windows names; the system's when unknown.
-pub(crate) fn zone_of(name: Option<&str>) -> chrono_tz::Tz {
+pub(crate) fn zone_of(name: Option<&str>) -> TimeZone {
     let resolved = name
         .and_then(|name| name.parse::<calcard::common::timezone::Tz>().ok())
         .and_then(|tz| match tz {
-            calcard::common::timezone::Tz::Tz(zone) => Some(zone),
+            calcard::common::timezone::Tz::Tz(zone) => super::zone_named(zone.name()),
             _ => None,
         });
-    resolved
-        .or_else(|| {
-            super::local_time_zone_name().and_then(|name| name.parse::<chrono_tz::Tz>().ok())
-        })
-        .unwrap_or(chrono_tz::UTC)
+    resolved.or_else(super::local_zone).unwrap_or(TimeZone::UTC)
 }
 
 /// Graph's `2026-11-03T09:00:00.0000000` (asked for in UTC).
-fn utc_of(when: &When) -> Option<DateTime<Utc>> {
+fn utc_of(when: &When) -> Option<Timestamp> {
     let text = when.date_time.trim_end_matches('Z');
-    let naive = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f").ok()?;
-    Some(Utc.from_utc_datetime(&naive))
+    let time = text.parse::<civil::DateTime>().ok()?;
+    Some(time.to_zoned(TimeZone::UTC).ok()?.timestamp())
 }
 
-fn utc_of_text(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|time| time.with_timezone(&Utc))
-        .or_else(|| {
-            utc_of(&When {
-                date_time: text.to_owned(),
-            })
+fn utc_of_text(text: &str) -> Option<Timestamp> {
+    text.parse::<Timestamp>().ok().or_else(|| {
+        utc_of(&When {
+            date_time: text.to_owned(),
         })
+    })
 }
 
-fn local(time: DateTime<Utc>, zone: chrono_tz::Tz) -> NaiveDateTime {
-    zone.from_utc_datetime(&time.naive_utc()).naive_local()
+fn local(time: Timestamp, zone: &TimeZone) -> civil::DateTime {
+    time.to_zoned(zone.clone()).datetime()
 }
 
 /// `DTSTART` and the like: a date for all-day events, else the local time in the event's zone.
-fn time_property(name: &str, time: DateTime<Utc>, all_day: bool, zone: chrono_tz::Tz) -> String {
+fn time_property(name: &str, time: Timestamp, all_day: bool, zone: &TimeZone) -> String {
     if all_day {
-        format!("{name};VALUE=DATE:{}", local(time, zone).format("%Y%m%d"))
+        format!("{name};VALUE=DATE:{}", local(time, zone).strftime("%Y%m%d"))
     } else {
         format!(
             "{name};TZID={}:{}",
-            zone.name(),
-            local(time, zone).format("%Y%m%dT%H%M%S")
+            super::zone_name(zone),
+            local(time, zone).strftime("%Y%m%dT%H%M%S")
         )
     }
 }
@@ -538,8 +535,8 @@ fn weekday_code(day: &str) -> Option<&'static str> {
 fn rrule(
     recurrence: &PatternedRecurrence,
     all_day: bool,
-    start: NaiveDateTime,
-    zone: chrono_tz::Tz,
+    start: civil::DateTime,
+    zone: &TimeZone,
 ) -> Option<String> {
     let pattern = &recurrence.pattern;
     let days = || {
@@ -572,7 +569,7 @@ fn rrule(
             "FREQ=MONTHLY;BYMONTHDAY={}",
             pattern
                 .day_of_month
-                .unwrap_or(start.date().format("%d").to_string().parse().ok()?)
+                .unwrap_or(u32::try_from(start.day()).ok()?)
         ),
         "relativeMonthly" => format!("FREQ=MONTHLY;BYDAY={};BYSETPOS={position}", days()),
         "absoluteYearly" => format!(
@@ -593,16 +590,17 @@ fn rrule(
     match range.kind.as_str() {
         "numbered" => parts.push(format!("COUNT={}", range.number_of_occurrences?)),
         "endDate" => {
-            let last = NaiveDate::parse_from_str(range.end_date.as_deref()?, "%Y-%m-%d").ok()?;
+            let last = range.end_date.as_deref()?.parse::<civil::Date>().ok()?;
             if all_day {
-                parts.push(format!("UNTIL={}", last.format("%Y%m%d")));
+                parts.push(format!("UNTIL={}", last.strftime("%Y%m%d")));
             } else {
                 // The end of that day where the event takes place.
                 let end = zone
-                    .from_local_datetime(&last.and_hms_opt(23, 59, 59)?)
-                    .earliest()?
-                    .with_timezone(&Utc);
-                parts.push(format!("UNTIL={}", end.format("%Y%m%dT%H%M%SZ")));
+                    .to_ambiguous_zoned(last.at(23, 59, 59, 0))
+                    .earlier()
+                    .ok()?
+                    .timestamp();
+                parts.push(format!("UNTIL={}", end.strftime("%Y%m%dT%H%M%SZ")));
             }
         }
         _ => {}
@@ -632,8 +630,8 @@ fn cn(name: Option<&str>) -> String {
 fn event_lines(
     event: &GraphEvent,
     uid: &str,
-    zone: chrono_tz::Tz,
-    master: Option<(bool, chrono_tz::Tz)>,
+    zone: &TimeZone,
+    master: Option<(bool, &TimeZone)>,
 ) -> Option<Vec<String>> {
     let all_day = event.is_all_day;
     let start = utc_of(event.start.as_ref()?)?;
@@ -641,7 +639,7 @@ fn event_lines(
     let mut lines = vec![
         "BEGIN:VEVENT".to_owned(),
         format!("UID:{}", ical::escape(uid)),
-        format!("DTSTAMP:{}", Utc::now().format("%Y%m%dT%H%M%SZ")),
+        format!("DTSTAMP:{}", Timestamp::now().strftime("%Y%m%dT%H%M%SZ")),
     ];
     if let Some((master_all_day, master_zone)) = master {
         // Which date of the series this one replaces.
@@ -720,18 +718,18 @@ fn event_lines(
             let Some(date) = cancelled
                 .rsplit('.')
                 .next()
-                .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+                .and_then(|date| date.parse::<civil::Date>().ok())
             else {
                 continue;
             };
             if all_day {
-                lines.push(format!("EXDATE;VALUE=DATE:{}", date.format("%Y%m%d")));
+                lines.push(format!("EXDATE;VALUE=DATE:{}", date.strftime("%Y%m%d")));
             } else {
-                let at = date.and_time(local(start, zone).time());
+                let at = date.to_datetime(local(start, zone).time());
                 lines.push(format!(
                     "EXDATE;TZID={}:{}",
-                    zone.name(),
-                    at.format("%Y%m%dT%H%M%S")
+                    super::zone_name(zone),
+                    at.strftime("%Y%m%dT%H%M%S")
                 ));
             }
         }
@@ -749,7 +747,7 @@ pub(crate) fn to_ical(event: &GraphEvent) -> Option<String> {
         "VERSION:2.0".to_owned(),
         format!("PRODID:{PRODUCT_ID}"),
     ];
-    lines.extend(event_lines(event, uid, zone, None)?);
+    lines.extend(event_lines(event, uid, &zone, None)?);
     for exception in &event.exception_occurrences {
         if exception.is_cancelled {
             continue;
@@ -757,12 +755,12 @@ pub(crate) fn to_ical(event: &GraphEvent) -> Option<String> {
         let exception_zone = exception
             .original_start_time_zone
             .as_deref()
-            .map_or(zone, |name| zone_of(Some(name)));
+            .map_or_else(|| zone.clone(), |name| zone_of(Some(name)));
         if let Some(more) = event_lines(
             exception,
             uid,
-            exception_zone,
-            Some((event.is_all_day, zone)),
+            &exception_zone,
+            Some((event.is_all_day, &zone)),
         ) {
             lines.extend(more);
         }
@@ -816,17 +814,17 @@ pub(crate) fn to_graph(
     let event = &calendar.components[index];
     let dates = ical::first_dates(&calendar, index)?;
     let zone = zone_name
-        .and_then(|name| name.parse::<chrono_tz::Tz>().ok())
-        .unwrap_or(chrono_tz::UTC);
+        .and_then(super::zone_named)
+        .unwrap_or(TimeZone::UTC);
     let when = |millis: i64| -> Option<Value> {
-        let utc = DateTime::<Utc>::from_timestamp_millis(millis)?;
+        let utc = Timestamp::from_millisecond(millis).ok()?;
         let text = if dates.all_day {
             // All-day dates are midnight UTC (see `Occurrence`): midnight of that day there.
-            utc.naive_utc().format("%Y-%m-%dT00:00:00").to_string()
+            utc.strftime("%Y-%m-%dT00:00:00").to_string()
         } else {
-            local(utc, zone).format("%Y-%m-%dT%H:%M:%S").to_string()
+            local(utc, &zone).strftime("%Y-%m-%dT%H:%M:%S").to_string()
         };
-        Some(json!({ "dateTime": text, "timeZone": zone.name() }))
+        Some(json!({ "dateTime": text, "timeZone": super::zone_name(&zone) }))
     };
     let text = |property: &ICalendarProperty| ical::text(event, property).unwrap_or_default();
     let mut body = json!({
@@ -875,16 +873,15 @@ pub(crate) fn to_graph(
     match ical::recurrence(event) {
         None => body["recurrence"] = Value::Null,
         Some(rule) => {
-            let start = DateTime::<Utc>::from_timestamp_millis(dates.start)?;
+            let start = Timestamp::from_millisecond(dates.start).ok()?;
             let first = if dates.all_day {
-                start.naive_utc().date()
+                start.to_zoned(TimeZone::UTC).date()
             } else {
-                local(start, zone).date()
+                local(start, &zone).date()
             };
             let day_name = |day: u8| WEEKDAYS.get(usize::from(day)).map(|(name, _)| *name);
-            let start_weekday = day_name(
-                u8::try_from(first.format("%u").to_string().parse::<u32>().ok()? - 1).ok()?,
-            )?;
+            let start_weekday =
+                day_name(u8::try_from(first.weekday().to_monday_zero_offset()).ok()?)?;
             let pattern = match (rule.frequency, rule.weekdays.is_empty()) {
                 (Frequency::Daily, true) => json!({ "type": "daily" }),
                 (Frequency::Weekly, _) => {
@@ -899,12 +896,12 @@ pub(crate) fn to_graph(
                     json!({ "type": "weekly", "daysOfWeek": days, "firstDayOfWeek": "monday" })
                 }
                 (Frequency::Monthly, true) => {
-                    json!({ "type": "absoluteMonthly", "dayOfMonth": first.format("%-d").to_string().parse::<u32>().ok()? })
+                    json!({ "type": "absoluteMonthly", "dayOfMonth": first.day() })
                 }
                 (Frequency::Yearly, true) => json!({
                     "type": "absoluteYearly",
-                    "dayOfMonth": first.format("%-d").to_string().parse::<u32>().ok()?,
-                    "month": first.format("%-m").to_string().parse::<u32>().ok()?,
+                    "dayOfMonth": first.day(),
+                    "month": first.month(),
                 }),
                 // Kept as it is on the server.
                 _ => return Some(body),
@@ -918,11 +915,11 @@ pub(crate) fn to_graph(
                     "numberOfOccurrences": count,
                 }),
                 (None, Some(until)) => {
-                    let last = DateTime::<Utc>::from_timestamp_millis(until)?;
+                    let last = Timestamp::from_millisecond(until).ok()?;
                     json!({
                         "type": "endDate",
                         "startDate": first.to_string(),
-                        "endDate": local(last, zone).date().to_string(),
+                        "endDate": local(last, &zone).date().to_string(),
                     })
                 }
                 (None, None) => json!({ "type": "noEnd", "startDate": first.to_string() }),

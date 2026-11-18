@@ -1002,8 +1002,8 @@ fn info(message: MessageSummary, paths: &HashMap<String, String>) -> MessageInfo
     MessageInfo {
         folder: paths.get(&message.folder_id).cloned().unwrap_or_default(),
         from: address(&message.from),
-        date: chrono::DateTime::from_timestamp_millis(message.date_sent)
-            .map(|date| date.to_rfc3339())
+        date: jiff::Timestamp::from_millisecond(message.date_sent)
+            .map(|date| date.to_string())
             .unwrap_or_default(),
         subject: message.subject.unwrap_or_default(),
         snippet: message.snippet,

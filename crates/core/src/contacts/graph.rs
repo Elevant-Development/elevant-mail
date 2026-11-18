@@ -5,7 +5,7 @@
 //! is one postal address each for home, work and other. A birthday without a year is kept with
 //! the year 1604, as Outlook does.
 
-use chrono::Utc;
+use jiff::Timestamp;
 use reqwest::Method;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -227,7 +227,7 @@ pub(crate) fn to_vcard(contact: &GraphContact) -> String {
     fields.full_name = Some(text(contact.display_name.as_ref()))
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| fields.display_name());
-    let revision = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let revision = Timestamp::now().strftime("%Y%m%dT%H%M%SZ").to_string();
     vcard::new_card(&contact.id, &fields, &revision)
 }
 

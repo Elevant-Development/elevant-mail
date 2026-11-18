@@ -6,7 +6,8 @@
 //! the sync has sent them; the calendar on this computer (`local`) has no server.
 
 use calcard::icalendar::{ICalendar, ICalendarComponentType, ICalendarProperty};
-use chrono::{DateTime, TimeZone, Utc};
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -386,7 +387,7 @@ pub fn due_reminders(conn: &Connection, from: i64, to: i64) -> Result<Vec<Remind
         params![from - REMINDER_LEAD_MS, to + REMINDER_LEAD_MS],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
     )?;
-    let zone = super::local_time_zone_name().and_then(|name| name.parse::<chrono_tz::Tz>().ok());
+    let zone = super::local_zone();
     let mut due = Vec::new();
     for row in rows {
         let (event_id, ics) = row?;
@@ -397,15 +398,17 @@ pub fn due_reminders(conn: &Connection, from: i64, to: i64) -> Result<Vec<Remind
         {
             // An all-day date starts at midnight where the user is.
             let local_start = if dates.all_day {
-                DateTime::<Utc>::from_timestamp_millis(dates.start)
+                Timestamp::from_millisecond(dates.start)
+                    .ok()
                     .and_then(|utc| {
-                        let midnight = utc.naive_utc();
-                        match zone {
+                        let midnight = utc.to_zoned(TimeZone::UTC).datetime();
+                        match &zone {
                             Some(zone) => zone
-                                .from_local_datetime(&midnight)
-                                .earliest()
-                                .map(|local| local.timestamp_millis()),
-                            None => Some(midnight.and_utc().timestamp_millis()),
+                                .to_ambiguous_zoned(midnight)
+                                .earlier()
+                                .ok()
+                                .map(|local| local.timestamp().as_millisecond()),
+                            None => Some(dates.start),
                         }
                     })
                     .unwrap_or(dates.start)
@@ -475,7 +478,7 @@ pub(crate) fn save_event_in(
         input.end = (input.end - input.end.rem_euclid(DAY_MS)).max(input.start + DAY_MS);
     }
     let remote = writable(conn, &input.calendar_id)?;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let existing: Option<(String, String, String, Option<String>)> = match &input.id {
         Some(id) => Some(
@@ -534,7 +537,7 @@ pub(crate) fn save_event_in(
         None => new_calendar(&new_id(), &input, people.as_ref(), time_zone, now, 0)?,
     };
     let columns = columns_of(&ics).ok_or(Error::InvalidEventTime)?;
-    let now = now.timestamp_millis();
+    let now = now.as_millisecond();
     match existing {
         Some((_, _, old_calendar, Some(_))) if old_calendar != input.calendar_id => {
             // Moved out of a calendar on a server: deleted there, and new in the other one.
@@ -663,7 +666,7 @@ pub(crate) fn store_own(
 ) -> Result<String> {
     let columns = columns_of(ics).ok_or(Error::InvalidEventTime)?;
     let remote = writable(conn, calendar_id)?;
-    let now = Utc::now().timestamp_millis();
+    let now = crate::ids::now_millis();
     match existing {
         Some(id) => {
             let on_server: bool = conn.query_row(
@@ -715,7 +718,7 @@ pub(crate) fn store_remote(
     let Some(columns) = columns_of(ics) else {
         return Ok(());
     };
-    let now = Utc::now().timestamp_millis();
+    let now = crate::ids::now_millis();
     let existing: Option<String> = conn
         .query_row(
             "SELECT id FROM events WHERE calendar_id = ?1 AND (remote_id = ?2 OR uid = ?3)",
@@ -788,7 +791,7 @@ pub fn delete_event_at(conn: &Connection, event_id: &str, instance: Option<i64>)
     if remote_id.is_some() {
         conn.execute(
             "UPDATE events SET pending = 'delete', changed_at = ?2 WHERE id = ?1",
-            params![event_id, Utc::now().timestamp_millis()],
+            params![event_id, crate::ids::now_millis()],
         )?;
     } else {
         conn.execute("DELETE FROM events WHERE id = ?1", [event_id])?;
@@ -825,7 +828,7 @@ fn mark_instance(
             columns.all_day,
             columns.start,
             columns.end,
-            Utc::now().timestamp_millis(),
+            crate::ids::now_millis(),
             pending,
         ],
     )?;
@@ -865,7 +868,7 @@ fn with_instance(
     input: &EventInput,
     instance: i64,
     time_zone: Option<&str>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<String> {
     let mut calendar = ICalendar::parse(ics).map_err(|_| Error::EventNotFound)?;
     let series = master(&calendar).ok_or(Error::EventNotFound)?;
@@ -887,7 +890,7 @@ fn with_instance(
             .write_to(&mut people)
             .map_err(|_| Error::InvalidEventTime)?;
     }
-    let stamp = now.format("%Y%m%dT%H%M%SZ");
+    let stamp = now.strftime("%Y%m%dT%H%M%SZ");
     let mut lines = vec![
         "BEGIN:VEVENT".to_owned(),
         format!("UID:{}", ical::escape(uid)),
@@ -951,18 +954,17 @@ fn without_instance(ics: &str, instance: i64) -> Result<String> {
 
 /// `DTSTART`/`DTEND` (or a date for all-day events): in the time zone by name, else in UTC.
 fn time_line(name: &str, millis: i64, all_day: bool, time_zone: Option<&str>) -> String {
-    let utc = DateTime::<Utc>::from_timestamp_millis(millis).unwrap_or_default();
+    let utc = Timestamp::from_millisecond(millis).unwrap_or_default();
     if all_day {
-        return format!("{name};VALUE=DATE:{}", utc.format("%Y%m%d"));
+        return format!("{name};VALUE=DATE:{}", utc.strftime("%Y%m%d"));
     }
-    match time_zone.and_then(|zone| zone.parse::<chrono_tz::Tz>().ok()) {
+    match time_zone.and_then(super::zone_named) {
         Some(zone) => format!(
             "{name};TZID={}:{}",
-            zone.name(),
-            zone.from_utc_datetime(&utc.naive_utc())
-                .format("%Y%m%dT%H%M%S")
+            super::zone_name(&zone),
+            utc.to_zoned(zone.clone()).strftime("%Y%m%dT%H%M%S")
         ),
-        None => format!("{name}:{}", utc.format("%Y%m%dT%H%M%SZ")),
+        None => format!("{name}:{}", utc.strftime("%Y%m%dT%H%M%SZ")),
     }
 }
 
@@ -972,10 +974,10 @@ fn new_calendar(
     input: &EventInput,
     people: Option<&People<'_>>,
     time_zone: Option<&str>,
-    now: DateTime<Utc>,
+    now: Timestamp,
     sequence: i64,
 ) -> Result<String> {
-    let stamp = now.format("%Y%m%dT%H%M%SZ");
+    let stamp = now.strftime("%Y%m%dT%H%M%SZ");
     let mut lines = vec![
         "BEGIN:VCALENDAR".to_owned(),
         "VERSION:2.0".to_owned(),
@@ -1041,7 +1043,7 @@ fn changed_calendar(
     input: &EventInput,
     people: Option<&People<'_>>,
     time_zone: Option<&str>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<String> {
     let mut calendar = ICalendar::parse(ics).map_err(|_| Error::EventNotFound)?;
     let index = master(&calendar).ok_or(Error::EventNotFound)?;

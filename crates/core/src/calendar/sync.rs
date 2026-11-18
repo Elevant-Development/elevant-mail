@@ -1349,10 +1349,11 @@ SUMMARY:Planung\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
                     .find(|(_, event)| event["subject"] == "Mittagessen")
                     .unwrap();
                 // Sent in the system's zone, whichever it is (UTC on the CI machines).
-                let zone = crate::calendar::local_time_zone_name()
-                    .and_then(|name| name.parse::<chrono_tz::Tz>().ok())
-                    .unwrap_or(chrono_tz::UTC);
-                assert_eq!(lunch.1["originalStartTimeZone"], zone.name());
+                let zone = crate::calendar::local_zone().unwrap_or(jiff::tz::TimeZone::UTC);
+                assert_eq!(
+                    lunch.1["originalStartTimeZone"],
+                    crate::calendar::zone_name(&zone)
+                );
                 // The test server keeps the start in UTC, as Graph hands it out.
                 assert_eq!(lunch.1["start"]["dateTime"], "2026-11-03T12:00:00.0000000");
             }

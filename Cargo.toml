@@ -15,16 +15,15 @@ base64 = "0.23"
 # iCalendar: invitations and calendars, with time zones (Windows names too) and recurrences.
 calcard = { version = "0.3", default-features = false }
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
-# Already built for async-imap; dates for IMAP SEARCH.
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-chrono-tz = "0.10"
 async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
 elevant-mail-core = { path = "crates/core" }
 elevant-mail-mcp = { path = "crates/mcp" }
 futures = "0.3"
 hickory-resolver = "0.26"
-# The system's time zone by name, for times an invitation gives without one. Already in chrono.
+# The system's time zone by name, for times an invitation gives without one.
 iana-time-zone = "0.1"
+# Dates, times and time zones (IANA database, bundled on Windows): calendar, IMAP SEARCH, stamps.
+jiff = "0.2"
 keyring = "4.2"
 # SMTP (phase 4) with the same TLS as IMAP: rustls on ring, the platform verifier, no hostname in EHLO.
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "rustls-platform-verifier"] }

@@ -499,7 +499,7 @@ fn record(conn: &Connection, account_id: &str, parsed: &Parsed, answer: Answer) 
             parsed.recurrence_id,
             answer.as_str(),
             parsed.sequence,
-            chrono::Utc::now().timestamp_millis(),
+            crate::ids::now_millis(),
         ],
     )?;
     Ok(())
