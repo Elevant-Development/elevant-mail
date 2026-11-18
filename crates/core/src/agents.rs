@@ -1497,7 +1497,10 @@ mod tests {
         assert_eq!(draft.to[0].address, "lena@example.org");
         assert_eq!(draft.mode, ComposeMode::Reply);
         // The app puts the new version in place of the copy on the server.
-        assert_eq!(drafts_to_upload(&db.conn()).unwrap(), [created.key.as_str()]);
+        assert_eq!(
+            drafts_to_upload(&db.conn()).unwrap(),
+            [created.key.as_str()]
+        );
         uploaded(&created.key);
 
         // By its copy in the drafts folder, as list_messages shows it.
