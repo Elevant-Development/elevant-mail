@@ -390,6 +390,9 @@ pub struct AttachmentInfo {
     pub name: String,
     pub mime_type: String,
     pub size: u64,
+    /// A picture shown in the text (pasted, or a logo), not a file attached to the mail.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub embedded: bool,
 }
 
 pub fn list_accounts(access: &Access) -> Vec<AccountInfo> {
@@ -482,6 +485,8 @@ pub fn read_message(conn: &Connection, access: &Access, message_id: &str) -> Res
     let body_text = agent_text(conn, message_id, message.body_text.as_deref())?;
     let paths = folder_paths(conn)?;
     let addresses = |list: &[Address]| list.iter().map(address).collect();
+    // Pictures in the text go along: the user sees a pasted photo as part of the mail.
+    let embedded = crate::attachments::embedded(conn, message_id)?;
     Ok(MessageText {
         to: addresses(&message.to),
         cc: addresses(&message.cc),
@@ -491,11 +496,14 @@ pub fn read_message(conn: &Connection, access: &Access, message_id: &str) -> Res
         attachments: message
             .attachments
             .into_iter()
-            .map(|a| AttachmentInfo {
+            .map(|a| (a, false))
+            .chain(embedded.into_iter().map(|a| (a, true)))
+            .map(|(a, embedded)| AttachmentInfo {
                 id: a.id,
                 name: a.file_name,
                 mime_type: a.mime_type,
                 size: a.size,
+                embedded,
             })
             .collect(),
         info: info(message.summary, &paths),
@@ -701,6 +709,15 @@ pub fn stored_file(conn: &Connection, attachment_id: &str) -> Result<Option<Vec<
             |row| row.get(0),
         )
         .optional()?)
+}
+
+/// The bytes of an attachment without asking the server: fetched for an agent before, or a
+/// picture in the text kept with the body.
+pub fn cached_file(conn: &Connection, attachment_id: &str) -> Result<Option<Vec<u8>>> {
+    match stored_file(conn, attachment_id)? {
+        Some(data) => Ok(Some(data)),
+        None => crate::attachments::cached(conn, attachment_id),
+    }
 }
 
 /// Drops requests and fetched files older than a day.

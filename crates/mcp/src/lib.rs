@@ -378,7 +378,8 @@ impl Server<'_> {
         attachment_id: &str,
     ) -> Result<Result<Done, String>, Error> {
         let attachment = agents::attachment(&self.db.conn(), access, message_id, attachment_id)?;
-        let mut data = agents::stored_file(&self.db.conn(), attachment_id)?;
+        // A picture in the text is mostly kept with the body; the rest the app fetches.
+        let mut data = agents::cached_file(&self.db.conn(), attachment_id)?;
         if data.is_none() {
             let request = agents::request(
                 &self.db.conn(),
@@ -647,8 +648,9 @@ fn tools() -> Value {
             "name": "read_message",
             "description": "One message with its recipients, its whole text (for HTML mails the \
                 text of the HTML, without pictures) and its attachments with their ids for \
-                read_attachment. A large mail not cached in full yet is fetched first, which takes \
-                a moment; Elevant Mail must be running for that.",
+                read_attachment. Pictures shown in the text, such as a pasted photo or a logo, \
+                are listed there too, marked `embedded`. A large mail not cached in full yet is \
+                fetched first, which takes a moment; Elevant Mail must be running for that.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -660,10 +662,11 @@ fn tools() -> Value {
         },
         {
             "name": "read_attachment",
-            "description": "One attachment of a message, whole: written to a file whose `path` \
-                you can read with your own tools (PDF, office documents, pictures …), and right \
-                away as text for text files or as a picture. Fetched from the mail server the \
-                first time, which takes a moment; Elevant Mail must be running for that.",
+            "description": "One attachment of a message, or a picture shown in its text, whole: \
+                written to a file whose `path` you can read with your own tools (PDF, office \
+                documents, pictures …), and right away as text for text files or as a picture. \
+                Fetched from the mail server the first time, which takes a moment; Elevant Mail \
+                must be running for that.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1125,6 +1128,83 @@ mod tests {
             )],
         );
         assert_eq!(wrong[0]["result"]["isError"], true);
+        let _ = std::fs::remove_dir_all(&options.files_dir);
+    }
+
+    #[test]
+    fn pictures_in_the_text_are_listed_and_read_like_attachments() {
+        let db = Database::open_in_memory().unwrap();
+        seed(&db);
+        share(&db);
+        let png = [137_u8, 80, 78, 71, 13, 10, 26, 10];
+        db.conn()
+            .execute(
+                "INSERT INTO attachments (id, message_id, part_id, filename, mime_type, size_bytes,
+                   content_id, is_inline, data)
+                 VALUES ('pasted', 'mail', '2', 'IMG_3892.png', 'image/png', 8, 'p@x', 1, ?1),
+                        ('screenshot', 'mail', '3', NULL, 'image/png', 3145728, 's@x', 1, NULL)",
+                [&png[..]],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "UPDATE messages SET body_state = 'full' WHERE id = 'mail'",
+                [],
+            )
+            .unwrap();
+
+        // A pasted photo shows in the mail as a picture: listed, marked as such.
+        let replies = exchange(
+            &db,
+            &[call(1, "read_message", json!({ "message_id": "mail" }))],
+        );
+        let message: Value =
+            serde_json::from_str(text(&replies[0]).trim_start_matches(UNTRUSTED).trim()).unwrap();
+        let listed = message["attachments"].as_array().unwrap();
+        assert_eq!(listed.len(), 2, "{listed:?}");
+        assert_eq!(listed[0]["id"], "pasted");
+        assert_eq!(listed[0]["name"], "IMG_3892.png");
+        assert_eq!(listed[0]["embedded"], true);
+
+        // Kept with the body: read at once, without asking the app (which is not running here).
+        let options = options();
+        let picture = exchange_with(
+            &db,
+            &options,
+            &[call(
+                2,
+                "read_attachment",
+                json!({ "message_id": "mail", "attachment_id": "pasted" }),
+            )],
+        );
+        let content = picture[0]["result"]["content"].as_array().unwrap();
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["data"], "iVBORw0KGgo=");
+
+        // Too large to keep with the body: the app fetches it like an attachment.
+        let options = Options {
+            wait: Duration::from_secs(5),
+            ..options
+        };
+        let large = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                app_answers(&db, |db, request| {
+                    assert_eq!(request.attachment_id.as_deref(), Some("screenshot"));
+                    agents::store_file(&db.conn(), "screenshot", &png).unwrap();
+                });
+            });
+            exchange_with(
+                &db,
+                &options,
+                &[call(
+                    3,
+                    "read_attachment",
+                    json!({ "message_id": "mail", "attachment_id": "screenshot" }),
+                )],
+            )
+        });
+        let content = large[0]["result"]["content"].as_array().unwrap();
+        assert_eq!(content[1]["type"], "image");
         let _ = std::fs::remove_dir_all(&options.files_dir);
     }
 

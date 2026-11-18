@@ -175,9 +175,9 @@ pub(crate) fn store(
             new_id(),
             message_id,
             image.part_id,
-            None::<String>,
+            image.filename,
             image.mime_type,
-            i64::try_from(image.data.len()).unwrap_or(i64::MAX),
+            i64::try_from(image.size).unwrap_or(i64::MAX),
             image.content_id,
             true,
             image.data
@@ -201,10 +201,44 @@ pub(crate) fn store(
 
 /// The attachments the reader lists, in the order of the message.
 pub fn list(conn: &Connection, message_id: &str) -> Result<Vec<Attachment>> {
-    let mut statement = conn.prepare(
+    listed(
+        conn,
+        message_id,
         "SELECT id, filename, mime_type, size_bytes FROM attachments
          WHERE message_id = ?1 AND is_inline = 0 ORDER BY CAST(part_id AS INTEGER)",
-    )?;
+    )
+}
+
+/// The pictures shown in the text (`cid:`), pasted ones and logos alike, in the order of the
+/// message. The reader shows them in place, agents read them like attachments. A part listed as an
+/// attachment too counts as that.
+pub fn embedded(conn: &Connection, message_id: &str) -> Result<Vec<Attachment>> {
+    listed(
+        conn,
+        message_id,
+        "SELECT id, filename, mime_type, size_bytes FROM attachments a
+         WHERE message_id = ?1 AND is_inline = 1
+           AND NOT EXISTS (SELECT 1 FROM attachments b WHERE b.message_id = a.message_id
+                             AND b.is_inline = 0 AND b.part_id = a.part_id)
+         ORDER BY CAST(part_id AS INTEGER)",
+    )
+}
+
+/// The bytes kept with the body, for a picture shown in the text up to the size the cache keeps;
+/// none for attachments, which are fetched when needed.
+pub fn cached(conn: &Connection, attachment_id: &str) -> Result<Option<Vec<u8>>> {
+    Ok(conn
+        .query_row(
+            "SELECT data FROM attachments WHERE id = ?1",
+            [attachment_id],
+            |row| row.get::<_, Option<Vec<u8>>>(0),
+        )
+        .optional()?
+        .flatten())
+}
+
+fn listed(conn: &Connection, message_id: &str, sql: &str) -> Result<Vec<Attachment>> {
+    let mut statement = conn.prepare(sql)?;
     let attachments = statement
         .query_map([message_id], |row| {
             let filename: Option<String> = row.get(1)?;
@@ -247,6 +281,7 @@ pub struct AttachmentSource {
     pub part_id: u32,
 }
 
+/// Any part listed for a message: an attachment, or a picture shown in its text.
 pub fn source(conn: &Connection, attachment_id: &str) -> Result<Option<AttachmentSource>> {
     Ok(conn
         .query_row(
@@ -255,7 +290,7 @@ pub fn source(conn: &Connection, attachment_id: &str) -> Result<Option<Attachmen
              FROM attachments a
              JOIN messages m ON m.id = a.message_id
              JOIN folders f ON f.id = m.folder_id
-             WHERE a.id = ?1 AND a.is_inline = 0",
+             WHERE a.id = ?1",
             [attachment_id],
             |row| {
                 let filename: Option<String> = row.get(1)?;
@@ -350,12 +385,24 @@ mod tests {
         store(
             &conn,
             "m1",
-            &[InlineImage {
-                part_id: "3".into(),
-                content_id: "logo@x".into(),
-                mime_type: "image/png".into(),
-                data: vec![1, 2, 3],
-            }],
+            &[
+                InlineImage {
+                    part_id: "3".into(),
+                    content_id: "logo@x".into(),
+                    mime_type: "image/png".into(),
+                    filename: None,
+                    size: 3,
+                    data: Some(vec![1, 2, 3]),
+                },
+                InlineImage {
+                    part_id: "6".into(),
+                    content_id: "photo@x".into(),
+                    mime_type: "image/jpeg".into(),
+                    filename: Some("IMG_3892.jpg".into()),
+                    size: 3 * 1024 * 1024,
+                    data: None,
+                },
+            ],
             &[
                 AttachmentPart {
                     part_id: "5".into(),
@@ -380,16 +427,36 @@ mod tests {
         assert_eq!(listed[1].file_name, "setup.exe");
         assert!(!listed[1].can_open);
 
-        let source = source(&conn, &listed[1].id).unwrap().unwrap();
+        let setup_exe = source(&conn, &listed[1].id).unwrap().unwrap();
         assert_eq!(
-            (source.part_id, source.uid, source.folder_path.as_str()),
+            (
+                setup_exe.part_id,
+                setup_exe.uid,
+                setup_exe.folder_path.as_str()
+            ),
             (5, 1, "INBOX")
         );
-        // The inline image is still served for `cid:`.
+        // The inline image is still served for `cid:`; one too large to keep is not.
         assert!(
             crate::mailbox::inline_image(&conn, "m1", "logo@x")
                 .unwrap()
                 .is_some()
         );
+        assert!(
+            crate::mailbox::inline_image(&conn, "m1", "photo@x")
+                .unwrap()
+                .is_none()
+        );
+
+        // For agents the pictures in the text are listed apart, with their bytes where kept.
+        let embedded = embedded(&conn, "m1").unwrap();
+        let names: Vec<&str> = embedded.iter().map(|a| a.file_name.as_str()).collect();
+        assert_eq!(names, ["Anhang.png", "IMG_3892.jpg"]);
+        assert_eq!(embedded[1].size, 3 * 1024 * 1024);
+        assert_eq!(cached(&conn, &embedded[0].id).unwrap(), Some(vec![1, 2, 3]));
+        assert_eq!(cached(&conn, &embedded[1].id).unwrap(), None);
+        assert_eq!(cached(&conn, &listed[0].id).unwrap(), None);
+        // A large one is fetched from the server like an attachment.
+        assert_eq!(source(&conn, &embedded[1].id).unwrap().unwrap().part_id, 6);
     }
 }

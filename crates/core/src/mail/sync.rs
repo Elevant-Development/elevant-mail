@@ -1271,27 +1271,44 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n"
         }
         setup.sync().await;
 
-        let conn = setup.db.conn();
-        let id: String = conn
-            .query_row("SELECT id FROM messages", [], |row| row.get(0))
-            .unwrap();
-        let message = crate::mailbox::get_message(&conn, &id, TEST_VIEW)
-            .unwrap()
-            .unwrap()
-            .message;
-        let html = message.body_html.unwrap();
-        assert!(html.contains("Grüße"), "{html}");
-        assert!(
-            html.contains(&format!(
-                "mail-asset://localhost/cid/{id}/logo%40example%2Eorg"
-            )),
-            "{html}"
-        );
-        let (mime, data) = crate::mailbox::inline_image(&conn, &id, "logo@example.org")
-            .unwrap()
-            .unwrap();
-        assert_eq!(mime, "image/png");
-        assert_eq!(&data[1..4], b"PNG");
+        let (embedded_id, data) = {
+            let conn = setup.db.conn();
+            let id: String = conn
+                .query_row("SELECT id FROM messages", [], |row| row.get(0))
+                .unwrap();
+            let message = crate::mailbox::get_message(&conn, &id, TEST_VIEW)
+                .unwrap()
+                .unwrap()
+                .message;
+            let html = message.body_html.unwrap();
+            assert!(html.contains("Grüße"), "{html}");
+            assert!(
+                html.contains(&format!(
+                    "mail-asset://localhost/cid/{id}/logo%40example%2Eorg"
+                )),
+                "{html}"
+            );
+            let (mime, data) = crate::mailbox::inline_image(&conn, &id, "logo@example.org")
+                .unwrap()
+                .unwrap();
+            assert_eq!(mime, "image/png");
+            assert_eq!(&data[1..4], b"PNG");
+            // For agents it is a picture of the mail.
+            let embedded = crate::attachments::embedded(&conn, &id).unwrap();
+            assert_eq!(embedded.len(), 1);
+            (embedded[0].id.clone(), data)
+        };
+
+        // Fetched from the server too, as one too large to cache would be.
+        let fetched = crate::mail::download::fetch_with_connector(
+            &setup.db,
+            &setup.secrets,
+            &embedded_id,
+            &setup.server.connector,
+        )
+        .await
+        .unwrap();
+        assert_eq!(fetched, data);
     }
 
     #[tokio::test]
