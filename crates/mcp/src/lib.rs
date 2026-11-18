@@ -300,10 +300,37 @@ impl Server<'_> {
                         detail: subject.to_owned(),
                         results: 1,
                         value: json!({
+                            "draft_id": created.key,
                             "saved": "The draft goes into the drafts folder; the user reviews and sends it.",
                             "signature_added": created.signed,
                         }),
                         changed: vec![account_id.to_owned()],
+                        untrusted: false,
+                        blocks: Vec::new(),
+                    })
+                }
+            },
+            "update_draft" => match text_arg("draft_id") {
+                None => return tool_error("draft_id is missing"),
+                Some(draft_id) => {
+                    let given = |key: &str| args.get(key).is_some().then(|| strings(key));
+                    let to = given("to");
+                    let cc = given("cc");
+                    let changes = agents::DraftChanges {
+                        to: to.as_deref(),
+                        cc: cc.as_deref(),
+                        subject: args.get("subject").and_then(Value::as_str),
+                        text: args.get("text").and_then(Value::as_str),
+                    };
+                    agents::update_draft(db, &access, draft_id, &changes).map(|updated| Done {
+                        detail: draft_id.to_owned(),
+                        results: 1,
+                        value: json!({
+                            "draft_id": updated.key,
+                            "saved": "The draft in the drafts folder is replaced by this version.",
+                            "signature_added": updated.signed,
+                        }),
+                        changed: vec![updated.account_id],
                         untrusted: false,
                         blocks: Vec::new(),
                     })
@@ -333,6 +360,8 @@ impl Server<'_> {
                         | Error::MessageNotFound
                         | Error::AttachmentNotFound
                         | Error::AgentNotAllowed(_)
+                        | Error::DraftNotFound
+                        | Error::DraftChangedByUser
                 );
                 let detail = text_arg("message_id")
                     .or(text_arg("folder_id"))
@@ -415,7 +444,8 @@ impl Server<'_> {
             None
         };
         let mut blocks = Vec::new();
-        let mut how = "The whole file is at `path`: read it with your own file tools (PDF,             office documents, archives …)."
+        let mut how = "The whole file is at `path`: read it with your own file tools (PDF, \
+            office documents, archives …)."
             .to_owned();
         if let Some(text) = &text {
             let cut = text.chars().count() > MAX_INLINE_TEXT;
@@ -566,6 +596,13 @@ fn explain(error: &Error) -> String {
         Error::AttachmentNotFound => {
             "No such attachment in this message (ids come from read_message).".into()
         }
+        Error::DraftNotFound => "No draft an agent wrote has this id: it may have been sent or \
+            deleted, or the user wrote it. Write a new draft with create_draft."
+            .into(),
+        Error::DraftChangedByUser => "The user changed this draft in Elevant Mail since an agent \
+            wrote it (or it is older than agents' changes to drafts), so it is left as it is. \
+            Write a new draft with create_draft, or ask the user."
+            .into(),
         Error::AgentNotAllowed(what) => format!(
             "The user does not allow agents to {what} in this account. They can change that in \
              Elevant Mail under Settings → AI agents."
@@ -734,7 +771,9 @@ fn tools() -> Value {
                 user reviews and sends it. Needs the account's `drafts` permission. For a reply, \
                 give the message answered and a subject like \"Re: …\". Where the user set a \
                 signature for the account, it is put below the text (`signature_added` in the \
-                result); then end the text with the closing at most, no signature of your own.",
+                result); then end the text with the closing at most, no signature of your own. \
+                The result's `draft_id` names the draft for update_draft: to change it later, \
+                change it there instead of writing another one.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -746,6 +785,28 @@ fn tools() -> Value {
                     "reply_to_message_id": { "type": "string", "description": "The message answered, same account." }
                 },
                 "required": ["account_id", "subject", "text"]
+            },
+            "annotations": changes,
+        },
+        {
+            "name": "update_draft",
+            "description": "Changes a draft an agent wrote, instead of writing another one: what \
+                is given replaces what is there (the text as a whole, the account's signature goes \
+                below it again), what is left out stays. The app puts the new version into the \
+                drafts folder in place of the old one. Name the draft by the `draft_id` \
+                create_draft returned, or by its message id in the drafts folder. Only drafts \
+                agents wrote, and only while the user has not changed them in Elevant Mail. Needs \
+                the account's `drafts` permission.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "draft_id": { "type": "string", "description": "From create_draft, or a message id from the drafts folder." },
+                    "to": { "type": "array", "items": { "type": "string" }, "description": "Replaces the recipients." },
+                    "cc": { "type": "array", "items": { "type": "string" } },
+                    "subject": { "type": "string" },
+                    "text": { "type": "string", "description": "The whole text anew; blank lines separate paragraphs." }
+                },
+                "required": ["draft_id"]
             },
             "annotations": changes,
         }
@@ -829,7 +890,7 @@ mod tests {
         // The notification got no answer.
         assert_eq!(replies.len(), 3);
         assert_eq!(replies[0]["result"]["protocolVersion"], "2025-03-26");
-        assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 11);
+        assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 12);
         // Off by default.
         assert_eq!(replies[2]["result"]["isError"], true);
         assert!(text(&replies[2]).contains("switched off"));
@@ -1206,6 +1267,67 @@ mod tests {
         let content = large[0]["result"]["content"].as_array().unwrap();
         assert_eq!(content[1]["type"], "image");
         let _ = std::fs::remove_dir_all(&options.files_dir);
+    }
+
+    #[test]
+    fn an_agent_changes_its_draft_instead_of_writing_another() {
+        let db = Database::open_in_memory().unwrap();
+        seed(&db);
+        {
+            let conn = db.conn();
+            agents::set_enabled(&conn, true).unwrap();
+            let drafts = agents::AgentPermissions {
+                read: true,
+                drafts: true,
+                ..Default::default()
+            };
+            agents::set_permissions(&conn, "acc", drafts).unwrap();
+        }
+        let reply =
+            |replies: &[Value]| -> Value { serde_json::from_str(text(&replies[0])).unwrap() };
+        let created = exchange(
+            &db,
+            &[call(
+                1,
+                "create_draft",
+                json!({ "account_id": "acc", "to": ["lena@example.org"],
+                        "subject": "Angebot", "text": "Anbei das Angebot." }),
+            )],
+        );
+        let draft_id = reply(&created)["draft_id"].as_str().unwrap().to_owned();
+
+        let updated = exchange(
+            &db,
+            &[call(
+                2,
+                "update_draft",
+                json!({ "draft_id": draft_id, "text": "Anbei das neue Angebot." }),
+            )],
+        );
+        assert_eq!(reply(&updated)["draft_id"], draft_id.as_str());
+        let draft = elevant_mail_core::mail::drafts::get(&db.conn(), &draft_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(draft.text, "Anbei das neue Angebot.");
+        assert_eq!(draft.subject, "Angebot");
+        assert_eq!(
+            elevant_mail_core::mail::drafts::list(&db.conn())
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Not another one's draft: the agent hears why and what to do instead.
+        let refused = exchange(
+            &db,
+            &[call(
+                3,
+                "update_draft",
+                json!({ "draft_id": "new:1", "text": "x" }),
+            )],
+        );
+        assert_eq!(refused[0]["result"]["isError"], true);
+        assert!(text(&refused[0]).contains("create_draft"));
     }
 
     #[test]

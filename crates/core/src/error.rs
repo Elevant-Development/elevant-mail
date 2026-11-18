@@ -178,6 +178,12 @@ pub enum Error {
 
     #[error("agents may not {0} in this account")]
     AgentNotAllowed(&'static str),
+
+    #[error("no draft an agent wrote has this id")]
+    DraftNotFound,
+
+    #[error("the user changed the draft since the agent wrote it")]
+    DraftChangedByUser,
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -317,13 +323,14 @@ impl Error {
             Error::DifferentAccount => ErrorKind::DifferentAccount,
             Error::Protocol(_) => ErrorKind::ServerError,
             Error::AccountExists => ErrorKind::AccountExists,
-            Error::ActionRefused => ErrorKind::ActionRefused,
+            Error::ActionRefused | Error::DraftChangedByUser => ErrorKind::ActionRefused,
             Error::AccountNotFound
             | Error::FolderNotFound
             | Error::MessageNotFound
             | Error::AttachmentNotFound
             | Error::EventNotFound
-            | Error::ContactNotFound => ErrorKind::NotFound,
+            | Error::ContactNotFound
+            | Error::DraftNotFound => ErrorKind::NotFound,
             Error::CalendarsNotFound => ErrorKind::CalendarsNotFound,
             Error::CalendarAccessMissing => ErrorKind::CalendarAccessMissing,
             Error::ContactsAccessMissing => ErrorKind::ContactsAccessMissing,
@@ -396,6 +403,8 @@ impl Error {
             | Error::AddressBookReadOnly
             | Error::EmptyContact
             | Error::AgentNotAllowed(_)
+            | Error::DraftNotFound
+            | Error::DraftChangedByUser
             | Error::OpenExternal(_) => None,
         }
     }

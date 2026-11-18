@@ -272,10 +272,14 @@ pub fn changed_since(conn: &Connection, after: i64) -> Result<Vec<String>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// Drafts agents wrote that have no copy on the server yet: the app uploads them.
+/// Drafts agents wrote or changed whose copy on the server is not the latest yet: the app
+/// uploads them.
 pub fn drafts_to_upload(conn: &Connection) -> Result<Vec<String>> {
     Ok(conn
-        .prepare("SELECT key FROM drafts WHERE key LIKE ?1 || '%' AND uploaded_at IS NULL")?
+        .prepare(
+            "SELECT key FROM drafts WHERE key LIKE ?1 || '%'
+               AND (uploaded_at IS NULL OR uploaded_at < updated_at)",
+        )?
         .query_map([DRAFT_PREFIX], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?)
 }
@@ -887,10 +891,12 @@ pub struct DraftRequest<'a> {
     pub reply_to: Option<&'a str>,
 }
 
-/// A draft an agent wrote: its key, and whether the account's signature went below the text.
+/// A draft an agent wrote or changed: its key, and whether the account's signature is below the
+/// text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatedDraft {
     pub key: String,
+    pub account_id: String,
     pub signed: bool,
 }
 
@@ -909,22 +915,7 @@ pub fn create_draft(
     {
         return Err(Error::MessageNotFound);
     }
-    let addresses = |list: &[String]| list.iter().filter_map(|a| parse_address(a)).collect();
-    let mut html = text_to_html(request.text);
-    let mut text = request.text.trim_end().to_owned();
-    let settings = crate::accounts::settings(&conn, request.account_id)?;
-    let signed = settings.signature_use.agent_drafts && !settings.signature.trim().is_empty();
-    if signed {
-        let (block, plain) = signature_block(&settings.signature, settings.signature_html);
-        html.push_str(&block);
-        if !plain.is_empty() {
-            text = if text.is_empty() {
-                plain
-            } else {
-                format!("{text}\n\n{plain}")
-            };
-        }
-    }
+    let (html, text, signed) = agent_body(&conn, request.account_id, request.text)?;
     let draft = Draft {
         key: format!("{DRAFT_PREFIX}{}", new_id()),
         mode: if request.reply_to.is_some() {
@@ -941,11 +932,143 @@ pub fn create_draft(
         html,
         text,
     };
-    drafts::save(&conn, &draft)?;
+    keep_agent_draft(&conn, &draft)?;
     Ok(CreatedDraft {
         key: draft.key,
+        account_id: draft.account_id,
         signed,
     })
+}
+
+/// What an agent changes in a draft it wrote; what is `None` stays as it is.
+#[derive(Debug, Clone, Default)]
+pub struct DraftChanges<'a> {
+    pub to: Option<&'a [String]>,
+    pub cc: Option<&'a [String]>,
+    pub subject: Option<&'a str>,
+    /// The whole text anew, the signature goes below it again.
+    pub text: Option<&'a str>,
+}
+
+/// The draft an agent names: by the key `create_draft` gave, or by its copy in the drafts folder
+/// (a message id from list_messages). Only drafts agents wrote.
+pub fn agent_draft_key(conn: &Connection, id: &str) -> Result<String> {
+    let key = if id.starts_with(DRAFT_PREFIX) {
+        Some(id.to_owned())
+    } else {
+        drafts::key_of_copy(conn, id)?
+    };
+    key.filter(|key| key.starts_with(DRAFT_PREFIX))
+        .ok_or(Error::DraftNotFound)
+}
+
+/// Changes a draft an agent wrote, in place of writing another one: the app puts the new version
+/// into the drafts folder instead of the copy before. Refused once the user changed the draft's
+/// recipients, subject or text, which it would overwrite.
+pub fn update_draft(
+    db: &Database,
+    access: &Access,
+    draft_id: &str,
+    changes: &DraftChanges<'_>,
+) -> Result<CreatedDraft> {
+    let conn = db.conn();
+    let key = agent_draft_key(&conn, draft_id)?;
+    let mut draft = drafts::get(&conn, &key)?.ok_or(Error::DraftNotFound)?;
+    if !access.allows(&draft.account_id) {
+        return Err(Error::DraftNotFound);
+    }
+    access.grants(&draft.account_id, Right::Drafts)?;
+    let written: Option<String> = conn.query_row(
+        "SELECT agent_snapshot FROM drafts WHERE key = ?1",
+        [&key],
+        |row| row.get(0),
+    )?;
+    // Without a snapshot (written before agents could change drafts) it cannot be told: kept.
+    if written.is_none_or(|written| written != snapshot(&draft)) {
+        return Err(Error::DraftChangedByUser);
+    }
+    if let Some(to) = changes.to {
+        draft.to = addresses(to);
+    }
+    if let Some(cc) = changes.cc {
+        draft.cc = addresses(cc);
+    }
+    if let Some(subject) = changes.subject {
+        draft.subject = subject.trim().to_owned();
+    }
+    let signed = match changes.text {
+        Some(text) => {
+            let (html, text, signed) = agent_body(&conn, &draft.account_id, text)?;
+            draft.html = html;
+            draft.text = text;
+            signed
+        }
+        None => draft.html.contains("data-signature"),
+    };
+    keep_agent_draft(&conn, &draft)?;
+    Ok(CreatedDraft {
+        key,
+        account_id: draft.account_id,
+        signed,
+    })
+}
+
+/// Saves a draft as an agent wrote it, with what tells a later change by the user.
+fn keep_agent_draft(conn: &Connection, draft: &Draft) -> Result<()> {
+    drafts::save(conn, draft)?;
+    conn.execute(
+        "UPDATE drafts SET agent_snapshot = ?2 WHERE key = ?1",
+        params![draft.key, snapshot(draft)],
+    )?;
+    Ok(())
+}
+
+/// What the user would change in a draft: recipients, subject and the words of its text. Taken
+/// from the HTML, which the app's editor leaves as it is until the user writes; the words alone,
+/// since the editor writes the same text with other markup.
+fn snapshot(draft: &Draft) -> String {
+    let addresses = |list: &[Address]| {
+        list.iter()
+            .map(|a| a.address.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let words = mail_parser::decoders::html::html_to_text(&draft.html)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "{}\n{}\n{}\n{words}",
+        addresses(&draft.to),
+        addresses(&draft.cc),
+        draft.subject.trim()
+    )
+}
+
+/// An agent's text as the draft's HTML and text version, with the account's signature below it
+/// where the user lets agents' drafts have it. Returns whether it got one.
+fn agent_body(conn: &Connection, account_id: &str, text: &str) -> Result<(String, String, bool)> {
+    let mut html = text_to_html(text);
+    let mut text = text.trim_end().to_owned();
+    let settings = crate::accounts::settings(conn, account_id)?;
+    let signed = settings.signature_use.agent_drafts && !settings.signature.trim().is_empty();
+    if signed {
+        let (block, plain) = signature_block(&settings.signature, settings.signature_html);
+        html.push_str(&block);
+        if !plain.is_empty() {
+            text = if text.is_empty() {
+                plain
+            } else {
+                format!("{text}\n\n{plain}")
+            };
+        }
+    }
+    Ok((html, text, signed))
+}
+
+/// Recipients as an agent gives them; what is no address is left out.
+fn addresses(list: &[String]) -> Vec<Address> {
+    list.iter().filter_map(|a| parse_address(a)).collect()
 }
 
 /// The signature as the composer holds it (`<div data-signature>`, see the frontend's
@@ -1310,5 +1433,137 @@ mod tests {
         )
         .unwrap();
         assert_eq!(changed_since(&db.conn(), before).unwrap(), ["private"]);
+    }
+
+    #[test]
+    fn agents_change_their_own_drafts_until_the_user_does() {
+        let db = Database::open_in_memory().unwrap();
+        seed(&db.conn());
+        {
+            let conn = db.conn();
+            set_enabled(&conn, true).unwrap();
+            let drafts = AgentPermissions {
+                drafts: true,
+                ..READ
+            };
+            set_permissions(&conn, "private", drafts).unwrap();
+            crate::accounts::set_signature(&conn, "private", "<p>Alex</p>", false).unwrap();
+        }
+        let access = Access::check(&db.conn()).unwrap();
+        let draft_of = |key: &str| drafts::get(&db.conn(), key).unwrap().unwrap();
+        let created = create_draft(
+            &db,
+            &access,
+            &DraftRequest {
+                account_id: "private",
+                to: &["lena@example.org".to_owned()],
+                subject: "Re: Termin",
+                text: "Passt.",
+                reply_to: Some("private-mail"),
+                ..DraftRequest::default()
+            },
+        )
+        .unwrap();
+        let uploaded = |key: &str| {
+            db.conn()
+                .execute(
+                    "UPDATE drafts SET uploaded_at = updated_at WHERE key = ?1",
+                    [key],
+                )
+                .unwrap();
+        };
+        uploaded(&created.key);
+        assert!(drafts_to_upload(&db.conn()).unwrap().is_empty());
+
+        // The text anew, the signature below it again; recipients and subject stay.
+        let updated = update_draft(
+            &db,
+            &access,
+            &created.key,
+            &DraftChanges {
+                text: Some("Passt, bis Freitag."),
+                ..DraftChanges::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.key, created.key);
+        assert!(updated.signed);
+        let draft = draft_of(&created.key);
+        assert_eq!(
+            draft.html,
+            "<p>Passt, bis Freitag.</p><div data-signature=\"\"><p>Alex</p></div>"
+        );
+        assert_eq!(draft.subject, "Re: Termin");
+        assert_eq!(draft.to[0].address, "lena@example.org");
+        assert_eq!(draft.mode, ComposeMode::Reply);
+        // The app puts the new version in place of the copy on the server.
+        assert_eq!(
+            drafts_to_upload(&db.conn()).unwrap(),
+            [created.key.as_str()]
+        );
+        uploaded(&created.key);
+
+        // By its copy in the drafts folder, as list_messages shows it.
+        let header: String = db
+            .conn()
+            .query_row(
+                "SELECT message_id FROM drafts WHERE key = ?1",
+                [&created.key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO messages (id, account_id, folder_id, uid, message_id, subject,
+                   to_addresses, date_sent, fetched_at)
+                 VALUES ('copy', 'private', 'private-inbox', 9, ?1, 'Re: Termin', '[]', 0, 0)",
+                [header.trim_matches(['<', '>'])],
+            )
+            .unwrap();
+        let by_copy = update_draft(
+            &db,
+            &access,
+            "copy",
+            &DraftChanges {
+                cc: Some(&["Jonas <jonas@example.org>".to_owned()]),
+                ..DraftChanges::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(by_copy.key, created.key);
+        assert_eq!(draft_of(&created.key).cc[0].address, "jonas@example.org");
+
+        // Opened in the app and saved unchanged (the editor writes its own text version): still
+        // the agent's.
+        let mut opened = draft_of(&created.key);
+        opened.text = "Passt, bis Freitag.\n\nAlex\n".to_owned();
+        drafts::save(&db.conn(), &opened).unwrap();
+        let subject = DraftChanges {
+            subject: Some("Re: Termin am Freitag"),
+            ..DraftChanges::default()
+        };
+        update_draft(&db, &access, &created.key, &subject).unwrap();
+
+        // Once the user wrote in it, it is theirs.
+        let mut edited = draft_of(&created.key);
+        edited.html = edited.html.replace("Freitag", "Samstag");
+        drafts::save(&db.conn(), &edited).unwrap();
+        assert!(matches!(
+            update_draft(&db, &access, &created.key, &subject),
+            Err(Error::DraftChangedByUser)
+        ));
+
+        // Never the user's own drafts.
+        let mut own = draft_of(&created.key);
+        own.key = "new:1".to_owned();
+        drafts::save(&db.conn(), &own).unwrap();
+        assert!(matches!(
+            update_draft(&db, &access, "new:1", &subject),
+            Err(Error::DraftNotFound)
+        ));
+        assert!(matches!(
+            update_draft(&db, &access, "agent:gone", &subject),
+            Err(Error::DraftNotFound)
+        ));
     }
 }

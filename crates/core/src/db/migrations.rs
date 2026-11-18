@@ -32,6 +32,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0024_agent_permissions.sql"),
     include_str!("migrations/0025_agent_requests.sql"),
     include_str!("migrations/0026_signature_use.sql"),
+    include_str!("migrations/0027_agent_drafts.sql"),
 ];
 
 /// Schema version after all migrations of this build have run.
