@@ -3,6 +3,29 @@
 What changed in each version of Elevant Mail. The release workflow takes a version's section as
 the text of its GitHub release, so every version gets its entry before it is tagged.
 
+## 0.9.0 – 2026-11-18
+
+Elevant Mail 0.9 lets AI agents change the drafts they wrote, attach files to them and see the pictures in your mail, and closes six flaws in sending mail.
+
+### New
+
+- **Agents change their drafts.** Asked to change a draft afterwards, an agent changes the one it wrote (`update_draft`) instead of writing another; the new version takes the old one's place in the drafts folder. Never your own drafts, and not once you changed recipients, subject, text or files of an agent's draft yourself.
+- **Agents attach files.** With **Attach files**, a new right per account next to **Write drafts**, agents put files from your computer into their drafts: only from the folders listed under Settings → AI agents (at first your downloads folder; add more there), never program files, 18 MB together at most. If one file cannot go along, no draft is written and the agent hears which file. A reply can also keep the answered mail's attachments.
+- **Agents see pictures in the text.** A picture pasted into a mail, as Apple Mail and Outlook send it, is listed to agents with the attachments and read like one; before, an agent found no picture in such a mail. Pictures over 1 MB are fetched when an agent asks for them.
+
+### Changed
+
+- **Opening a draft from the drafts folder** shows the version kept on your computer, including an agent's changes since the app started.
+- **Dates and time zones** are reckoned with jiff instead of chrono, which is no longer maintained. Calendars, reminders and Microsoft 365 events work as before.
+
+### Security
+
+- **Sending mail uses lettre 0.11.24**, which fixes six flaws (RUSTSEC-2026-0560 to -0565): among them forged server replies through STARTTLS, command injection through a bare line break, and a quoted address going to another recipient.
+
+### Updating
+
+Install over the previous version; your accounts and mail stay. Agents can change only drafts written with this version; older ones stay as they are. The installer closes the agents' running MCP servers too: connect them again in your AI tool afterwards.
+
 ## 0.8.0 – 2026-11-17
 
 Elevant Mail 0.8 lets you choose when and where your signature goes, adds it with a button where it is missing, and puts it into the drafts AI agents write.
