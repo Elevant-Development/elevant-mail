@@ -42,6 +42,9 @@ pub struct AgentPermissions {
     pub trash: bool,
     /// Drafts in the drafts folder; sending stays with the user.
     pub drafts: bool,
+    /// Files from the folders the user listed, attached to drafts; needs `drafts`.
+    #[serde(default)]
+    pub attach: bool,
 }
 
 impl AgentPermissions {
@@ -63,6 +66,7 @@ impl AgentPermissions {
             move_mail: read && bits & 4 != 0,
             trash: read && bits & 8 != 0,
             drafts: read && bits & 16 != 0,
+            attach: false,
         }
     }
 }
@@ -74,6 +78,7 @@ pub enum Right {
     Move,
     Trash,
     Drafts,
+    Attach,
 }
 
 impl Right {
@@ -83,6 +88,7 @@ impl Right {
             Right::Move => permissions.move_mail,
             Right::Trash => permissions.trash,
             Right::Drafts => permissions.drafts,
+            Right::Attach => permissions.attach,
         }
     }
 
@@ -93,6 +99,7 @@ impl Right {
             Right::Move => "move or archive mail",
             Right::Trash => "move mail to the trash",
             Right::Drafts => "write drafts",
+            Right::Attach => "attach files from this computer to drafts",
         }
     }
 }
@@ -104,6 +111,8 @@ impl Right {
 pub struct AgentSettings {
     pub enabled: bool,
     pub accounts: Vec<AgentAccount>,
+    /// Where agents may attach files from, for the accounts that allow it.
+    pub folders: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -144,14 +153,19 @@ pub fn settings(conn: &Connection) -> Result<AgentSettings> {
         |row| row.get(0),
     )?;
     // In the app's order and with its colours; the permissions beside them.
-    let mut stored = conn.prepare_cached("SELECT agent_permissions FROM accounts WHERE id = ?1")?;
+    let mut stored =
+        conn.prepare_cached("SELECT agent_permissions, agent_attach FROM accounts WHERE id = ?1")?;
     let accounts = crate::accounts::list(conn)?
         .into_iter()
         .map(|account| {
+            let (bits, attach): (u8, bool) =
+                stored.query_row([&account.id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            let permissions = AgentPermissions::from_bits(bits);
             Ok(AgentAccount {
-                permissions: AgentPermissions::from_bits(
-                    stored.query_row([&account.id], |row| row.get(0))?,
-                ),
+                permissions: AgentPermissions {
+                    attach: permissions.drafts && attach,
+                    ..permissions
+                },
                 account_id: account.id,
                 display_name: account.display_name,
                 email_address: account.email_address,
@@ -159,7 +173,39 @@ pub fn settings(conn: &Connection) -> Result<AgentSettings> {
             })
         })
         .collect::<Result<_>>()?;
-    Ok(AgentSettings { enabled, accounts })
+    Ok(AgentSettings {
+        enabled,
+        accounts,
+        folders: folders(conn)?,
+    })
+}
+
+/// The folders agents may attach files from, in the order they were added.
+pub fn folders(conn: &Connection) -> Result<Vec<String>> {
+    Ok(conn
+        .prepare_cached("SELECT path FROM agent_folders ORDER BY added_at, rowid")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Lets agents attach files from this folder and the ones in it.
+pub fn add_folder(conn: &Connection, path: &std::path::Path) -> Result<()> {
+    if !path.is_absolute() {
+        return Err(Error::AgentFileRefused {
+            path: path.to_string_lossy().into_owned(),
+            reason: "not an absolute path",
+        });
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO agent_folders (path, added_at) VALUES (?1, ?2)",
+        params![path.to_string_lossy(), now_millis()],
+    )?;
+    Ok(())
+}
+
+pub fn remove_folder(conn: &Connection, path: &str) -> Result<()> {
+    conn.execute("DELETE FROM agent_folders WHERE path = ?1", [path])?;
+    Ok(())
 }
 
 pub fn set_enabled(conn: &Connection, enabled: bool) -> Result<()> {
@@ -175,9 +221,10 @@ pub fn set_permissions(
     account_id: &str,
     permissions: AgentPermissions,
 ) -> Result<()> {
+    let attach = permissions.read && permissions.drafts && permissions.attach;
     let changed = conn.execute(
-        "UPDATE accounts SET agent_permissions = ?2 WHERE id = ?1",
-        params![account_id, permissions.to_bits()],
+        "UPDATE accounts SET agent_permissions = ?2, agent_attach = ?3 WHERE id = ?1",
+        params![account_id, permissions.to_bits(), attach],
     )?;
     if changed == 0 {
         return Err(Error::AccountNotFound);
@@ -759,6 +806,20 @@ pub fn attachment(
     Ok(source.attachment)
 }
 
+/// The attachments of a message the agent may read, as the reader lists them: for a reply that
+/// keeps them.
+pub fn attachments_of(
+    conn: &Connection,
+    access: &Access,
+    message_id: &str,
+) -> Result<Vec<crate::model::Attachment>> {
+    let account = mailbox::message_account(conn, message_id)?;
+    if !account.is_some_and(|account| access.allows(&account)) {
+        return Err(Error::MessageNotFound);
+    }
+    crate::attachments::list(conn, message_id)
+}
+
 /// The subject of a message, for the log; none for one the agent may not read.
 pub fn subject_for_log(conn: &Connection, message_id: &str) -> Result<Option<String>> {
     Ok(conn
@@ -889,15 +950,86 @@ pub struct DraftRequest<'a> {
     pub text: &'a str,
     /// A message of the same account the draft answers.
     pub reply_to: Option<&'a str>,
+    /// Files attached: from this computer ([`local_files`]) or the answered mail.
+    pub files: &'a [NewFile],
 }
 
-/// A draft an agent wrote or changed: its key, and whether the account's signature is below the
-/// text.
+/// A file for an agent's draft, read and checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewFile {
+    pub name: String,
+    pub data: Vec<u8>,
+}
+
+/// A draft an agent wrote or changed: its key, whether the account's signature is below the
+/// text, and its files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatedDraft {
     pub key: String,
     pub account_id: String,
     pub signed: bool,
+    pub files: Vec<drafts::DraftAttachment>,
+}
+
+/// Files from this computer an agent attaches: each a file inside one of the folders the user
+/// listed (links followed first), no program, and all together within what fits into one mail.
+/// Read whole here, so the draft gets them all or none.
+pub fn local_files(
+    conn: &Connection,
+    access: &Access,
+    account_id: &str,
+    paths: &[String],
+) -> Result<Vec<NewFile>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    access.grants(account_id, Right::Attach)?;
+    let allowed: Vec<std::path::PathBuf> = folders(conn)?
+        .iter()
+        .filter_map(|folder| std::fs::canonicalize(folder).ok())
+        .collect();
+    let mut files = Vec::new();
+    let mut total: u64 = 0;
+    for given in paths {
+        let refuse = |reason| Error::AgentFileRefused {
+            path: given.clone(),
+            reason,
+        };
+        let path = std::path::Path::new(given.trim());
+        if !path.is_absolute() {
+            return Err(refuse("not an absolute path"));
+        }
+        let Ok(real) = std::fs::canonicalize(path) else {
+            return Err(refuse("no such file"));
+        };
+        if !allowed.iter().any(|folder| real.starts_with(folder)) {
+            return Err(refuse(
+                "not in a folder the user lets agents attach from (Settings → AI agents)",
+            ));
+        }
+        let metadata = std::fs::metadata(&real).map_err(|_| refuse("no such file"))?;
+        if !metadata.is_file() {
+            return Err(refuse("not a file"));
+        }
+        let name = real
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mime_type = mime_guess::from_path(&real)
+            .first_or_octet_stream()
+            .essence_str()
+            .to_owned();
+        if crate::attachments::is_executable(&name, &mime_type) {
+            return Err(refuse("a program file; agents do not attach those"));
+        }
+        total = total.saturating_add(metadata.len());
+        if total > drafts::ATTACHMENT_LIMIT {
+            return Err(refuse("over 18 MB together with the files before it"));
+        }
+        let data = std::fs::read(&real).map_err(|_| refuse("could not be read"))?;
+        files.push(NewFile { name, data });
+    }
+    Ok(files)
 }
 
 /// A draft kept here like the user's own; the app puts it into the drafts folder, where the user
@@ -932,11 +1064,12 @@ pub fn create_draft(
         html,
         text,
     };
-    keep_agent_draft(&conn, &draft)?;
+    let files = keep_agent_draft(&conn, &draft, request.files, &[])?;
     Ok(CreatedDraft {
         key: draft.key,
         account_id: draft.account_id,
         signed,
+        files,
     })
 }
 
@@ -948,6 +1081,10 @@ pub struct DraftChanges<'a> {
     pub subject: Option<&'a str>,
     /// The whole text anew, the signature goes below it again.
     pub text: Option<&'a str>,
+    /// Files to attach as well.
+    pub add_files: &'a [NewFile],
+    /// Files to take off, by their names in the draft.
+    pub remove_files: &'a [String],
 }
 
 /// The draft an agent names: by the key `create_draft` gave, or by its copy in the drafts folder
@@ -960,6 +1097,14 @@ pub fn agent_draft_key(conn: &Connection, id: &str) -> Result<String> {
     };
     key.filter(|key| key.starts_with(DRAFT_PREFIX))
         .ok_or(Error::DraftNotFound)
+}
+
+/// The account of a draft an agent wrote.
+pub fn agent_draft_account(conn: &Connection, id: &str) -> Result<String> {
+    let key = agent_draft_key(conn, id)?;
+    Ok(drafts::get(conn, &key)?
+        .ok_or(Error::DraftNotFound)?
+        .account_id)
 }
 
 /// Changes a draft an agent wrote, in place of writing another one: the app puts the new version
@@ -984,7 +1129,7 @@ pub fn update_draft(
         |row| row.get(0),
     )?;
     // Without a snapshot (written before agents could change drafts) it cannot be told: kept.
-    if written.is_none_or(|written| written != snapshot(&draft)) {
+    if written.is_none_or(|written| written != snapshot(&conn, &draft).unwrap_or_default()) {
         return Err(Error::DraftChangedByUser);
     }
     if let Some(to) = changes.to {
@@ -1005,28 +1150,49 @@ pub fn update_draft(
         }
         None => draft.html.contains("data-signature"),
     };
-    keep_agent_draft(&conn, &draft)?;
+    let files = keep_agent_draft(&conn, &draft, changes.add_files, changes.remove_files)?;
     Ok(CreatedDraft {
         key,
         account_id: draft.account_id,
         signed,
+        files,
     })
 }
 
-/// Saves a draft as an agent wrote it, with what tells a later change by the user.
-fn keep_agent_draft(conn: &Connection, draft: &Draft) -> Result<()> {
-    drafts::save(conn, draft)?;
-    conn.execute(
+/// Saves a draft as an agent wrote it, files taken off and added, with what tells a later change
+/// by the user. All of it or nothing. Returns its files.
+fn keep_agent_draft(
+    conn: &Connection,
+    draft: &Draft,
+    add: &[NewFile],
+    remove: &[String],
+) -> Result<Vec<drafts::DraftAttachment>> {
+    let tx = conn.unchecked_transaction()?;
+    drafts::save(&tx, draft)?;
+    for name in remove {
+        if !drafts::detach_named(&tx, &draft.key, name)? {
+            return Err(Error::AgentFileRefused {
+                path: name.clone(),
+                reason: "not a file of this draft",
+            });
+        }
+    }
+    for file in add {
+        // Within the limit together, or `AttachmentsTooLarge`, and nothing is kept.
+        drafts::attach(&tx, &draft.key, &file.name, file.data.clone())?;
+    }
+    tx.execute(
         "UPDATE drafts SET agent_snapshot = ?2 WHERE key = ?1",
-        params![draft.key, snapshot(draft)],
+        params![draft.key, snapshot(&tx, draft)?],
     )?;
-    Ok(())
+    tx.commit()?;
+    drafts::attachments(conn, &draft.key)
 }
 
-/// What the user would change in a draft: recipients, subject and the words of its text. Taken
-/// from the HTML, which the app's editor leaves as it is until the user writes; the words alone,
-/// since the editor writes the same text with other markup.
-fn snapshot(draft: &Draft) -> String {
+/// What the user would change in a draft: recipients, subject, the words of its text and its
+/// files. The text taken from the HTML, which the app's editor leaves as it is until the user
+/// writes; the words alone, since the editor writes the same text with other markup.
+fn snapshot(conn: &Connection, draft: &Draft) -> Result<String> {
     let addresses = |list: &[Address]| {
         list.iter()
             .map(|a| a.address.to_lowercase())
@@ -1037,12 +1203,17 @@ fn snapshot(draft: &Draft) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    format!(
-        "{}\n{}\n{}\n{words}",
+    let files = drafts::attachments(conn, &draft.key)?
+        .iter()
+        .map(|file| format!("{}:{}", file.file_name, file.size))
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(format!(
+        "{}\n{}\n{}\n{files}\n{words}",
         addresses(&draft.to),
         addresses(&draft.cc),
         draft.subject.trim()
-    )
+    ))
 }
 
 /// An agent's text as the draft's HTML and text version, with the account's signature below it
@@ -1165,6 +1336,7 @@ mod tests {
         move_mail: false,
         trash: false,
         drafts: false,
+        attach: false,
     };
 
     /// Two accounts, each with an inbox and a mail in it.
@@ -1292,6 +1464,8 @@ mod tests {
             move_mail: true,
             trash: true,
             drafts: true,
+            // Kept beside the bits.
+            attach: false,
         };
         assert_eq!(AgentPermissions::from_bits(all.to_bits()), all);
         let without_read = AgentPermissions { read: false, ..all };
@@ -1497,7 +1671,10 @@ mod tests {
         assert_eq!(draft.to[0].address, "lena@example.org");
         assert_eq!(draft.mode, ComposeMode::Reply);
         // The app puts the new version in place of the copy on the server.
-        assert_eq!(drafts_to_upload(&db.conn()).unwrap(), [created.key.as_str()]);
+        assert_eq!(
+            drafts_to_upload(&db.conn()).unwrap(),
+            [created.key.as_str()]
+        );
         uploaded(&created.key);
 
         // By its copy in the drafts folder, as list_messages shows it.
@@ -1561,6 +1738,168 @@ mod tests {
         assert!(matches!(
             update_draft(&db, &access, "agent:gone", &subject),
             Err(Error::DraftNotFound)
+        ));
+    }
+
+    #[test]
+    fn agents_attach_files_only_from_allowed_folders_and_all_or_none() {
+        let db = Database::open_in_memory().unwrap();
+        seed(&db.conn());
+        let allowed = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let file = |dir: &tempfile::TempDir, name: &str, size: usize| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, vec![b'x'; size]).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        let offer = file(&allowed, "Angebot.pdf", 10);
+        let secret = file(&elsewhere, "geheim.txt", 10);
+        let program = file(&allowed, "setup.exe", 10);
+        let inner = std::fs::create_dir(allowed.path().join("Projekt"))
+            .map(|()| file(&allowed, "Projekt/Plan.txt", 5))
+            .unwrap();
+        let sneaky = format!("{}/../{}", allowed.path().display(), {
+            let name = elsewhere.path().file_name().unwrap().to_string_lossy();
+            format!("{name}/geheim.txt")
+        });
+        {
+            let conn = db.conn();
+            set_enabled(&conn, true).unwrap();
+            let drafts_only = AgentPermissions {
+                drafts: true,
+                ..READ
+            };
+            set_permissions(&conn, "private", drafts_only).unwrap();
+        }
+        let access = || Access::check(&db.conn()).unwrap();
+        // The access first: the connection is locked once at a time.
+        let files = |paths: &[String]| {
+            let access = access();
+            local_files(&db.conn(), &access, "private", paths)
+        };
+
+        // Without the right nothing goes, not even from an allowed folder.
+        assert!(matches!(
+            files(std::slice::from_ref(&offer)),
+            Err(Error::AgentNotAllowed(_))
+        ));
+        // `attach` needs `drafts`: without it, it is not kept.
+        set_permissions(
+            &db.conn(),
+            "private",
+            AgentPermissions {
+                attach: true,
+                ..READ
+            },
+        )
+        .unwrap();
+        assert!(!access().accounts["private"].2.attach);
+        set_permissions(
+            &db.conn(),
+            "private",
+            AgentPermissions {
+                drafts: true,
+                attach: true,
+                ..READ
+            },
+        )
+        .unwrap();
+        // No folder listed: none allowed.
+        let refused = |result: Result<Vec<NewFile>>| match result {
+            Err(Error::AgentFileRefused { reason, .. }) => reason,
+            other => panic!("{other:?}"),
+        };
+        assert!(refused(files(std::slice::from_ref(&offer))).starts_with("not in a folder"));
+        add_folder(&db.conn(), allowed.path()).unwrap();
+        assert!(matches!(
+            add_folder(&db.conn(), std::path::Path::new("relativ")),
+            Err(Error::AgentFileRefused { .. })
+        ));
+
+        // From the folder and the ones in it; not elsewhere, not out of it by "..", no programs.
+        let read = files(&[offer.clone(), inner]).unwrap();
+        let names: Vec<&str> = read.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["Angebot.pdf", "Plan.txt"]);
+        assert!(refused(files(&[secret])).starts_with("not in a folder"));
+        assert!(refused(files(&[sneaky])).starts_with("not in a folder"));
+        assert!(refused(files(&[program])).starts_with("a program file"));
+        assert_eq!(
+            refused(files(&["Angebot.pdf".to_owned()])),
+            "not an absolute path"
+        );
+        let missing = format!("{}/fehlt.pdf", allowed.path().display());
+        assert_eq!(refused(files(&[missing])), "no such file");
+        let large = file(
+            &allowed,
+            "gross.zip",
+            usize::try_from(drafts::ATTACHMENT_LIMIT).unwrap(),
+        );
+        assert!(refused(files(&[offer.clone(), large])).starts_with("over 18 MB"));
+
+        // A draft with them; changed: one taken off, one added. All of it or nothing.
+        let created = create_draft(
+            &db,
+            &access(),
+            &DraftRequest {
+                account_id: "private",
+                subject: "Angebot",
+                text: "Anbei.",
+                files: &read,
+                ..DraftRequest::default()
+            },
+        )
+        .unwrap();
+        let names = |files: &[drafts::DraftAttachment]| -> Vec<String> {
+            files.iter().map(|f| f.file_name.clone()).collect()
+        };
+        assert_eq!(names(&created.files), ["Angebot.pdf", "Plan.txt"]);
+        let more = vec![NewFile {
+            name: "Preise.txt".into(),
+            data: b"12".to_vec(),
+        }];
+        let remove = vec!["Plan.txt".to_owned()];
+        let updated = update_draft(
+            &db,
+            &access(),
+            &created.key,
+            &DraftChanges {
+                add_files: &more,
+                remove_files: &remove,
+                ..DraftChanges::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(names(&updated.files), ["Angebot.pdf", "Preise.txt"]);
+        let unknown = vec!["Gibtsnicht.pdf".to_owned()];
+        assert!(matches!(
+            update_draft(
+                &db,
+                &access(),
+                &created.key,
+                &DraftChanges {
+                    text: Some("Ganz neu."),
+                    remove_files: &unknown,
+                    ..DraftChanges::default()
+                },
+            ),
+            Err(Error::AgentFileRefused { .. })
+        ));
+        let draft = drafts::get(&db.conn(), &created.key).unwrap().unwrap();
+        assert_eq!(draft.text, "Anbei.", "nothing of a refused change is kept");
+
+        // A file the user added makes the draft theirs.
+        drafts::attach(&db.conn(), &created.key, "Eigenes.pdf", b"1".to_vec()).unwrap();
+        assert!(matches!(
+            update_draft(
+                &db,
+                &access(),
+                &created.key,
+                &DraftChanges {
+                    text: Some("Ganz neu."),
+                    ..DraftChanges::default()
+                },
+            ),
+            Err(Error::DraftChangedByUser)
         ));
     }
 }

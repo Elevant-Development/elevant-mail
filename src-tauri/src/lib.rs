@@ -64,6 +64,8 @@ pub fn run() {
             commands::agents::get_agent_settings,
             commands::agents::set_agent_access,
             commands::agents::set_agent_permissions,
+            commands::agents::add_agent_folder,
+            commands::agents::remove_agent_folder,
             commands::agents::list_agent_log,
             commands::agents::clear_agent_log,
             commands::agents::agent_launch,

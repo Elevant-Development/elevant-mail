@@ -702,4 +702,13 @@ export const en: Record<MessageKey, string> = {
   "agents.tool.archiveMessages": "Archived",
   "agents.tool.trashMessages": "Moved to the trash",
   "agents.tool.createDraft": "Wrote a draft",
+  "agents.tool.updateDraft": "Changed a draft",
+  "agents.tool.readAttachment": "Read an attachment",
+  "agents.right.attach": "Attach files",
+  "agents.folders": "Folders for attachments",
+  "agents.foldersHint":
+    "Agents attach only files from these folders and the ones in them, and only to drafts. Never program files.",
+  "agents.folders.none": "No folder yet. Without one, agents cannot attach files.",
+  "agents.folders.add": "Add folder",
+  "agents.folders.remove": "Remove {folder}",
 };

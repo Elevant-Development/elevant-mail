@@ -3,7 +3,8 @@
 
 use elevant_mail_core::agents::{self, AgentLogEntry, AgentPermissions, AgentSettings};
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::error::CommandError;
 use crate::state::AppState;
@@ -29,18 +30,55 @@ pub async fn set_agent_access(
     Ok(agents::set_enabled(&state.db.conn(), enabled)?)
 }
 
-/// What agents may do with one account's mail.
+/// What agents may do with one account's mail. Allowing files for the first time lists the
+/// downloads folder, so there is a place to attach from; the user changes the list beside it.
 #[tauri::command]
 pub async fn set_agent_permissions(
     state: State<'_, AppState>,
     account_id: String,
     permissions: AgentPermissions,
 ) -> Result<(), CommandError> {
-    Ok(agents::set_permissions(
-        &state.db.conn(),
-        &account_id,
-        permissions,
-    )?)
+    let conn = state.db.conn();
+    agents::set_permissions(&conn, &account_id, permissions)?;
+    if permissions.attach
+        && agents::folders(&conn)?.is_empty()
+        && let Some(downloads) = dirs::download_dir()
+    {
+        agents::add_folder(&conn, &downloads)?;
+    }
+    Ok(())
+}
+
+/// Asks for a folder agents may attach files from (the system's dialog) and adds it. None when
+/// the dialog was cancelled.
+#[tauri::command]
+pub async fn add_agent_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, CommandError> {
+    let mut dialog = app.dialog().file();
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&window);
+    }
+    // The dialog blocks until the user answers, so it runs off the async workers.
+    let chosen = tauri::async_runtime::spawn_blocking(move || dialog.blocking_pick_folder())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|folder| folder.into_path().ok());
+    let Some(folder) = chosen else {
+        return Ok(None);
+    };
+    agents::add_folder(&state.db.conn(), &folder)?;
+    Ok(Some(folder.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+pub async fn remove_agent_folder(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), CommandError> {
+    Ok(agents::remove_folder(&state.db.conn(), &path)?)
 }
 
 #[tauri::command]

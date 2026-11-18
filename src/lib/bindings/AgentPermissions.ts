@@ -19,4 +19,8 @@ trash: boolean,
 /**
  * Drafts in the drafts folder; sending stays with the user.
  */
-drafts: boolean, };
+drafts: boolean, 
+/**
+ * Files from the folders the user listed, attached to drafts; needs `drafts`.
+ */
+attach: boolean, };

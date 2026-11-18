@@ -716,4 +716,13 @@ export const de = {
   "agents.tool.archiveMessages": "Archiviert",
   "agents.tool.trashMessages": "In den Papierkorb gelegt",
   "agents.tool.createDraft": "Entwurf geschrieben",
+  "agents.tool.updateDraft": "Entwurf geändert",
+  "agents.tool.readAttachment": "Anhang gelesen",
+  "agents.right.attach": "Dateien anhängen",
+  "agents.folders": "Ordner für Anhänge",
+  "agents.foldersHint":
+    "Agenten hängen nur Dateien aus diesen Ordnern und ihren Unterordnern an, und nur an Entwürfe. Programmdateien nie.",
+  "agents.folders.none": "Noch kein Ordner. Ohne Ordner können Agenten keine Dateien anhängen.",
+  "agents.folders.add": "Ordner hinzufügen",
+  "agents.folders.remove": "{folder} entfernen",
 } as const;

@@ -178,6 +178,18 @@ pub fn detach(conn: &Connection, attachment_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Takes the files with this name off the draft; false when it has none.
+pub fn detach_named(conn: &Connection, key: &str, file_name: &str) -> Result<bool> {
+    let removed = conn.execute(
+        "DELETE FROM draft_attachments WHERE draft_key = ?1 AND file_name = ?2",
+        [key, file_name],
+    )?;
+    if removed > 0 {
+        touch(conn, key)?;
+    }
+    Ok(removed > 0)
+}
+
 /// The draft's files with their bytes, for sending or uploading.
 pub(crate) fn files(conn: &Connection, key: &str) -> Result<Vec<OutgoingFile>> {
     Ok(conn
