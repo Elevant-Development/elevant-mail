@@ -5,7 +5,8 @@ use mail_parser::MessageParser;
 use crate::model::Address;
 
 const SNIPPET_LENGTH: usize = 200;
-/// Inline images up to this size are cached with the body; larger ones are left out.
+/// Inline images up to this size are cached with the body; larger ones only noted, so agents can
+/// still have them fetched.
 const INLINE_IMAGE_LIMIT: usize = 1024 * 1024;
 /// An invitation's calendar part is a few KB; larger ones are not kept.
 const CALENDAR_LIMIT: usize = 256 * 1024;
@@ -55,7 +56,11 @@ pub struct InlineImage {
     /// Without angle brackets, as `cid:` refers to it.
     pub content_id: String,
     pub mime_type: String,
-    pub data: Vec<u8>,
+    /// As the sender named it (a pasted photo often is "IMG_3892.jpg"); often missing.
+    pub filename: Option<String>,
+    pub size: u64,
+    /// The bytes, up to [`INLINE_IMAGE_LIMIT`]; a larger image is fetched when asked for.
+    pub data: Option<Vec<u8>>,
 }
 
 /// Parses a complete message.
@@ -142,9 +147,10 @@ fn inline_images(message: &mail_parser::Message<'_>) -> Vec<InlineImage> {
                 return None;
             }
             let content_id = part.content_id()?.trim().to_owned();
-            if content_id.is_empty() || part.decoded_len() > INLINE_IMAGE_LIMIT {
+            if content_id.is_empty() {
                 return None;
             }
+            let size = part.decoded_len();
             Some(InlineImage {
                 part_id: part.id().to_string(),
                 content_id,
@@ -155,7 +161,13 @@ fn inline_images(message: &mail_parser::Message<'_>) -> Vec<InlineImage> {
                         .unwrap_or("octet-stream")
                         .to_ascii_lowercase()
                 ),
-                data: part.decoded().into_owned(),
+                filename: part
+                    .attachment_name()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned),
+                size: u64::try_from(size).unwrap_or(u64::MAX),
+                data: (size <= INLINE_IMAGE_LIMIT).then(|| part.decoded().into_owned()),
             })
         })
         .collect()
@@ -327,6 +339,34 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--r--\r\n";
         let parsed = parse_message(raw);
         assert!(parsed.attachments.is_empty(), "{:?}", parsed.attachments);
         assert!(!parsed.has_attachments);
+    }
+
+    #[test]
+    fn pasted_pictures_are_kept_with_their_name_and_large_ones_noted() {
+        // As Apple Mail sends a pasted photo, and a screenshot over the limit.
+        let large = "A".repeat(INLINE_IMAGE_LIMIT / 3 * 4 + 400);
+        let raw = format!(
+            "From: a@example.org\r\nSubject: Logo\r\n\
+Content-Type: multipart/related; boundary=\"r\"\r\n\r\n\
+--r\r\nContent-Type: text/html\r\n\r\n<p>Hier <img alt=\"IMG_3892.jpg\" src=\"cid:photo@x\"> \
+<img src=\"cid:shot@x\"></p>\r\n\
+--r\r\nContent-Type: image/jpeg; name=\"IMG_3892.jpg\"\r\nContent-ID: <photo@x>\r\n\
+Content-Disposition: inline; filename=\"IMG_3892.jpg\"\r\n\
+Content-Transfer-Encoding: base64\r\n\r\n/9j/4AAQ\r\n\
+--r\r\nContent-Type: image/png\r\nContent-ID: <shot@x>\r\nContent-Disposition: inline\r\n\
+Content-Transfer-Encoding: base64\r\n\r\n{large}\r\n--r--\r\n"
+        );
+        let parsed = parse_message(raw.as_bytes());
+        assert!(parsed.attachments.is_empty(), "{:?}", parsed.attachments);
+        let [photo, shot] = parsed.inline_images.as_slice() else {
+            panic!("{:?}", parsed.inline_images);
+        };
+        assert_eq!(photo.filename.as_deref(), Some("IMG_3892.jpg"));
+        assert_eq!(photo.mime_type, "image/jpeg");
+        assert_eq!(photo.data.as_deref().map(<[u8]>::len), Some(6));
+        assert_eq!(shot.filename, None);
+        assert!(shot.size > INLINE_IMAGE_LIMIT as u64);
+        assert!(shot.data.is_none(), "too large to keep with the body");
     }
 
     #[test]

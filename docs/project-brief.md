@@ -183,6 +183,7 @@ In addition:
   CSP for `https:`. Instead Rust fetches a mail's images on click and serves them through its own
   Tauri protocol (`mail-asset://`, on Windows `http://mail-asset.localhost`). The same protocol
   serves inline images (`cid:`) from the cache; they are stored with the body, up to 1 MB each.
+  Larger ones are only noted (with their MIME part), so agents can still have them fetched.
 - External images are blocked by default. They are allowed per mail for the running session, or
   always for a sender ("Always from …", table `image_senders`; the backend checks the sender when
   a mail is opened). The list is under settings → Reading, where addresses can be removed. Fetching runs without cookies or referrer, follows at most 5
@@ -562,6 +563,9 @@ a large mail, an attachment's bytes) the MCP server asks the running app for (ta
 `agent_requests`); the app fetches it with the account's lock, keeps it in the cache (attachment
 bytes in `agent_files`, a day) and answers, so the MCP server still has no credentials. Attachments
 reach the agent as a file in `agent-files` next to the database, and inline as text or picture.
+Pictures shown in a mail's text (`cid:`, such as a pasted photo) are listed to agents with the
+attachments, marked `embedded`, and read the same way: from the cache, or fetched when larger
+than 1 MB.
 
 Elevant Mail offers the local mail store over the Model Context Protocol, so AI agents (Claude
 Code and other MCP clients) can search and read mail without their own IMAP access.

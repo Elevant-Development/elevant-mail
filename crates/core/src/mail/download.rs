@@ -55,9 +55,10 @@ pub(crate) async fn fetch_in(
     let message = MessageParser::new()
         .parse(raw)
         .ok_or(Error::AttachmentNotFound)?;
+    // An attachment, or a picture shown in the text that was too large to cache.
     let part = message
         .part(source.part_id)
-        .filter(|part| part.is_attachment())
+        .filter(|part| part.is_attachment() || part.is_inline())
         .ok_or(Error::AttachmentNotFound)?;
     Ok(part.decoded().into_owned())
 }
