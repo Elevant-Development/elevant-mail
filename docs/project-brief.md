@@ -563,6 +563,10 @@ a large mail, an attachment's bytes) the MCP server asks the running app for (ta
 `agent_requests`); the app fetches it with the account's lock, keeps it in the cache (attachment
 bytes in `agent_files`, a day) and answers, so the MCP server still has no credentials. Attachments
 reach the agent as a file in `agent-files` next to the database, and inline as text or picture.
+Agents change their own drafts with `update_draft` (by `draft_id`, or the copy's message id): only
+while the draft's recipients, subject and words of its text are as the agent left them
+(`drafts.agent_snapshot`), never the user's drafts; the app uploads the new version in place of
+the old copy.
 Pictures shown in a mail's text (`cid:`, such as a pasted photo) are listed to agents with the
 attachments, marked `embedded`, and read the same way: from the cache, or fetched when larger
 than 1 MB.

@@ -168,7 +168,8 @@ only while it runs.
 1. Open **Settings → AI agents** and switch on **Access for AI agents**.
 2. Per account, switch on **Read** and, if you like, what else agents may do: **Mark**, **Move,
    archive**, **Move to trash**, **Write drafts**. Agents never send mail and never delete it for
-   good; drafts wait in your drafts folder for you to send.
+   good; drafts wait in your drafts folder for you to send. An agent can change the drafts it
+   wrote, until you change them yourself.
 3. Copy the command shown there into a terminal, for Claude Code for example
    `claude mcp add elevant-mail -- /path/to/elevant-mail mcp`. Other MCP clients get the same as
    JSON.

@@ -147,8 +147,12 @@ interface UiState {
    */
   followRows: (rows: { id: string; messageIds: string[] }[]) => void;
   openMoveDialog: (messageIds: string[]) => void;
-  /** Shows a draft in the reader column; one with the same key that exists keeps its text. */
-  openDraft: (draft: Draft) => void;
+  /**
+   * Shows a draft in the reader column; one with the same key that exists keeps its text. With
+   * `fresh` (just read from the backend, which an agent may have changed) that one replaces the
+   * copy here, unless the draft is open right now.
+   */
+  openDraft: (draft: Draft, fresh?: boolean) => void;
   updateDraft: (key: string, changes: Partial<Omit<Draft, "key">>) => void;
   /** Hides the composer; the draft stays. */
   closeCompose: () => void;
@@ -253,12 +257,15 @@ export const useUiStore = create<UiState>()(
           selectionEnd: messageId,
           composeKey: messageId === null ? state.composeKey : null,
         })),
-      openDraft: (draft) =>
-        set((state) => ({
-          drafts: state.drafts[draft.key] ? state.drafts : { ...state.drafts, [draft.key]: draft },
-          composeKey: draft.key,
-          sidebarOpen: false,
-        })),
+      openDraft: (draft, fresh = false) =>
+        set((state) => {
+          const keep = state.drafts[draft.key] && (!fresh || state.composeKey === draft.key);
+          return {
+            drafts: keep ? state.drafts : { ...state.drafts, [draft.key]: draft },
+            composeKey: draft.key,
+            sidebarOpen: false,
+          };
+        }),
       updateDraft: (key, changes) =>
         set((state) => {
           const draft = state.drafts[key];

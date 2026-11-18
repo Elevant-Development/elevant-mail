@@ -283,6 +283,45 @@ pub fn save(conn: &Connection, draft: &Draft) -> Result<()> {
     Ok(())
 }
 
+/// One draft kept here, by its key.
+pub fn get(conn: &Connection, key: &str) -> Result<Option<Draft>> {
+    Ok(conn
+        .query_row(
+            &format!("SELECT {COLUMNS} FROM drafts WHERE key = ?1"),
+            [key],
+            from_row,
+        )
+        .optional()?)
+}
+
+/// The key of the draft kept here whose copy in the drafts folder is this cached message.
+pub fn key_of_copy(conn: &Connection, message_id: &str) -> Result<Option<String>> {
+    let header: Option<Option<String>> = conn
+        .query_row(
+            "SELECT message_id FROM messages WHERE id = ?1",
+            [message_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(header) = header else {
+        return Ok(None);
+    };
+    let header = format!(
+        "<{}>",
+        header
+            .as_deref()
+            .unwrap_or(message_id)
+            .trim_matches(['<', '>'])
+    );
+    Ok(conn
+        .query_row(
+            "SELECT key FROM drafts WHERE message_id = ?1",
+            [&header],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 /// All drafts, the latest change first.
 pub fn list(conn: &Connection) -> Result<Vec<Draft>> {
     Ok(conn

@@ -555,8 +555,9 @@ export function MessageReader({ className, onBack }: MessageReaderProps) {
               if (waiting) openDraft(waiting);
               else if (newest) {
                 // The copy in the folder goes once the draft is sent or replaced.
+                // As kept now: an agent may have changed it since the app started.
                 void api.openDraft(newest.id).then((draft) => {
-                  openDraft(draft);
+                  openDraft(draft, true);
                   selectMessage(null);
                 });
               }
