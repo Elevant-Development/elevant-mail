@@ -57,8 +57,8 @@ impl TestMessage {
 
     /// Arrived this many days ago.
     pub fn arrived_days_ago(mut self, days: i64) -> Self {
-        let time = chrono::Utc::now() - chrono::TimeDelta::days(days);
-        self.arrived = time.format("%d-%b-%Y %H:%M:%S +0000").to_string();
+        let time = jiff::Timestamp::now() - jiff::SignedDuration::from_secs(days * 86_400);
+        self.arrived = time.strftime("%d-%b-%Y %H:%M:%S +0000").to_string();
         self
     }
 

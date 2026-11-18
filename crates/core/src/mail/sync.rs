@@ -751,12 +751,19 @@ fn keep_since(conn: &Connection, account_id: &str) -> Result<Option<String>> {
         )
         .optional()?
         .ok_or(Error::AccountNotFound)?;
-    Ok(days.map(|days| imap_date(chrono::Utc::now() - chrono::TimeDelta::days(days))))
+    Ok(days.map(|days| {
+        let since = jiff::SignedDuration::from_secs(days.saturating_mul(86_400));
+        imap_date(
+            jiff::Timestamp::now()
+                .checked_sub(since)
+                .unwrap_or(jiff::Timestamp::MIN),
+        )
+    }))
 }
 
 /// A day as IMAP SEARCH writes it: "29-Oct-2026".
-pub(crate) fn imap_date(time: chrono::DateTime<chrono::Utc>) -> String {
-    time.format("%-d-%b-%Y").to_string()
+pub(crate) fn imap_date(time: jiff::Timestamp) -> String {
+    time.strftime("%-d-%b-%Y").to_string()
 }
 
 fn cached_flags(conn: &Connection, folder_id: &str) -> Result<BTreeMap<u32, (bool, bool)>> {

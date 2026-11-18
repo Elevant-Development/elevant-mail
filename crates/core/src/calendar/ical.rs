@@ -2,12 +2,14 @@
 //! dates of an event or series, and the text form of new events.
 
 use calcard::common::PartialDateTime;
+use calcard::common::timezone::TzTimestamp;
 use calcard::icalendar::{
     ICalendar, ICalendarComponent, ICalendarEntry, ICalendarFrequency, ICalendarParameter,
     ICalendarParameterName, ICalendarParameterValue, ICalendarParticipationRole,
     ICalendarParticipationStatus, ICalendarProperty, ICalendarValue, ICalendarWeekday,
 };
-use chrono::{Datelike, NaiveDate, Timelike};
+use jiff::tz::TimeZone;
+use jiff::{Timestamp, civil};
 
 use super::{Attendee, Frequency, Participation, Recurrence};
 use crate::model::Address;
@@ -123,7 +125,7 @@ pub(crate) fn recurrence(event: &ICalendarComponent) -> Option<Recurrence> {
 }
 
 /// The date of an all-day event's `DTSTART`, `None` for an event with a time.
-fn start_date(event: &ICalendarComponent) -> Option<NaiveDate> {
+fn start_date(event: &ICalendarComponent) -> Option<civil::Date> {
     let date = event
         .property(&ICalendarProperty::Dtstart)?
         .values
@@ -132,10 +134,26 @@ fn start_date(event: &ICalendarComponent) -> Option<NaiveDate> {
     if date.hour.is_some() {
         return None;
     }
-    NaiveDate::from_ymd_opt(
-        i32::from(date.year?),
-        u32::from(date.month?),
-        u32::from(date.day?),
+    calendar_date(date)
+}
+
+/// The day a value names, as written.
+fn calendar_date(date: &PartialDateTime) -> Option<civil::Date> {
+    civil::Date::new(
+        i16::try_from(date.year?).ok()?,
+        i8::try_from(date.month?).ok()?,
+        i8::try_from(date.day?).ok()?,
+    )
+    .ok()
+}
+
+/// Midnight UTC of a day, in Unix milliseconds: where all-day dates are kept.
+fn midnight_utc(day: civil::Date) -> Option<i64> {
+    Some(
+        day.to_zoned(TimeZone::UTC)
+            .ok()?
+            .timestamp()
+            .as_millisecond(),
     )
 }
 
@@ -172,11 +190,12 @@ pub(crate) fn dates_between(calendar: &ICalendar, from: i64, to: i64) -> Vec<Dat
             let (start, end) = occurrence.timestamps();
             let dates = match start_date(calendar.components.get(component)?) {
                 Some(_) => {
-                    // The occurrence's own day: a series moves on from its first one.
-                    let day = occurrence.start.naive_local().date();
+                    // The occurrence's own day: a series moves on from its first one. Its
+                    // wall-clock time counted as if in UTC, down to the day.
+                    let day = occurrence.start.to_naive_timestamp().div_euclid(86_400);
                     // Rounded: a day with a clock change has 23 or 25 hours.
                     let days = ((end - start + 43_200) / 86_400).max(1);
-                    let start = day.and_hms_opt(0, 0, 0)?.and_utc().timestamp() * 1000;
+                    let start = day * DAY_MS;
                     Dates {
                         component,
                         start,
@@ -212,12 +231,7 @@ pub(crate) fn dates_between(calendar: &ICalendar, from: i64, to: i64) -> Vec<Dat
 pub(crate) fn instant_of(calendar: &ICalendar, entry: &ICalendarEntry) -> Option<i64> {
     let date = entry.values.first()?.as_partial_date_time()?;
     if date.hour.is_none() {
-        let day = NaiveDate::from_ymd_opt(
-            i32::from(date.year?),
-            u32::from(date.month?),
-            u32::from(date.day?),
-        )?;
-        return Some(day.and_hms_opt(0, 0, 0)?.and_utc().timestamp() * 1000);
+        return midnight_utc(calendar_date(date)?);
     }
     let zone = calendar
         .build_tz_resolver()
@@ -239,27 +253,27 @@ pub(crate) fn instance_property(
         .get(index)?
         .property(&ICalendarProperty::Dtstart)?;
     let date = start.values.first()?.as_partial_date_time()?;
-    let utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(instance)?;
+    let utc = Timestamp::from_millisecond(instance).ok()?;
     if date.hour.is_none() {
-        return Some(format!("{name};VALUE=DATE:{}", utc.format("%Y%m%d")));
+        return Some(format!("{name};VALUE=DATE:{}", utc.strftime("%Y%m%d")));
     }
     if let Some(tz_id) = start.tz_id() {
         let zone = calendar
             .build_tz_resolver()
             .with_default(super::local_time_zone())
             .resolve_or_default(Some(tz_id));
-        let local = utc.with_timezone(&zone).naive_local();
+        let local = utc.to_zoned(super::zone_of_calcard(zone));
         return Some(format!(
             "{name};TZID={tz_id}:{}",
-            local.format("%Y%m%dT%H%M%S")
+            local.strftime("%Y%m%dT%H%M%S")
         ));
     }
     if (date.tz_hour, date.tz_minute) == (Some(0), Some(0)) {
-        return Some(format!("{name}:{}", utc.format("%Y%m%dT%H%M%SZ")));
+        return Some(format!("{name}:{}", utc.strftime("%Y%m%dT%H%M%SZ")));
     }
     // Floating: the system's local time.
-    let local = utc.with_timezone(&super::local_time_zone()).naive_local();
-    Some(format!("{name}:{}", local.format("%Y%m%dT%H%M%S")))
+    let local = utc.to_zoned(super::local_zone().unwrap_or(TimeZone::UTC));
+    Some(format!("{name}:{}", local.strftime("%Y%m%dT%H%M%S")))
 }
 
 /// The calendar as `calcard` (0.3) expands it right:
@@ -276,8 +290,8 @@ fn ready_to_expand(calendar: &ICalendar, until: i64) -> ICalendar {
     // Compared as wall-clock time, as `calcard` does; the day covers any time zone.
     let cap = until
         .checked_add(DAY_MS)
-        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
-        .map(|cap| cap.naive_utc());
+        .and_then(|cap| Timestamp::from_millisecond(cap).ok())
+        .map(|cap| cap.to_zoned(TimeZone::UTC).datetime());
     for component in &mut calendar.components {
         component
             .entries
@@ -335,17 +349,15 @@ fn ready_to_expand(calendar: &ICalendar, until: i64) -> ICalendar {
 }
 
 /// The date and time of a value as written, without its zone.
-fn wall_clock(date: &PartialDateTime) -> Option<chrono::NaiveDateTime> {
-    NaiveDate::from_ymd_opt(
-        i32::from(date.year?),
-        u32::from(date.month?),
-        u32::from(date.day?),
-    )?
-    .and_hms_opt(
-        u32::from(date.hour.unwrap_or(0)),
-        u32::from(date.minute.unwrap_or(0)),
-        u32::from(date.second.unwrap_or(0)),
+fn wall_clock(date: &PartialDateTime) -> Option<civil::DateTime> {
+    let time = civil::Time::new(
+        i8::try_from(date.hour.unwrap_or(0)).ok()?,
+        i8::try_from(date.minute.unwrap_or(0)).ok()?,
+        i8::try_from(date.second.unwrap_or(0)).ok()?,
+        0,
     )
+    .ok()?;
+    Some(calendar_date(date)?.to_datetime(time))
 }
 
 /// How far after its start a series is expanded to find its first date: a few first dates may
