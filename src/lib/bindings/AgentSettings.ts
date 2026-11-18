@@ -4,4 +4,8 @@ import type { AgentAccount } from "./AgentAccount";
 /**
  * What the settings page shows: the switch and, per account, what agents may do.
  */
-export type AgentSettings = { enabled: boolean, accounts: Array<AgentAccount>, };
+export type AgentSettings = { enabled: boolean, accounts: Array<AgentAccount>, 
+/**
+ * Where agents may attach files from, for the accounts that allow it.
+ */
+folders: Array<string>, };

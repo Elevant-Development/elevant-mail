@@ -326,6 +326,12 @@ export interface Backend {
   setAgentAccess(enabled: boolean): Promise<void>;
   /** What agents may do with one account's mail; everything needs `read`. */
   setAgentPermissions(accountId: string, permissions: AgentPermissions): Promise<void>;
+  /**
+   * Asks for a folder agents may attach files from (the system's dialog) and adds it; null when
+   * cancelled.
+   */
+  addAgentFolder(): Promise<string | null>;
+  removeAgentFolder(path: string): Promise<void>;
   /** What agents read, newest first. */
   listAgentLog(limit: number): Promise<AgentLogEntry[]>;
   clearAgentLog(): Promise<void>;
@@ -420,6 +426,8 @@ const tauriBackend: Backend = {
   setAgentAccess: (enabled) => invoke("set_agent_access", { enabled }),
   setAgentPermissions: (accountId, permissions) =>
     invoke("set_agent_permissions", { accountId, permissions }),
+  addAgentFolder: () => invoke("add_agent_folder"),
+  removeAgentFolder: (path) => invoke("remove_agent_folder", { path }),
   listAgentLog: (limit) => invoke("list_agent_log", { limit }),
   clearAgentLog: () => invoke("clear_agent_log"),
   agentLaunch: () => invoke("agent_launch"),

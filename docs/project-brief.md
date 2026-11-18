@@ -565,8 +565,14 @@ bytes in `agent_files`, a day) and answers, so the MCP server still has no crede
 reach the agent as a file in `agent-files` next to the database, and inline as text or picture.
 Agents change their own drafts with `update_draft` (by `draft_id`, or the copy's message id): only
 while the draft's recipients, subject and words of its text are as the agent left them
-(`drafts.agent_snapshot`), never the user's drafts; the app uploads the new version in place of
-the old copy.
+(`drafts.agent_snapshot`, files included), never the user's drafts; the app uploads the new
+version in place of the old copy. With the account's `attach` right (column `agent_attach`, only
+together with `drafts`) agents attach files from this computer (`attachments`, absolute paths):
+each must lie, links followed, inside a folder of `agent_folders` (switching the right on in the
+app lists the downloads folder), be no program and fit with the rest into 18 MB; one that does not
+refuses the whole call, naming it (`AgentFileRefused`). A reply can keep the answered mail's
+attachments (`keep_attachments`), fetched by the app; `update_draft` adds files and takes them off
+by name.
 Pictures shown in a mail's text (`cid:`, such as a pasted photo) are listed to agents with the
 attachments, marked `embedded`, and read the same way: from the cache, or fetched when larger
 than 1 MB.

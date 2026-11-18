@@ -184,6 +184,9 @@ pub enum Error {
 
     #[error("the user changed the draft since the agent wrote it")]
     DraftChangedByUser,
+
+    #[error("{path}: {reason}")]
+    AgentFileRefused { path: String, reason: &'static str },
 }
 
 /// What went wrong, in categories the UI can translate.
@@ -301,7 +304,8 @@ impl Error {
             | Error::AddressBookReadOnly
             | Error::EmptyContact
             | Error::InvalidEventTime
-            | Error::AgentNotAllowed(_) => ErrorKind::InvalidInput,
+            | Error::AgentNotAllowed(_)
+            | Error::AgentFileRefused { .. } => ErrorKind::InvalidInput,
             Error::NotAnExport => ErrorKind::NotAnExport,
             Error::WrongPassphrase => ErrorKind::WrongPassphrase,
             Error::HostNotFound => ErrorKind::ServerNotFound,
@@ -405,6 +409,7 @@ impl Error {
             | Error::AgentNotAllowed(_)
             | Error::DraftNotFound
             | Error::DraftChangedByUser
+            | Error::AgentFileRefused { .. }
             | Error::OpenExternal(_) => None,
         }
     }

@@ -18,11 +18,13 @@ const toolLabels: Record<string, Parameters<typeof t>[0]> = {
   list_messages: "agents.tool.listMessages",
   search_messages: "agents.tool.searchMessages",
   read_message: "agents.tool.readMessage",
+  read_attachment: "agents.tool.readAttachment",
   mark_messages: "agents.tool.markMessages",
   move_messages: "agents.tool.moveMessages",
   archive_messages: "agents.tool.archiveMessages",
   trash_messages: "agents.tool.trashMessages",
   create_draft: "agents.tool.createDraft",
+  update_draft: "agents.tool.updateDraft",
 };
 
 /** The rights beyond reading, in the order the page shows them. */
@@ -31,7 +33,63 @@ const rights: { key: Exclude<keyof AgentPermissions, "read">; label: Parameters<
   { key: "moveMail", label: "agents.right.move" },
   { key: "trash", label: "agents.right.trash" },
   { key: "drafts", label: "agents.right.drafts" },
+  { key: "attach", label: "agents.right.attach" },
 ];
+
+/**
+ * Where agents may attach files from, for the accounts that let them: the folders and the ones
+ * in them. Shown once an account allows files.
+ */
+function AttachFolders({ folders }: { folders: string[] }) {
+  const queryClient = useQueryClient();
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["agent-settings"] });
+  const add = useMutation({ mutationFn: api.addAgentFolder, onSuccess: refresh });
+  const remove = useMutation({ mutationFn: api.removeAgentFolder, onSuccess: refresh });
+  const error = add.error ?? remove.error;
+
+  return (
+    <div className="grid gap-2">
+      <div className="grid gap-0.5">
+        <h3 className="text-sm font-medium">{t("agents.folders")}</h3>
+        <p className="text-sm text-muted-foreground">{t("agents.foldersHint")}</p>
+      </div>
+      {folders.length > 0 ? (
+        <ul className="divide-y rounded-lg border px-3">
+          {folders.map((folder) => (
+            <li key={folder} className="flex min-w-0 items-center gap-2 py-1.5">
+              <Icon name="folder" className="size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate font-mono text-xs" title={folder}>
+                {folder}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={remove.isPending}
+                aria-label={t("agents.folders.remove", { folder })}
+                onClick={() => remove.mutate(folder)}
+              >
+                <Icon name="close" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <Notice tone="info" text={t("agents.folders.none")} />
+      )}
+      <Button
+        variant="outline"
+        size="sm"
+        className="justify-self-start"
+        disabled={add.isPending}
+        onClick={() => add.mutate()}
+      >
+        <Icon name="plus" />
+        {t("agents.folders.add")}
+      </Button>
+      {error && <Notice tone="error" text={describeError(error).message} />}
+    </div>
+  );
+}
 
 /** One account: reading as its switch, the other rights below once it is on. */
 function AccountPermissions({
@@ -75,8 +133,15 @@ function AccountPermissions({
               {t(label)}
               <Switch
                 checked={permissions[key]}
-                disabled={disabled}
-                onCheckedChange={(on) => onChange({ ...permissions, [key]: on })}
+                // Files go into drafts: without drafts there is nothing to attach them to.
+                disabled={disabled || (key === "attach" && !permissions.drafts)}
+                onCheckedChange={(on) =>
+                  onChange({
+                    ...permissions,
+                    [key]: on,
+                    ...(key === "drafts" && !on ? { attach: false } : {}),
+                  })
+                }
               />
             </label>
           ))}
@@ -180,6 +245,7 @@ export function AgentSettings() {
   const enabled = settings.data?.enabled ?? false;
   const accounts = settings.data?.accounts ?? [];
   const shared = accounts.filter((a) => a.permissions.read).length;
+  const attaching = accounts.some((a) => a.permissions.attach);
   const error = setEnabled.error ?? setAccount.error ?? clearLog.error;
   const command = launch.data
     ? ["claude", "mcp", "add", "elevant-mail", "--", launch.data.program, ...launch.data.args]
@@ -238,6 +304,7 @@ export function AgentSettings() {
             {shared === 0 && <Notice tone="info" text={t("agents.noneShared")} />}
           </div>
         )}
+        {enabled && attaching && <AttachFolders folders={settings.data?.folders ?? []} />}
         {error && <Notice tone="error" text={describeError(error).message} />}
       </section>
 

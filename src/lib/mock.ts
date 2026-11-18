@@ -95,12 +95,14 @@ const noAgentPermissions: AgentPermissions = {
   moveMail: false,
   trash: false,
   drafts: false,
+  attach: false,
 };
 
 /** Agent access, with a few accesses as they would be logged. */
 const mockAgents = {
   enabled: false,
   permissions: new Map<string, AgentPermissions>(),
+  folders: [] as string[],
   log: [
     {
       at: Date.now() - MINUTE,
@@ -1661,12 +1663,27 @@ export const mockBackend: Backend = {
       color: a.color,
       permissions: mockAgents.permissions.get(a.id) ?? noAgentPermissions,
     })),
+    folders: [...mockAgents.folders],
   }),
   setAgentAccess: async (enabled) => {
     mockAgents.enabled = enabled;
   },
   setAgentPermissions: async (accountId, permissions) => {
-    mockAgents.permissions.set(accountId, permissions.read ? permissions : noAgentPermissions);
+    const attach = permissions.read && permissions.drafts && permissions.attach;
+    mockAgents.permissions.set(
+      accountId,
+      permissions.read ? { ...permissions, attach } : noAgentPermissions,
+    );
+    // As the app does: the downloads folder when files are allowed for the first time.
+    if (attach && mockAgents.folders.length === 0) mockAgents.folders.push("/home/alex/Downloads");
+  },
+  addAgentFolder: async () => {
+    const folder = `/home/alex/Projekte/Ordner ${mockAgents.folders.length + 1}`;
+    mockAgents.folders.push(folder);
+    return folder;
+  },
+  removeAgentFolder: async (path) => {
+    mockAgents.folders = mockAgents.folders.filter((folder) => folder !== path);
   },
   listAgentLog: async (limit) => mockAgents.log.slice(0, limit),
   clearAgentLog: async () => {

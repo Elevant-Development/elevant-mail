@@ -288,25 +288,44 @@ impl Server<'_> {
                 (Some(account_id), Some(subject)) => {
                     let to = strings("to");
                     let cc = strings("cc");
-                    let request = agents::DraftRequest {
+                    let reply_to = text_arg("reply_to_message_id");
+                    let keep = args.get("keep_attachments").and_then(Value::as_bool) == Some(true);
+                    let files = match self.draft_files(
+                        &access,
                         account_id,
-                        to: &to,
-                        cc: &cc,
-                        subject,
-                        text: args.get("text").and_then(Value::as_str).unwrap_or_default(),
-                        reply_to: text_arg("reply_to_message_id"),
+                        &strings("attachments"),
+                        reply_to.filter(|_| keep),
+                    ) {
+                        Ok(Ok(files)) => Ok(files),
+                        Ok(Err(refusal)) => {
+                            self.log(name, subject, 0, true, &[]);
+                            return tool_error(&refusal);
+                        }
+                        Err(error) => Err(error),
                     };
-                    agents::create_draft(db, &access, &request).map(|created| Done {
-                        detail: subject.to_owned(),
-                        results: 1,
-                        value: json!({
-                            "draft_id": created.key,
-                            "saved": "The draft goes into the drafts folder; the user reviews and sends it.",
-                            "signature_added": created.signed,
-                        }),
-                        changed: vec![account_id.to_owned()],
-                        untrusted: false,
-                        blocks: Vec::new(),
+                    files.and_then(|files| {
+                        let request = agents::DraftRequest {
+                            account_id,
+                            to: &to,
+                            cc: &cc,
+                            subject,
+                            text: args.get("text").and_then(Value::as_str).unwrap_or_default(),
+                            reply_to,
+                            files: &files,
+                        };
+                        agents::create_draft(db, &access, &request).map(|created| Done {
+                            detail: subject.to_owned(),
+                            results: 1,
+                            value: json!({
+                                "draft_id": created.key,
+                                "saved": "The draft goes into the drafts folder; the user reviews and sends it.",
+                                "signature_added": created.signed,
+                                "attachments": attached(&created.files),
+                            }),
+                            changed: vec![account_id.to_owned()],
+                            untrusted: false,
+                            blocks: Vec::new(),
+                        })
                     })
                 }
             },
@@ -316,23 +335,42 @@ impl Server<'_> {
                     let given = |key: &str| args.get(key).is_some().then(|| strings(key));
                     let to = given("to");
                     let cc = given("cc");
-                    let changes = agents::DraftChanges {
-                        to: to.as_deref(),
-                        cc: cc.as_deref(),
-                        subject: args.get("subject").and_then(Value::as_str),
-                        text: args.get("text").and_then(Value::as_str),
+                    let remove = strings("remove_attachments");
+                    // The account first, on its own: reading the files locks the database again.
+                    let account = agents::agent_draft_account(&db.conn(), draft_id);
+                    let files = account.and_then(|account_id| {
+                        self.draft_files(&access, &account_id, &strings("attachments"), None)
+                    });
+                    let files = match files {
+                        Ok(Ok(files)) => Ok(files),
+                        Ok(Err(refusal)) => {
+                            self.log(name, draft_id, 0, true, &[]);
+                            return tool_error(&refusal);
+                        }
+                        Err(error) => Err(error),
                     };
-                    agents::update_draft(db, &access, draft_id, &changes).map(|updated| Done {
-                        detail: draft_id.to_owned(),
-                        results: 1,
-                        value: json!({
-                            "draft_id": updated.key,
-                            "saved": "The draft in the drafts folder is replaced by this version.",
-                            "signature_added": updated.signed,
-                        }),
-                        changed: vec![updated.account_id],
-                        untrusted: false,
-                        blocks: Vec::new(),
+                    files.and_then(|files| {
+                        let changes = agents::DraftChanges {
+                            to: to.as_deref(),
+                            cc: cc.as_deref(),
+                            subject: args.get("subject").and_then(Value::as_str),
+                            text: args.get("text").and_then(Value::as_str),
+                            add_files: &files,
+                            remove_files: &remove,
+                        };
+                        agents::update_draft(db, &access, draft_id, &changes).map(|updated| Done {
+                            detail: draft_id.to_owned(),
+                            results: 1,
+                            value: json!({
+                                "draft_id": updated.key,
+                                "saved": "The draft in the drafts folder is replaced by this version.",
+                                "signature_added": updated.signed,
+                                "attachments": attached(&updated.files),
+                            }),
+                            changed: vec![updated.account_id],
+                            untrusted: false,
+                            blocks: Vec::new(),
+                        })
                     })
                 }
             },
@@ -362,6 +400,8 @@ impl Server<'_> {
                         | Error::AgentNotAllowed(_)
                         | Error::DraftNotFound
                         | Error::DraftChangedByUser
+                        | Error::AgentFileRefused { .. }
+                        | Error::AttachmentsTooLarge
                 );
                 let detail = text_arg("message_id")
                     .or(text_arg("folder_id"))
@@ -397,6 +437,58 @@ impl Server<'_> {
         })
     }
 
+    /// The bytes of an attachment the agent may read: from the cache (a picture in the text is
+    /// mostly kept with the body), otherwise fetched by the app. The inner error says why not.
+    fn attachment_bytes(
+        &self,
+        message_id: &str,
+        attachment_id: &str,
+    ) -> Result<Result<Vec<u8>, String>, Error> {
+        if let Some(data) = agents::cached_file(&self.db.conn(), attachment_id)? {
+            return Ok(Ok(data));
+        }
+        let request = agents::request(
+            &self.db.conn(),
+            agents::RequestKind::Attachment,
+            message_id,
+            Some(attachment_id),
+        )?;
+        Ok(match self.wait_for(&request)? {
+            agents::RequestState::Done => agents::stored_file(&self.db.conn(), attachment_id)?
+                .ok_or_else(|| "The attachment could not be fetched.".to_owned()),
+            agents::RequestState::Failed(error) => {
+                Err(format!("The attachment could not be fetched: {error}"))
+            }
+            agents::RequestState::Open => Err(NOT_RUNNING.into()),
+        })
+    }
+
+    /// The files an agent's draft gets: from this computer, and for a reply that keeps them the
+    /// answered mail's attachments (fetched by the app). The inner error says why not.
+    fn draft_files(
+        &self,
+        access: &Access,
+        account_id: &str,
+        paths: &[String],
+        keep_from: Option<&str>,
+    ) -> Result<Result<Vec<agents::NewFile>, String>, Error> {
+        let mut files = agents::local_files(&self.db.conn(), access, account_id, paths)?;
+        if let Some(message_id) = keep_from {
+            // Listed first: fetching locks the database again.
+            let listed = agents::attachments_of(&self.db.conn(), access, message_id)?;
+            for attachment in listed {
+                match self.attachment_bytes(message_id, &attachment.id)? {
+                    Ok(data) => files.push(agents::NewFile {
+                        name: attachment.file_name,
+                        data,
+                    }),
+                    Err(refusal) => return Ok(Err(format!("{}: {refusal}", attachment.file_name))),
+                }
+            }
+        }
+        Ok(Ok(files))
+    }
+
     /// An attachment for the agent: written to a file it can read with its own tools, and as
     /// text or picture right away where that works. The outer error is a failure, the inner one
     /// a refusal to explain.
@@ -407,27 +499,9 @@ impl Server<'_> {
         attachment_id: &str,
     ) -> Result<Result<Done, String>, Error> {
         let attachment = agents::attachment(&self.db.conn(), access, message_id, attachment_id)?;
-        // A picture in the text is mostly kept with the body; the rest the app fetches.
-        let mut data = agents::cached_file(&self.db.conn(), attachment_id)?;
-        if data.is_none() {
-            let request = agents::request(
-                &self.db.conn(),
-                agents::RequestKind::Attachment,
-                message_id,
-                Some(attachment_id),
-            )?;
-            match self.wait_for(&request)? {
-                agents::RequestState::Done => {
-                    data = agents::stored_file(&self.db.conn(), attachment_id)?;
-                }
-                agents::RequestState::Failed(error) => {
-                    return Ok(Err(format!("The attachment could not be fetched: {error}")));
-                }
-                agents::RequestState::Open => return Ok(Err(NOT_RUNNING.into())),
-            }
-        }
-        let Some(data) = data else {
-            return Ok(Err("The attachment could not be fetched.".into()));
+        let data = match self.attachment_bytes(message_id, attachment_id)? {
+            Ok(data) => data,
+            Err(refusal) => return Ok(Err(refusal)),
         };
         let text = is_text(&attachment.mime_type, &attachment.file_name)
             .then(|| String::from_utf8_lossy(&data).into_owned());
@@ -603,6 +677,12 @@ fn explain(error: &Error) -> String {
             wrote it (or it is older than agents' changes to drafts), so it is left as it is. \
             Write a new draft with create_draft, or ask the user."
             .into(),
+        Error::AgentFileRefused { path, reason } => {
+            format!("{path}: {reason}. Nothing was saved; the draft stays as it was.")
+        }
+        Error::AttachmentsTooLarge => "The files together are over 18 MB, more than fits into \
+            one mail. Nothing was saved; attach fewer or smaller files."
+            .into(),
         Error::AgentNotAllowed(what) => format!(
             "The user does not allow agents to {what} in this account. They can change that in \
              Elevant Mail under Settings → AI agents."
@@ -612,6 +692,16 @@ fn explain(error: &Error) -> String {
             "The request failed; the local mail cache could not be read.".into()
         }
     }
+}
+
+/// The draft's files as the agent hears of them.
+fn attached(files: &[elevant_mail_core::mail::drafts::DraftAttachment]) -> Value {
+    json!(
+        files
+            .iter()
+            .map(|file| json!({ "name": file.file_name, "size": file.size }))
+            .collect::<Vec<_>>()
+    )
 }
 
 fn tool_error(text: &str) -> Value {
@@ -773,7 +863,11 @@ fn tools() -> Value {
                 signature for the account, it is put below the text (`signature_added` in the \
                 result); then end the text with the closing at most, no signature of your own. \
                 The result's `draft_id` names the draft for update_draft: to change it later, \
-                change it there instead of writing another one.",
+                change it there instead of writing another one. Files from this computer go along \
+                with `attachments` (needs the account's `attach` permission, and only from the \
+                folders the user allows); a reply can keep the answered mail's attachments. If a \
+                file cannot go along, no draft is written and the error names it; the result \
+                lists the files attached.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -782,7 +876,9 @@ fn tools() -> Value {
                     "cc": { "type": "array", "items": { "type": "string" } },
                     "subject": { "type": "string" },
                     "text": { "type": "string", "description": "Plain text; blank lines separate paragraphs." },
-                    "reply_to_message_id": { "type": "string", "description": "The message answered, same account." }
+                    "reply_to_message_id": { "type": "string", "description": "The message answered, same account." },
+                    "attachments": { "type": "array", "items": { "type": "string" }, "description": "Absolute paths of files on this computer; 18 MB together at most." },
+                    "keep_attachments": { "type": "boolean", "description": "For a reply: the answered mail's attachments go along, as when forwarding." }
                 },
                 "required": ["account_id", "subject", "text"]
             },
@@ -796,7 +892,8 @@ fn tools() -> Value {
                 drafts folder in place of the old one. Name the draft by the `draft_id` \
                 create_draft returned, or by its message id in the drafts folder. Only drafts \
                 agents wrote, and only while the user has not changed them in Elevant Mail. Needs \
-                the account's `drafts` permission.",
+                the account's `drafts` permission; files from this computer its `attach` \
+                permission. All of it or nothing; the result lists the draft's files.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -804,7 +901,9 @@ fn tools() -> Value {
                     "to": { "type": "array", "items": { "type": "string" }, "description": "Replaces the recipients." },
                     "cc": { "type": "array", "items": { "type": "string" } },
                     "subject": { "type": "string" },
-                    "text": { "type": "string", "description": "The whole text anew; blank lines separate paragraphs." }
+                    "text": { "type": "string", "description": "The whole text anew; blank lines separate paragraphs." },
+                    "attachments": { "type": "array", "items": { "type": "string" }, "description": "Absolute paths of files on this computer to attach as well." },
+                    "remove_attachments": { "type": "array", "items": { "type": "string" }, "description": "Names of the draft's files to take off, as the result lists them." }
                 },
                 "required": ["draft_id"]
             },
@@ -1328,6 +1427,79 @@ mod tests {
         );
         assert_eq!(refused[0]["result"]["isError"], true);
         assert!(text(&refused[0]).contains("create_draft"));
+    }
+
+    #[test]
+    fn drafts_take_files_from_allowed_folders_and_the_answered_mail() {
+        let db = Database::open_in_memory().unwrap();
+        seed(&db);
+        let dir = std::env::temp_dir().join(format!(
+            "elevant-mail-mcp-attach-{}",
+            elevant_mail_core::ids::new_id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let offer = dir.join("Angebot.pdf");
+        std::fs::write(&offer, b"%PDF-1.4").unwrap();
+        {
+            let conn = db.conn();
+            agents::set_enabled(&conn, true).unwrap();
+            let rights = agents::AgentPermissions {
+                read: true,
+                drafts: true,
+                attach: true,
+                ..Default::default()
+            };
+            agents::set_permissions(&conn, "acc", rights).unwrap();
+            agents::add_folder(&conn, &dir).unwrap();
+            // An attachment of the answered mail, fetched before.
+            conn.execute_batch(
+                "INSERT INTO attachments (id, message_id, part_id, filename, mime_type, size_bytes, is_inline)
+                 VALUES ('notes', 'mail', '2', 'notizen.txt', 'text/plain', 5, 0);",
+            )
+            .unwrap();
+            agents::store_file(&conn, "notes", b"Liste").unwrap();
+        }
+        let drafts = || {
+            elevant_mail_core::mail::drafts::list(&db.conn())
+                .unwrap()
+                .len()
+        };
+
+        let replies = exchange(
+            &db,
+            &[call(
+                1,
+                "create_draft",
+                json!({ "account_id": "acc", "subject": "Re: Rechnung", "text": "Anbei.",
+                        "reply_to_message_id": "mail", "keep_attachments": true,
+                        "attachments": [offer.to_string_lossy()] }),
+            )],
+        );
+        let reply: Value = serde_json::from_str(text(&replies[0])).unwrap();
+        assert_eq!(
+            reply["attachments"],
+            json!([{ "name": "Angebot.pdf", "size": 8 }, { "name": "notizen.txt", "size": 5 }])
+        );
+        assert_eq!(drafts(), 1);
+
+        // A file from elsewhere: named, and no draft written.
+        let outside = std::env::temp_dir().join("elevant-mail-mcp-not-allowed.txt");
+        std::fs::write(&outside, b"geheim").unwrap();
+        let refused = exchange(
+            &db,
+            &[call(
+                2,
+                "create_draft",
+                json!({ "account_id": "acc", "subject": "Hallo", "text": "x",
+                        "attachments": [outside.to_string_lossy()] }),
+            )],
+        );
+        assert_eq!(refused[0]["result"]["isError"], true);
+        assert!(text(&refused[0]).contains("elevant-mail-mcp-not-allowed.txt"));
+        assert!(text(&refused[0]).contains("Nothing was saved"));
+        assert_eq!(drafts(), 1);
+        let _ = std::fs::remove_file(&outside);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
