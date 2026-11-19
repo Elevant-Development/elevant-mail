@@ -3,7 +3,9 @@
 What changed in each version of Elevant Mail. The release workflow takes a version's section as
 the text of its GitHub release, so every version gets its entry before it is tagged.
 
-## Unreleased
+## 0.9.1 – 2026-11-19
+
+Elevant Mail 0.9.1 lets AI agents throw away drafts they no longer need, and shows them the drafts they wrote in the drafts folder.
 
 ### New
 
@@ -13,6 +15,10 @@ the text of its GitHub release, so every version gets its entry before it is tag
 
 - Drafts agents write or change now show up in the drafts folder for agents too: the app syncs the drafts folder after putting them there, instead of waiting until you open it.
 - A draft whose copy an agent moves to the trash no longer comes back into the drafts folder when an agent changes it later.
+
+### Updating
+
+- Claude sessions started before the update keep the list of tools they got at their start: reconnect the MCP server there (or start a new session) to get `discard_draft`.
 
 ## 0.9.0 – 2026-11-18
 
