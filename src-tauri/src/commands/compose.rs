@@ -225,7 +225,7 @@ async fn remove_server_copy(app: &AppHandle, copy: &ServerCopy) {
 }
 
 /// Syncs one of the account's folders without progress in the list.
-async fn quiet_sync(state: &AppState, account_id: &str, role: FolderRole) {
+pub(crate) async fn quiet_sync(state: &AppState, account_id: &str, role: FolderRole) {
     let folder = moves::role_folder(&state.db.conn(), account_id, role);
     if let Ok(Some(folder_id)) = folder {
         let quiet = |_| {};

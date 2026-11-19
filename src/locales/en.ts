@@ -703,6 +703,7 @@ export const en: Record<MessageKey, string> = {
   "agents.tool.trashMessages": "Moved to the trash",
   "agents.tool.createDraft": "Wrote a draft",
   "agents.tool.updateDraft": "Changed a draft",
+  "agents.tool.discardDraft": "Discarded a draft",
   "agents.tool.readAttachment": "Read an attachment",
   "agents.right.attach": "Attach files",
   "agents.folders": "Folders for attachments",

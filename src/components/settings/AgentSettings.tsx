@@ -25,6 +25,7 @@ const toolLabels: Record<string, Parameters<typeof t>[0]> = {
   trash_messages: "agents.tool.trashMessages",
   create_draft: "agents.tool.createDraft",
   update_draft: "agents.tool.updateDraft",
+  discard_draft: "agents.tool.discardDraft",
 };
 
 /** The rights beyond reading, in the order the page shows them. */

@@ -256,7 +256,7 @@ fn take_back_all(db: &Database, message_ids: &[String]) -> Result<()> {
 }
 
 /// A mailbox name as an IMAP quoted string.
-fn quote(path: &str) -> String {
+pub(crate) fn quote(path: &str) -> String {
     format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
@@ -329,7 +329,10 @@ async fn store(
 
 /// The outer result is connection trouble, the inner one the server's answer. Sent as plain
 /// commands: async-imap's `uid_store` and `uid_mv` ignore whether the server answered OK or NO.
-async fn run(session: &mut ImapSession, command: &str) -> Result<std::result::Result<(), String>> {
+pub(crate) async fn run(
+    session: &mut ImapSession,
+    command: &str,
+) -> Result<std::result::Result<(), String>> {
     match with_timeout(COMMAND_TIMEOUT, session.run_command_and_check_ok(command)).await? {
         Ok(()) => Ok(Ok(())),
         Err(async_imap::error::Error::No(reason) | async_imap::error::Error::Bad(reason)) => {

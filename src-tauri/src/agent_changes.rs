@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use elevant_mail_core::agents::{self, Request, RequestKind};
 use elevant_mail_core::mail::{download, drafts, push, sync};
+use elevant_mail_core::model::FolderRole;
 use elevant_mail_core::moves::UNDO_WINDOW_MS;
 use elevant_mail_core::{Error, mailbox};
 use tauri::{AppHandle, Emitter, Manager};
@@ -70,21 +71,67 @@ pub fn watch(app: &AppHandle) {
     });
 }
 
+/// Puts the drafts agents wrote or changed into the drafts folder, and the copies of those they
+/// threw away into the trash. Then the drafts folder is synced, so agents find the copies there
+/// (list_messages reads the cache, and the background sync only covers the inbox).
 async fn upload_drafts(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let listed = agents::drafts_to_upload(&state.db.conn());
-    let keys = match listed {
-        Ok(keys) => keys,
+    let listed = {
+        let conn = state.db.conn();
+        agents::drafts_to_upload(&conn).and_then(|keys| {
+            let mut drafts_of = Vec::new();
+            for key in keys {
+                if let Some(draft) = drafts::get(&conn, &key)? {
+                    drafts_of.push((draft.account_id, key));
+                }
+            }
+            Ok((drafts_of, agents::discarded_copies(&conn)?))
+        })
+    };
+    let (to_upload, discarded) = match listed {
+        Ok(listed) => listed,
         Err(error) => {
             tracing::warn!(%error, "could not list the drafts agents wrote");
             return;
         }
     };
-    for key in keys {
+    let mut changed: Vec<String> = Vec::new();
+    for (account_id, key) in to_upload {
+        let lock = state.account_lock(&account_id);
+        let _turn = lock.lock().await;
         match drafts::upload(&state.db, state.secrets.as_ref(), &key).await {
+            Ok(true) if !changed.contains(&account_id) => changed.push(account_id),
             Ok(_) => {}
             Err(error) => tracing::warn!(%error, "could not upload a draft an agent wrote"),
         }
+    }
+    for copy in discarded {
+        let lock = state.account_lock(&copy.account_id);
+        let _turn = lock.lock().await;
+        let server_copy = drafts::ServerCopy {
+            account_id: copy.account_id.clone(),
+            message_id: copy.message_id.clone(),
+        };
+        // Kept in the queue when it fails: tried again with the next change and at start.
+        match drafts::trash_copy(&state.db, state.secrets.as_ref(), &server_copy).await {
+            Ok(()) => {
+                if let Err(error) = agents::copy_discarded(&state.db.conn(), &copy) {
+                    tracing::warn!(%error, "could not note a discarded draft as done");
+                }
+                if !changed.contains(&copy.account_id) {
+                    changed.push(copy.account_id);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not move a draft an agent discarded to the trash");
+            }
+        }
+    }
+    for account_id in changed {
+        let lock = state.account_lock(&account_id);
+        let _turn = lock.lock().await;
+        crate::commands::compose::quiet_sync(&state, &account_id, FolderRole::Drafts).await;
+        let _ = app.emit(CACHE_CHANGED, &account_id);
     }
 }
 

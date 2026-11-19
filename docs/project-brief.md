@@ -566,7 +566,11 @@ reach the agent as a file in `agent-files` next to the database, and inline as t
 Agents change their own drafts with `update_draft` (by `draft_id`, or the copy's message id): only
 while the draft's recipients, subject and words of its text are as the agent left them
 (`drafts.agent_snapshot`, files included), never the user's drafts; the app uploads the new
-version in place of the old copy. With the account's `attach` right (column `agent_attach`, only
+version in place of the old copy and syncs the drafts folder, so agents find the copy there
+(the background sync covers only the inbox). `discard_draft` throws such a draft away on the same
+terms (`drafts` right, since the agent takes back its own work): gone here at once, its copy
+queued in `agent_discarded_drafts` until the app moves it into the trash; without a trash folder
+it is refused. Trashing a copy with `trash_messages` drops the agent's draft with it. With the account's `attach` right (column `agent_attach`, only
 together with `drafts`) agents attach files from this computer (`attachments`, absolute paths):
 each must lie, links followed, inside a folder of `agent_folders` (switching the right on in the
 app lists the downloads folder), be no program and fit with the rest into 18 MB; one that does not
