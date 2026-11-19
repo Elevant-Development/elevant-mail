@@ -717,6 +717,7 @@ export const de = {
   "agents.tool.trashMessages": "In den Papierkorb gelegt",
   "agents.tool.createDraft": "Entwurf geschrieben",
   "agents.tool.updateDraft": "Entwurf geändert",
+  "agents.tool.discardDraft": "Entwurf verworfen",
   "agents.tool.readAttachment": "Anhang gelesen",
   "agents.right.attach": "Dateien anhängen",
   "agents.folders": "Ordner für Anhänge",

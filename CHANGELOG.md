@@ -3,6 +3,17 @@
 What changed in each version of Elevant Mail. The release workflow takes a version's section as
 the text of its GitHub release, so every version gets its entry before it is tagged.
 
+## Unreleased
+
+### New
+
+- **Agents throw away their drafts.** A draft an agent wrote twice or no longer needs goes with `discard_draft`: out of the drafts folder into the account's trash, where you can still get it back. Like changes, only for drafts agents wrote and only until you change them yourself.
+
+### Fixed
+
+- Drafts agents write or change now show up in the drafts folder for agents too: the app syncs the drafts folder after putting them there, instead of waiting until you open it.
+- A draft whose copy an agent moves to the trash no longer comes back into the drafts folder when an agent changes it later.
+
 ## 0.9.0 – 2026-11-18
 
 Elevant Mail 0.9 lets AI agents change the drafts they wrote, attach files to them and see the pictures in your mail, and closes six flaws in sending mail.

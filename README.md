@@ -169,7 +169,7 @@ only while it runs.
 2. Per account, switch on **Read** and, if you like, what else agents may do: **Mark**, **Move,
    archive**, **Move to trash**, **Write drafts**. Agents never send mail and never delete it for
    good; drafts wait in your drafts folder for you to send. An agent can change the drafts it
-   wrote, until you change them yourself. With **Attach files**, agents put files from your
+   wrote, or throw them away into the trash, until you change them yourself. With **Attach files**, agents put files from your
    computer into their drafts, only from the folders listed below the accounts (at first your
    downloads folder) and never program files; a reply can also keep the answered mail's
    attachments.

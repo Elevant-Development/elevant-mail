@@ -934,8 +934,23 @@ pub fn trash(
         }
         accounts
     };
+    // Copies of drafts agents wrote: the draft kept here goes with its copy, or changing it
+    // later would put it back into the drafts folder.
+    let mut agent_drafts = Vec::new();
+    for id in message_ids {
+        if let Some(key) = drafts::key_of_copy(&db.conn(), id)?
+            && key.starts_with(DRAFT_PREFIX)
+        {
+            agent_drafts.push((id.clone(), key));
+        }
+    }
     let MoveOutcome { moved, deleted, .. } = moves::delete_messages(db, message_ids)?;
     debug_assert!(deleted.is_empty(), "agents never delete for good");
+    for (id, key) in agent_drafts {
+        if moved.contains(&id) {
+            drafts::take(&db.conn(), &key)?;
+        }
+    }
     Ok((accounts, moved.len()))
 }
 
@@ -1123,15 +1138,7 @@ pub fn update_draft(
         return Err(Error::DraftNotFound);
     }
     access.grants(&draft.account_id, Right::Drafts)?;
-    let written: Option<String> = conn.query_row(
-        "SELECT agent_snapshot FROM drafts WHERE key = ?1",
-        [&key],
-        |row| row.get(0),
-    )?;
-    // Without a snapshot (written before agents could change drafts) it cannot be told: kept.
-    if written.is_none_or(|written| written != snapshot(&conn, &draft).unwrap_or_default()) {
-        return Err(Error::DraftChangedByUser);
-    }
+    still_as_written(&conn, &draft)?;
     if let Some(to) = changes.to {
         draft.to = addresses(to);
     }
@@ -1157,6 +1164,93 @@ pub fn update_draft(
         signed,
         files,
     })
+}
+
+/// `DraftChangedByUser` once the user changed the draft's recipients, subject, text or files
+/// since an agent last wrote it.
+fn still_as_written(conn: &Connection, draft: &Draft) -> Result<()> {
+    let written: Option<String> = conn.query_row(
+        "SELECT agent_snapshot FROM drafts WHERE key = ?1",
+        [&draft.key],
+        |row| row.get(0),
+    )?;
+    // Without a snapshot (written before agents could change drafts) it cannot be told: kept.
+    if written.is_none_or(|written| written != snapshot(conn, draft).unwrap_or_default()) {
+        return Err(Error::DraftChangedByUser);
+    }
+    Ok(())
+}
+
+/// A draft an agent threw away, for it to tell the user which.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscardedDraft {
+    pub account_id: String,
+    pub subject: String,
+    pub to: Vec<String>,
+}
+
+/// Throws away a draft an agent wrote, in place of leaving a second one next to it: gone here at
+/// once, its copy in the drafts folder goes into the account's trash (the app does that; nothing
+/// is deleted for good). Only while the user has not changed it, like `update_draft`, and only
+/// with the account's `drafts` right: the agent takes back its own work, not the user's mail.
+pub fn discard_draft(db: &Database, access: &Access, draft_id: &str) -> Result<DiscardedDraft> {
+    let conn = db.conn();
+    let key = agent_draft_key(&conn, draft_id)?;
+    let draft = drafts::get(&conn, &key)?.ok_or(Error::DraftNotFound)?;
+    if !access.allows(&draft.account_id) {
+        return Err(Error::DraftNotFound);
+    }
+    access.grants(&draft.account_id, Right::Drafts)?;
+    still_as_written(&conn, &draft)?;
+    // Its copy may be on the server, or about to be: without a trash it would go for good.
+    if moves::role_folder(&conn, &draft.account_id, FolderRole::Trash)?.is_none() {
+        return Err(Error::AgentNotAllowed("delete mail for good"));
+    }
+    let tx = conn.unchecked_transaction()?;
+    let message_id = drafts::message_id(&tx, &key)?.ok_or(Error::DraftNotFound)?;
+    drafts::take(&tx, &key)?;
+    // Queued whether uploaded yet or not: an upload running right now still leaves a copy.
+    tx.execute(
+        "INSERT OR REPLACE INTO agent_discarded_drafts (account_id, message_id, discarded_at)
+         VALUES (?1, ?2, ?3)",
+        params![draft.account_id, message_id, now_millis()],
+    )?;
+    drafts::forget_cached(&tx, &draft.account_id, &message_id)?;
+    tx.commit()?;
+    Ok(DiscardedDraft {
+        account_id: draft.account_id,
+        subject: draft.subject,
+        to: draft.to.iter().map(address).collect(),
+    })
+}
+
+/// A draft's copy for the app to move into the trash: the account and the Message-ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscardedCopy {
+    pub account_id: String,
+    pub message_id: String,
+}
+
+/// The copies of drafts agents threw away that are still to go into the trash, oldest first.
+pub fn discarded_copies(conn: &Connection) -> Result<Vec<DiscardedCopy>> {
+    Ok(conn
+        .prepare("SELECT account_id, message_id FROM agent_discarded_drafts ORDER BY discarded_at")?
+        .query_map([], |row| {
+            Ok(DiscardedCopy {
+                account_id: row.get(0)?,
+                message_id: row.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// The copy is in the trash (or was never uploaded): nothing more to do.
+pub fn copy_discarded(conn: &Connection, copy: &DiscardedCopy) -> Result<()> {
+    conn.execute(
+        "DELETE FROM agent_discarded_drafts WHERE account_id = ?1 AND message_id = ?2",
+        params![copy.account_id, copy.message_id],
+    )?;
+    Ok(())
 }
 
 /// Saves a draft as an agent wrote it, files taken off and added, with what tells a later change
@@ -1739,6 +1833,194 @@ mod tests {
             update_draft(&db, &access, "agent:gone", &subject),
             Err(Error::DraftNotFound)
         ));
+    }
+
+    #[test]
+    fn agents_discard_their_own_drafts_into_the_trash() {
+        let db = Database::open_in_memory().unwrap();
+        seed(&db.conn());
+        {
+            let conn = db.conn();
+            set_enabled(&conn, true).unwrap();
+            set_permissions(&conn, "work", READ).unwrap();
+            let drafts = AgentPermissions {
+                drafts: true,
+                ..READ
+            };
+            set_permissions(&conn, "private", drafts).unwrap();
+            conn.execute(
+                "INSERT INTO folders (id, account_id, name, path, role)
+                 VALUES ('private-drafts', 'private', 'Drafts', 'Drafts', 'drafts')",
+                [],
+            )
+            .unwrap();
+        }
+        let access = Access::check(&db.conn()).unwrap();
+        let write = |subject: &str| {
+            create_draft(
+                &db,
+                &access,
+                &DraftRequest {
+                    account_id: "private",
+                    to: &["Lena <lena@example.org>".to_owned()],
+                    subject,
+                    text: "Passt.",
+                    ..DraftRequest::default()
+                },
+            )
+            .unwrap()
+            .key
+        };
+        let header = |key: &str| drafts::message_id(&db.conn(), key).unwrap().unwrap();
+        // Uploaded, and its copy cached in the drafts folder as the sync brings it.
+        let first = write("Re: Termin");
+        let first_header = header(&first);
+        db.conn()
+            .execute(
+                "UPDATE drafts SET uploaded_to = 'private', uploaded_at = updated_at
+                 WHERE key = ?1",
+                [&first],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO messages (id, account_id, folder_id, uid, message_id, subject,
+                   to_addresses, date_sent, fetched_at)
+                 VALUES ('copy', 'private', 'private-drafts', 9, ?1, 'Re: Termin', '[]', 0, 0)",
+                [first_header.trim_matches(['<', '>'])],
+            )
+            .unwrap();
+
+        // By its copy in the drafts folder: gone here, the copy queued for the trash.
+        let discarded = discard_draft(&db, &access, "copy").unwrap();
+        assert_eq!(
+            discarded,
+            DiscardedDraft {
+                account_id: "private".to_owned(),
+                subject: "Re: Termin".to_owned(),
+                to: vec!["Lena <lena@example.org>".to_owned()],
+            }
+        );
+        assert!(drafts::get(&db.conn(), &first).unwrap().is_none());
+        assert!(drafts_to_upload(&db.conn()).unwrap().is_empty());
+        let in_drafts: u32 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM messages WHERE folder_id = 'private-drafts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(in_drafts, 0);
+        let queued = discarded_copies(&db.conn()).unwrap();
+        assert_eq!(
+            queued,
+            [DiscardedCopy {
+                account_id: "private".to_owned(),
+                message_id: first_header,
+            }]
+        );
+        copy_discarded(&db.conn(), &queued[0]).unwrap();
+        assert!(discarded_copies(&db.conn()).unwrap().is_empty());
+
+        // Not uploaded yet: by its key, and queued all the same (an upload may be running).
+        let second = write("Angebot");
+        discard_draft(&db, &access, &second).unwrap();
+        assert_eq!(discarded_copies(&db.conn()).unwrap().len(), 1);
+        assert!(matches!(
+            discard_draft(&db, &access, &second),
+            Err(Error::DraftNotFound)
+        ));
+
+        // Once the user wrote in it, it is theirs to throw away.
+        let third = write("Rechnung");
+        let mut edited = drafts::get(&db.conn(), &third).unwrap().unwrap();
+        edited.html = "<p>Passt nicht.</p>".to_owned();
+        drafts::save(&db.conn(), &edited).unwrap();
+        assert!(matches!(
+            discard_draft(&db, &access, &third),
+            Err(Error::DraftChangedByUser)
+        ));
+        assert!(drafts::get(&db.conn(), &third).unwrap().is_some());
+
+        // Never the user's own drafts, nor unknown ones.
+        let mut own = edited.clone();
+        own.key = "new:1".to_owned();
+        drafts::save(&db.conn(), &own).unwrap();
+        for id in ["new:1", "agent:gone", "private-mail"] {
+            assert!(matches!(
+                discard_draft(&db, &access, id),
+                Err(Error::DraftNotFound)
+            ));
+        }
+        assert!(drafts::get(&db.conn(), "new:1").unwrap().is_some());
+
+        // Without the right to drafts, or without a trash: refused, the draft stays.
+        let fourth = write("Termin");
+        set_permissions(&db.conn(), "private", READ).unwrap();
+        let access = Access::check(&db.conn()).unwrap();
+        assert!(matches!(
+            discard_draft(&db, &access, &fourth),
+            Err(Error::AgentNotAllowed(_))
+        ));
+        let drafts_again = AgentPermissions {
+            drafts: true,
+            ..READ
+        };
+        set_permissions(&db.conn(), "private", drafts_again).unwrap();
+        db.conn()
+            .execute("DELETE FROM folders WHERE id = 'private-trash'", [])
+            .unwrap();
+        let access = Access::check(&db.conn()).unwrap();
+        assert!(matches!(
+            discard_draft(&db, &access, &fourth),
+            Err(Error::AgentNotAllowed("delete mail for good"))
+        ));
+        assert!(drafts::get(&db.conn(), &fourth).unwrap().is_some());
+        assert_eq!(discarded_copies(&db.conn()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_draft_whose_copy_goes_into_the_trash_goes_with_it() {
+        let db = Database::open_in_memory().unwrap();
+        seed(&db.conn());
+        {
+            let conn = db.conn();
+            set_enabled(&conn, true).unwrap();
+            let trash_and_drafts = AgentPermissions {
+                drafts: true,
+                trash: true,
+                ..READ
+            };
+            set_permissions(&conn, "private", trash_and_drafts).unwrap();
+            conn.execute(
+                "INSERT INTO folders (id, account_id, name, path, role)
+                 VALUES ('private-drafts', 'private', 'Drafts', 'Drafts', 'drafts')",
+                [],
+            )
+            .unwrap();
+        }
+        let access = Access::check(&db.conn()).unwrap();
+        let request = DraftRequest {
+            account_id: "private",
+            subject: "Re: Termin",
+            text: "Passt.",
+            ..DraftRequest::default()
+        };
+        let key = create_draft(&db, &access, &request).unwrap().key;
+        let header = drafts::message_id(&db.conn(), &key).unwrap().unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO messages (id, account_id, folder_id, uid, message_id, subject,
+                   to_addresses, date_sent, fetched_at)
+                 VALUES ('copy', 'private', 'private-drafts', 9, ?1, 'Re: Termin', '[]', 0, 0)",
+                [header.trim_matches(['<', '>'])],
+            )
+            .unwrap();
+        let (_, moved) = trash(&db, &access, &["copy".to_owned()]).unwrap();
+        assert_eq!(moved, 1);
+        // Changing it later would have put it back into the drafts folder.
+        assert!(drafts::get(&db.conn(), &key).unwrap().is_none());
     }
 
     #[test]

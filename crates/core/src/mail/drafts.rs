@@ -11,6 +11,7 @@ use ts_rs::TS;
 use crate::db::Database;
 use crate::ids::{new_id, now_millis};
 use crate::mail::imap::{self, COMMAND_TIMEOUT, protocol_error, with_timeout};
+use crate::mail::push;
 use crate::mail::sanitize::HtmlView;
 use crate::mail::send::{self, OutgoingFile, OutgoingMail};
 use crate::model::{Address, FolderRole};
@@ -597,11 +598,80 @@ pub(crate) async fn remove_copy_with(
     Ok(())
 }
 
+/// Moves a draft's copy from the drafts folder into the account's trash, where the user can
+/// still get it back: for drafts an agent threw away. Nothing to do when there is no copy;
+/// refused (`ActionRefused`) without a trash, since it would be gone for good.
+pub async fn trash_copy(db: &Database, secrets: &dyn SecretStore, copy: &ServerCopy) -> Result<()> {
+    trash_copy_with(db, secrets, copy, &imap::platform_connector()?).await
+}
+
+pub(crate) async fn trash_copy_with(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    copy: &ServerCopy,
+    connector: &TlsConnector,
+) -> Result<()> {
+    forget_cached(&db.conn(), &copy.account_id, &copy.message_id)?;
+    let Some(path) = drafts_path(&db.conn(), &copy.account_id)? else {
+        return Ok(());
+    };
+    let Some(trash) = role_path(&db.conn(), &copy.account_id, FolderRole::Trash)? else {
+        return Err(Error::ActionRefused);
+    };
+    let (settings, credential) =
+        crate::mail::sync::credentials(db, secrets, &copy.account_id).await?;
+    let mut session = imap::open_session(&settings, &credential, connector).await?;
+    let capabilities = with_timeout(COMMAND_TIMEOUT, session.capabilities())
+        .await?
+        .map_err(protocol_error)?;
+    let (can_move, uid_expunge) = (
+        capabilities.has_str("MOVE"),
+        capabilities.has_str("UIDPLUS"),
+    );
+    with_timeout(COMMAND_TIMEOUT, session.select(&path))
+        .await?
+        .map_err(protocol_error)?;
+    let found = copies(&mut session, &copy.message_id).await?;
+    let answer = if found.is_empty() {
+        Ok(())
+    } else {
+        let (set, target) = (uid_set(&found), push::quote(&trash));
+        if can_move {
+            push::run(&mut session, &format!("UID MOVE {set} {target}")).await?
+        } else {
+            match push::run(&mut session, &format!("UID COPY {set} {target}")).await? {
+                Ok(()) => push::expunge(&mut session, &set, uid_expunge).await?,
+                Err(reason) => Err(reason),
+            }
+        }
+    };
+    let _ = with_timeout(COMMAND_TIMEOUT, session.logout()).await;
+    answer.map_err(|reason| {
+        tracing::warn!(%reason, "the server kept a draft's copy out of the trash");
+        Error::ActionRefused
+    })
+}
+
+/// The Message-ID header a draft's copy on the server goes under.
+pub fn message_id(conn: &Connection, key: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT message_id FROM drafts WHERE key = ?1",
+            [key],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 fn drafts_path(conn: &Connection, account_id: &str) -> Result<Option<String>> {
+    role_path(conn, account_id, FolderRole::Drafts)
+}
+
+fn role_path(conn: &Connection, account_id: &str, role: FolderRole) -> Result<Option<String>> {
     Ok(conn
         .query_row(
             "SELECT path FROM folders WHERE account_id = ?1 AND role = ?2",
-            params![account_id, FolderRole::Drafts.as_str()],
+            params![account_id, role.as_str()],
             |row| row.get(0),
         )
         .optional()?)
@@ -628,7 +698,7 @@ fn uid_set(uids: &[u32]) -> String {
 }
 
 /// The cached copies of a draft in its drafts folder go at once; the next sync brings the new one.
-fn forget_cached(conn: &Connection, account_id: &str, message_id: &str) -> Result<()> {
+pub(crate) fn forget_cached(conn: &Connection, account_id: &str, message_id: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM messages WHERE account_id = ?1 AND message_id = ?2
            AND folder_id IN (SELECT id FROM folders WHERE account_id = ?1 AND role = 'drafts')",
@@ -774,6 +844,63 @@ mod tests {
         assert!(setup.on_server().is_empty());
         assert!(list(&setup.db.conn()).unwrap().is_empty());
         assert!(take(&setup.db.conn(), "new:1").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_discarded_copy_goes_into_the_trash_not_for_good() {
+        let setup = setup().await;
+        save(
+            &setup.db.conn(),
+            &draft(&setup.account_id, "Entwurf doppelt"),
+        )
+        .unwrap();
+        assert!(setup.upload().await);
+        let copy = ServerCopy {
+            account_id: setup.account_id.clone(),
+            message_id: message_id(&setup.db.conn(), "new:1").unwrap().unwrap(),
+        };
+
+        // Without a trash it would be gone for good: refused, the copy stays.
+        let refused = trash_copy_with(&setup.db, &setup.secrets, &copy, &setup.server.connector);
+        assert!(matches!(refused.await, Err(Error::ActionRefused)));
+        assert_eq!(setup.on_server(), ["Entwurf doppelt"]);
+
+        setup
+            .db
+            .conn()
+            .execute(
+                "INSERT INTO folders (id, account_id, path, name, role)
+                 VALUES ('trash', ?1, 'Papierkorb', 'Papierkorb', 'trash')",
+                [&setup.account_id],
+            )
+            .unwrap();
+        trash_copy_with(&setup.db, &setup.secrets, &copy, &setup.server.connector)
+            .await
+            .unwrap();
+        let commands = setup.server.commands();
+        assert!(
+            commands
+                .iter()
+                .any(|c| c.contains("UID MOVE") && c.contains("\"Papierkorb\"")),
+            "{commands:?}"
+        );
+        // Moved, not deleted: nothing marked \Deleted or expunged after the upload's own.
+        let moved_at = commands
+            .iter()
+            .position(|c| c.contains("UID MOVE"))
+            .unwrap();
+        assert!(
+            commands[moved_at..]
+                .iter()
+                .all(|c| !c.contains("\\Deleted") && !c.contains("EXPUNGE")),
+            "{commands:?}"
+        );
+        assert!(setup.on_server().is_empty());
+
+        // Already gone (or never uploaded): nothing to do.
+        trash_copy_with(&setup.db, &setup.secrets, &copy, &setup.server.connector)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
